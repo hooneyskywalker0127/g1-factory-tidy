@@ -5,16 +5,21 @@
 로봇에게 물체 좌표를 주지 않는 것이 이 저장소의 전제입니다. 물체 위치는 로봇 머리에 달린
 RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점할 때만 씁니다.
 
+![G1 pick](docs/g1_pick.gif)
+
 ## 지금 되는 것
 
 - 셀 맵 생성과 viewer
 - 집을 물건을 강체로 배치 (렉 선반 위, 바닥)
 - 머리 camera에서 바닥 물체의 위치·크기 추정, 참값 대비 채점
+- 오른팔로 물건을 집어 드는 동작. 파지 생성부터 셀 안 재생까지
+- 머리 RGB-D 한 장을 GraspGenX가 읽는 형식으로 내보내기
 
 ## 아직 안 되는 것
 
-- 팔을 뻗어 집는 동작. 상체 IK도 하체 균형 제어도 붙지 않았습니다
-- 로봇은 현재 아무것도 집지 않습니다
+- 하체 균형 제어. 재생 중 골반은 고정입니다
+- 비전에서 나온 점구름으로 파지 생성. 경로는 붙었지만 머리 camera가 고정이라
+  오른팔이 닿는 자리와 화면에 들어오는 자리가 겹치지 않습니다 ([Pick](#pick) 참고)
 
 ## 셀
 
@@ -67,7 +72,7 @@ render한 뒤 0.40 m보다 가까운 깊이를 버립니다.
 아직 모릅니다. 바닥이 z=0이라는 것을 코드에 넣었으므로 실기에서는 바닥 평면부터 추정해야
 합니다. 벽과 렉은 셀 좌표로 잘라냈으므로, 물체 위치는 주지 않았지만 맵 구조는 준 셈입니다.
 
-## Grasp
+## Grasp 합성 (초기 조사)
 
 grasp 자세는 규칙으로 정하지 않고 [Dexonomy](https://github.com/JYChen18/Dexonomy)로
 합성합니다. hand와 grasp type마다 사람이 만든 template 하나에서 출발해, object를 hand
@@ -83,13 +88,53 @@ Dex3-1로 annotate된 grasp type은 셋입니다: `1_Large_Diameter`, `3_Medium_
 Dexonomy가 `1_Large_Diameter`로 합성한 grasp입니다. approach, grasp, squeeze 세 자세가
 이어집니다. hand만 있고 팔과 몸은 없습니다.
 
+## Pick
+
+파지는 [GraspGenX](https://github.com/NVlabs/GraspGenX)가 만들고, 팔 경로는
+[cuRobo](https://github.com/NVlabs/curobo)가 풉니다. 둘 다 GraspGenX 저장소의
+`end2end` 파이프라인을 그대로 쓰고, 여기서는 결과 궤적만 받아 셀 안에서 재생합니다.
+
+손은 G1이 실기에서 다는 Dex3-1입니다. GraspGenX가 같은 이름으로 손을 하나 갖고 있지만
+다른 revision이라 닫힘 각도 넷이 이 손의 관절 한계를 넘습니다. 그 손으로 만든 파지는
+손가락이 물체에 닿기 전에 한계에 걸려 밀어냅니다. 그래서 G1 URDF에서 오른손만 잘라내
+GraspGenX에 새 gripper로 등록하고 씁니다.
+
+| | GraspGenX `unitree_g1` | G1 실물 손 |
+|---|---|---|
+| index_0 닫힘 | 1.84 | 1.57 |
+| index_1 닫힘 | 1.84 | 1.75 |
+| middle_0 닫힘 | 1.84 | 1.57 |
+| thumb_1 닫힘 | −1.20 | −1.05 |
+
+## 팔이 닿는 범위
+
+오른팔 7관절만 씁니다. 허리도 다리도 안 씁니다. 관절 한계 안에서 4만 자세를 뽑아
+손바닥 위치를 모은 결과입니다. 높이는 torso 기준입니다.
+
+| 손바닥 높이 | 앞으로 최대 |
+|---|---|
+| −0.10 | 0.238 |
+| −0.05 | 0.294 |
+| 0.00 | 0.317 |
+| +0.05 | 0.368 |
+
+손바닥은 torso −0.158 아래로 못 내려갑니다. 그래서 바닥 물건은 팔만으로 못 집습니다.
+
+머리 camera는 torso +0.006에 있고 G1은 목 관절이 없습니다. 물건이 화면에 들어오려면
+눈높이 아래여야 하는데, 그 높이에서 팔이 닿는 거리는 0.30 m 남짓입니다. 좌우도 같은
+문제가 있어서, 물건을 카메라 정면으로 당기면(좌우 0.10 m) 계획은 되지만 물리가 발산하고,
+0.16 m에서는 IK가 전부 실패합니다. 지금 동작하는 배치는 0.23 m이고 그때 물건은 화면
+오른쪽 끝에 걸칩니다.
+
 ## 사용하는 것
 
 | 무엇 | 어디 |
 |---|---|
-| Grasp 합성 | [Dexonomy](https://github.com/JYChen18/Dexonomy) (RSS 2025, [arXiv:2504.18829](https://arxiv.org/abs/2504.18829), [project page](https://pku-epic.github.io/Dexonomy/)) |
+| Grasp 생성 | [GraspGenX](https://github.com/NVlabs/GraspGenX) ([arXiv:2606.00998](https://arxiv.org/abs/2606.00998)) |
+| 경로 계획 | [cuRobo](https://github.com/NVlabs/curobo) |
+| Grasp 합성 (초기 조사) | [Dexonomy](https://github.com/JYChen18/Dexonomy) (RSS 2025, [arXiv:2504.18829](https://arxiv.org/abs/2504.18829), [project page](https://pku-epic.github.io/Dexonomy/)) |
 | Simulator | [Isaac Sim](https://developer.nvidia.com/isaac/sim) 5.1 / [IsaacLab](https://github.com/isaac-sim/IsaacLab) 2.3.2 |
-| Robot | [Unitree G1](https://www.unitree.com/g1) — IsaacLab의 `G1_MINIMAL_CFG` |
+| Robot | [Unitree G1](https://www.unitree.com/g1) — IsaacLab의 `G1_MINIMAL_CFG` / `G1_29DOF_CFG` |
 | Rack / box / tray component | [humanoid-swarm-sim](https://github.com/hooneyskywalker0127/humanoid-swarm-sim) `common/` |
 | Rack, carton asset | Isaac Sim `Environments/Hospital/Props`, `Environments/Simple_Warehouse/Props` |
 
@@ -106,6 +151,10 @@ Dexonomy가 `1_Large_Diameter`로 합성한 grasp입니다. approach, grasp, squ
 | `map/look_from_g1.py` | 머리 camera에서 한 장 |
 | `map/find_box.py` | 깊이에서 바닥 물체 추정, 참값 대비 채점 |
 | `map/vision.py` | 추정 부분만 떼어낸 모듈 |
+| `grasp/traj_from_graspgen.py` | GraspGenX 궤적을 관절값 + 물체·받침 위치로 변환 |
+| `grasp/plan_scene.py` | 계획이 가정한 테이블과 대상을 셀에 다시 세움 |
+| `grasp/play_in_cell.py` | 궤적을 셀에서 재생, 3인칭과 머리 camera 두 영상 |
+| `grasp/capture_rgbd.py` | 머리 RGB-D 한 장을 GraspGenX가 읽는 형식으로 저장 |
 | `common/` | 렉·상자·트레이 부품. humanoid-swarm-sim에서 가져옴 |
 
 ## 실행
@@ -116,6 +165,21 @@ IsaacLab 2.3.2 / Isaac Sim 5.1 환경에서 실행합니다.
 conda activate env_isaaclab
 python map/build_cell.py
 python map/view_cell.py
+```
+
+파지·경로는 GraspGenX 저장소에서 만들고 (`end2end/e2e_grasp_demo.py`), 그 `trajectory.json`을
+여기로 가져옵니다.
+
+```
+python grasp/traj_from_graspgen.py <trajectory.json>
+python grasp/play_in_cell.py results/g1_graspgen.npy --video results/pick.mp4
+```
+
+머리 camera 한 장을 GraspGenX 형식으로 저장할 때는 이렇게 씁니다.
+
+```
+python grasp/capture_rgbd.py <x> <y> <yaw> --plan results/g1_graspgen.json \
+    --plan-stand <x> <y> <yaw> --out results/capture
 ```
 
 ## Troubleshooting

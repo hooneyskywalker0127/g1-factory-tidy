@@ -7,16 +7,22 @@ The robot is never handed the object's coordinates. Where the object is comes ou
 of the RGB-D camera in its head; the true position is read only to score how far
 off the estimate was.
 
+![G1 pick](docs/g1_pick.gif)
+
 ## What works
 
 - Building the cell and viewing it
 - Placing the things to be picked up as rigid bodies, on the shelves and on the floor
 - Estimating a floor object's position and size from the head camera, scored against truth
+- Picking an object up with the right arm, from grasp generation through to replay in the cell
+- Writing one head RGB-D frame in the format GraspGenX reads
 
 ## What does not
 
-- Reaching for it. Neither the upper-body IK nor the lower-body balance controller is attached
-- The robot does not pick anything up yet
+- Lower-body balance. The pelvis is fixed during replay
+- Generating grasps from the observed point cloud. The path is wired up, but G1's head
+  does not turn, so where the right arm can reach and where the camera can see do not
+  overlap (see [Pick](#pick))
 
 ## The cell
 
@@ -81,7 +87,7 @@ z = 0 rather than fitted, which a real robot would have to earn. And the walls
 and racks are cut away using the cell's own coordinates -- the object's position
 was never given, but the room's layout was.
 
-## Grasp
+## Grasp synthesis (early survey)
 
 Grasp poses are not written by hand. They come from
 [Dexonomy](https://github.com/JYChen18/Dexonomy), which starts from one
@@ -99,13 +105,57 @@ and `6_Prismatic_4_Finger`.
 A grasp Dexonomy synthesised with `1_Large_Diameter`, playing its approach, grasp
 and squeeze poses. The hand alone -- no arm, no body.
 
+## Pick
+
+Grasps come from [GraspGenX](https://github.com/NVlabs/GraspGenX) and the arm
+trajectory from [cuRobo](https://github.com/NVlabs/curobo), both through
+GraspGenX's own `end2end` pipeline. This repo takes the resulting trajectory
+and replays it in the cell.
+
+The hand is the Dex3-1 G1 actually wears. GraspGenX ships a hand under the same
+name, but it is a different revision: four of its closing angles are past this
+hand's joint limits, so grasps made against it stop short and shove the object.
+The right hand is carved out of G1's own URDF and onboarded to GraspGenX as its
+own gripper instead.
+
+| | GraspGenX `unitree_g1` | G1's own hand |
+|---|---|---|
+| index_0 closed | 1.84 | 1.57 |
+| index_1 closed | 1.84 | 1.75 |
+| middle_0 closed | 1.84 | 1.57 |
+| thumb_1 closed | -1.20 | -1.05 |
+
+## What the arm can reach
+
+Only the right arm's seven joints -- no waist, no legs. Sampled over 40k
+configurations within the joint limits; heights are relative to the torso.
+
+| Palm height | Furthest forward |
+|---|---|
+| -0.10 | 0.238 |
+| -0.05 | 0.294 |
+| 0.00 | 0.317 |
+| +0.05 | 0.368 |
+
+The palm never gets below torso -0.158, which is why the arm alone cannot pick
+anything off the floor.
+
+The head camera sits at torso +0.006 and G1 has no neck joint. For an object to
+be in frame it has to be below eye level, and at that height the arm reaches
+about 0.30 m. The same holds sideways: pulled in front of the camera (0.10 m
+across) the plan solves but the physics diverges; at 0.16 m the IK fails
+outright. The placement that works is 0.23 m, and there the object sits at the
+edge of the frame.
+
 ## Built on
 
 | What | Where |
 |---|---|
-| Grasp synthesis | [Dexonomy](https://github.com/JYChen18/Dexonomy) (RSS 2025, [arXiv:2504.18829](https://arxiv.org/abs/2504.18829), [project page](https://pku-epic.github.io/Dexonomy/)) |
+| Grasp generation | [GraspGenX](https://github.com/NVlabs/GraspGenX) ([arXiv:2606.00998](https://arxiv.org/abs/2606.00998)) |
+| Motion planning | [cuRobo](https://github.com/NVlabs/curobo) |
+| Grasp synthesis (early survey) | [Dexonomy](https://github.com/JYChen18/Dexonomy) (RSS 2025, [arXiv:2504.18829](https://arxiv.org/abs/2504.18829), [project page](https://pku-epic.github.io/Dexonomy/)) |
 | Simulator | [Isaac Sim](https://developer.nvidia.com/isaac/sim) 5.1 / [IsaacLab](https://github.com/isaac-sim/IsaacLab) 2.3.2 |
-| Robot | [Unitree G1](https://www.unitree.com/g1) -- IsaacLab's `G1_MINIMAL_CFG` |
+| Robot | [Unitree G1](https://www.unitree.com/g1) -- IsaacLab's `G1_MINIMAL_CFG` / `G1_29DOF_CFG` |
 | Rack / box / tray components | [humanoid-swarm-sim](https://github.com/hooneyskywalker0127/humanoid-swarm-sim) `common/` |
 | Rack and carton assets | Isaac Sim `Environments/Hospital/Props`, `Environments/Simple_Warehouse/Props` |
 
@@ -122,6 +172,10 @@ and squeeze poses. The hand alone -- no arm, no body.
 | `map/look_from_g1.py` | One frame from the head camera |
 | `map/find_box.py` | Estimates the floor object from depth, scores it against truth |
 | `map/vision.py` | The estimation, on its own |
+| `grasp/traj_from_graspgen.py` | Turns a GraspGenX trajectory into joint values plus object and support poses |
+| `grasp/plan_scene.py` | Rebuilds the table and target the plan assumed, in the cell |
+| `grasp/play_in_cell.py` | Replays the trajectory; writes a third-person and a head-camera video |
+| `grasp/capture_rgbd.py` | Saves one head RGB-D frame in the format GraspGenX reads |
 | `common/` | Rack, box and tray components, taken from humanoid-swarm-sim |
 
 ## Running it
@@ -132,6 +186,21 @@ Needs IsaacLab 2.3.2 / Isaac Sim 5.1.
 conda activate env_isaaclab
 python map/build_cell.py
 python map/view_cell.py
+```
+
+Grasps and trajectories are produced in the GraspGenX repo
+(`end2end/e2e_grasp_demo.py`); its `trajectory.json` comes over here.
+
+```
+python grasp/traj_from_graspgen.py <trajectory.json>
+python grasp/play_in_cell.py results/g1_graspgen.npy --video results/pick.mp4
+```
+
+To save one head-camera frame in GraspGenX's format:
+
+```
+python grasp/capture_rgbd.py <x> <y> <yaw> --plan results/g1_graspgen.json \
+    --plan-stand <x> <y> <yaw> --out results/capture
 ```
 
 ## Troubleshooting
