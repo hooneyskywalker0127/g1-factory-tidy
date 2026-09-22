@@ -7,22 +7,27 @@ The robot is never handed the object's coordinates. Where the object is comes ou
 of the RGB-D camera in its head; the true position is read only to score how far
 off the estimate was.
 
-![G1 pick](docs/g1_pick.gif)
+![G1 vision grasp](docs/g1_vision_grasp.gif)
+
+A grasp predicted from one head RGB-D frame, executed, and the box lifted. Left is
+the third-person view, right is the wrist camera (D405). No object coordinates were
+given.
 
 ## What works
 
 - Building the cell and viewing it
 - Placing the things to be picked up as rigid bodies, on the shelves and on the floor
 - Estimating a floor object's position and size from the head camera, scored against truth
-- Picking an object up with the right arm, from grasp generation through to replay in the cell
-- Writing one head RGB-D frame in the format GraspGenX reads
+- One head RGB-D frame to grasp generation to a planned trajectory to a lift in the cell
+- Merging the head and wrist cameras into one point cloud for grasp generation
+- Standing and reaching with the pelvis free, on top of whole-body control (SONIC)
 
 ## What does not
 
-- Lower-body balance. The pelvis is fixed during replay
-- Generating grasps from the observed point cloud. The path is wired up, but G1's head
-  does not turn, so where the right arm can reach and where the camera can see do not
-  overlap (see [Pick](#pick))
+- Closed loop. The robot looks once before it starts and then executes blind: if the
+  box moved mid-reach, nothing would correct for it
+- The grasp and whole-body control are not in the same run yet
+- Only the right arm's 7 joints are used. Of 36 grasp candidates, 5 were reachable
 
 ## The cell
 
@@ -125,6 +130,40 @@ own gripper instead.
 | middle_0 closed | 1.84 | 1.57 |
 | thumb_1 closed | -1.20 | -1.05 |
 
+
+### The grasp was failing on friction
+
+The same plan that threw the box off the table lifts it once the friction matches.
+GraspGenX generates and validates its grasps at an object friction of 10.0 and a
+finger-pad friction of 3.0 (the `--object_mu` / `--finger_mu` defaults in
+`end2end/e2e_grasp_demo.py`). Nothing was set in the cell, so the replay ran on
+PhysX's default of 0.5 -- twenty times less.
+
+| | default mu 0.5 | object 10.0 / fingers 3.0 |
+|---|---|---|
+| object moved as the fingers close | 93.6 mm | 20.8 mm |
+| height at the end | -43 mm (dropped) | +50.6 mm (lifted) |
+| verdict | LOST | HELD |
+
+The approach itself moved the box 2.6 mm in both cases. The only place it broke was
+the 20 frames the fingers close in.
+
+### Two cameras change which grasps exist
+
+The head camera sits at 0.80 m and barely sees the top of a box on a table: of 1222
+observed object points, 3.9% were within 15 mm of the top face. GraspGen conditions
+on the observed cloud, so it does not propose a top-down grasp from that -- 2 of 36
+candidates were near vertical.
+
+| | points | object z | within 15 mm of the top |
+|---|---|---|---|
+| head (D435i) | 1436 | 0.766 - 0.888 | |
+| wrist (D405) | 2792 | 0.885 - 0.887 | |
+| merged | 4228 | | 70.2% |
+
+The merged centre is 4 mm off truth. The merge goes in through GraspGenX's own point
+cloud scene format (`scene_loaders.load_graspgenx_json_scene`).
+
 ## What the arm can reach
 
 Only the right arm's seven joints -- no waist, no legs. Sampled over 40k
@@ -153,6 +192,7 @@ edge of the frame.
 |---|---|
 | Grasp generation | [GraspGenX](https://github.com/NVlabs/GraspGenX) ([arXiv:2606.00998](https://arxiv.org/abs/2606.00998)) |
 | Motion planning | [cuRobo](https://github.com/NVlabs/curobo) |
+| Whole-body control | [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl) (SONIC) |
 | Grasp synthesis (early survey) | [Dexonomy](https://github.com/JYChen18/Dexonomy) (RSS 2025, [arXiv:2504.18829](https://arxiv.org/abs/2504.18829), [project page](https://pku-epic.github.io/Dexonomy/)) |
 | Simulator | [Isaac Sim](https://developer.nvidia.com/isaac/sim) 5.1 / [IsaacLab](https://github.com/isaac-sim/IsaacLab) 2.3.2 |
 | Robot | [Unitree G1](https://www.unitree.com/g1) -- IsaacLab's `G1_MINIMAL_CFG` / `G1_29DOF_CFG` |
@@ -175,7 +215,12 @@ edge of the frame.
 | `grasp/traj_from_graspgen.py` | Turns a GraspGenX trajectory into joint values plus object and support poses |
 | `grasp/plan_scene.py` | Rebuilds the table and target the plan assumed, in the cell |
 | `grasp/play_in_cell.py` | Replays the trajectory; writes a third-person and a head-camera video |
-| `grasp/capture_rgbd.py` | Saves one head RGB-D frame in the format GraspGenX reads |
+| `grasp/capture_rgbd.py` | Saves one head or wrist RGB-D frame in the format GraspGenX reads |
+| `grasp/merge_captures.py` | Merges several captures into one point cloud scene |
+| `grasp/probe_wrist_view.py` | Measures which frames put the object in the wrist camera's view |
+| `grasp/bake_props_usd.py` | Bakes the plan's table and object into a USD |
+| `grasp/reach_clip.py` | Bends a planner clip's right arm onto a grasp point |
+| `map/measure_reach.py` | Reach of the arm alone vs arm + waist |
 | `common/` | Rack, box and tray components, taken from humanoid-swarm-sim |
 
 ## Running it

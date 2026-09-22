@@ -12,7 +12,14 @@ import os
 
 import numpy as np
 import trimesh
-from pxr import Gf, PhysxSchema, UsdGeom, UsdPhysics
+from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics, UsdShade
+
+# Contact values GraspGenX validates its own grasps under, from
+# end2end/e2e_grasp_demo.py: --object_mu default 10.0, --finger_mu default 3.0.
+# PhysX's own default is 0.5, and a grasp generated for mu 10 slips straight
+# out at 0.5 -- which is what every replay here was showing.
+OBJECT_MU = 10.0
+FINGER_MU = 3.0
 
 # torso_link sits at a fixed offset from the pelvis: the waist joints are at 0
 # in the default pose and a plan that only moves the arm never touches them.
@@ -71,6 +78,16 @@ def spawn_target(stage, mesh_path, T_torso, T_in_torso):
     UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
     UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(
         "convexHull")
+    # Friction, from the values GraspGenX validates its own grasps under
+    # (end2end/e2e_grasp_demo.py --object_mu, default 10.0). Left unset the
+    # stage runs on PhysX's 0.5, and a grasp generated for mu 10 slips out the
+    # moment the fingers touch it -- which is what the replays were showing.
+    mat = UsdShade.Material.Define(stage, "/World/GraspTarget/PhysicsMaterial")
+    UsdPhysics.MaterialAPI.Apply(mat.GetPrim()).CreateStaticFrictionAttr(OBJECT_MU)
+    UsdPhysics.MaterialAPI(mat.GetPrim()).CreateDynamicFrictionAttr(OBJECT_MU)
+    UsdPhysics.MaterialAPI(mat.GetPrim()).CreateRestitutionAttr(0.0)
+    UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(
+        mat, UsdShade.Tokens.weakerThanDescendants, "physics")
     _tight_contact(mesh.GetPrim())
     bottom = (T @ np.append(m.bounds[0], 1.0))[2]
     print(f"[scene] target at {np.round(T[:3, 3], 3)} bottom z {bottom:.3f} "

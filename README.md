@@ -5,21 +5,26 @@
 로봇에게 물체 좌표를 주지 않는 것이 이 저장소의 전제입니다. 물체 위치는 로봇 머리에 달린
 RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점할 때만 씁니다.
 
-![G1 pick](docs/g1_pick.gif)
+![G1 vision grasp](docs/g1_vision_grasp.gif)
+
+머리 camera RGB-D 한 장에서 파지를 만들어 상자를 들어 올립니다. 왼쪽은 3인칭,
+오른쪽은 손목 camera(D405)입니다. 물체 좌표는 주지 않았습니다.
 
 ## 지금 되는 것
 
 - 셀 맵 생성과 viewer
 - 집을 물건을 강체로 배치 (렉 선반 위, 바닥)
 - 머리 camera에서 바닥 물체의 위치·크기 추정, 참값 대비 채점
-- 오른팔로 물건을 집어 드는 동작. 파지 생성부터 셀 안 재생까지
-- 머리 RGB-D 한 장을 GraspGenX가 읽는 형식으로 내보내기
+- 머리 RGB-D 한 장에서 파지 생성 → 경로 계획 → 셀 안 재생 → 들어 올리기
+- 머리와 손목 camera 두 장을 한 점구름으로 합쳐 파지 생성
+- 전신 제어(SONIC) 위에서 골반 고정 없이 서기와 팔 뻗기
 
 ## 아직 안 되는 것
 
-- 하체 균형 제어. 재생 중 골반은 고정입니다
-- 비전에서 나온 점구름으로 파지 생성. 경로는 붙었지만 머리 camera가 고정이라
-  오른팔이 닿는 자리와 화면에 들어오는 자리가 겹치지 않습니다 ([Pick](#pick) 참고)
+- 닫힌 루프. 시작 전에 한 번 보고 그 뒤에는 눈을 감습니다. 실행 중에 상자가
+  움직여도 따라가지 않습니다
+- 파지와 전신 제어가 한 실행 안에 있지 않습니다
+- 팔 7관절만 씁니다. 파지 후보 36개 중 닿는 것은 5개였습니다
 
 ## 셀
 
@@ -106,6 +111,40 @@ GraspGenX에 새 gripper로 등록하고 씁니다.
 | middle_0 닫힘 | 1.84 | 1.57 |
 | thumb_1 닫힘 | −1.20 | −1.05 |
 
+### 파지가 안 잡히던 이유는 마찰이었습니다
+
+같은 계획이 상자를 테이블 밖으로 튕겨내다가, 마찰만 맞추니 들립니다. GraspGenX는
+물체 마찰 10.0, 손가락 패드 3.0에서 파지를 만들고 검증합니다
+(`end2end/e2e_grasp_demo.py`의 `--object_mu`, `--finger_mu` 기본값). 셀에는 아무것도
+걸려 있지 않아 PhysX 기본값 0.5로 재생하고 있었습니다. 20배 차이입니다.
+
+| | 마찰 기본값 0.5 | 물체 10.0 / 손가락 3.0 |
+|---|---|---|
+| 손가락 닫는 순간 물체 이동 | 93.6 mm | 20.8 mm |
+| 끝 높이 변화 | −43 mm (떨어짐) | +50.6 mm (들림) |
+| 판정 | LOST | HELD |
+
+접근 구간(0~360 프레임) 이동은 두 경우 모두 2.6 mm입니다. 깨지는 자리는 손가락을
+닫는 20 프레임뿐이었습니다.
+
+### camera 두 대를 합치면 파지 방향이 달라집니다
+
+머리 camera는 눈높이가 0.80 m라 테이블 위 상자의 윗면을 거의 못 봅니다. 관측된 상자
+점 1222개 중 윗면 15 mm 이내가 3.9%뿐이고, GraspGen은 관측된 점구름에 조건을 걸기
+때문에 위에서 내려오는 파지를 제안하지 않습니다. 후보 36개 중 수직에 가까운 것이
+2개였습니다.
+
+손목 camera를 더하면 달라집니다.
+
+| | 점 수 | 물체 z 범위 | 윗면 15 mm 이내 |
+|---|---|---|---|
+| 머리 (D435i) | 1436 | 0.766 ~ 0.888 | — |
+| 손목 (D405) | 2792 | 0.885 ~ 0.887 | — |
+| 합계 | 4228 | | 70.2% |
+
+합친 구름의 중심은 참값과 4 mm 차이입니다. 합치는 자리는 GraspGenX 자신의 점구름
+장면 형식(`scene_loaders.load_graspgenx_json_scene`)입니다.
+
 ## 팔이 닿는 범위
 
 오른팔 7관절만 씁니다. 허리도 다리도 안 씁니다. 관절 한계 안에서 4만 자세를 뽑아
@@ -132,6 +171,7 @@ GraspGenX에 새 gripper로 등록하고 씁니다.
 |---|---|
 | Grasp 생성 | [GraspGenX](https://github.com/NVlabs/GraspGenX) ([arXiv:2606.00998](https://arxiv.org/abs/2606.00998)) |
 | 경로 계획 | [cuRobo](https://github.com/NVlabs/curobo) |
+| 전신 제어 | [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl) (SONIC) |
 | Grasp 합성 (초기 조사) | [Dexonomy](https://github.com/JYChen18/Dexonomy) (RSS 2025, [arXiv:2504.18829](https://arxiv.org/abs/2504.18829), [project page](https://pku-epic.github.io/Dexonomy/)) |
 | Simulator | [Isaac Sim](https://developer.nvidia.com/isaac/sim) 5.1 / [IsaacLab](https://github.com/isaac-sim/IsaacLab) 2.3.2 |
 | Robot | [Unitree G1](https://www.unitree.com/g1) — IsaacLab의 `G1_MINIMAL_CFG` / `G1_29DOF_CFG` |
@@ -154,7 +194,12 @@ GraspGenX에 새 gripper로 등록하고 씁니다.
 | `grasp/traj_from_graspgen.py` | GraspGenX 궤적을 관절값 + 물체·받침 위치로 변환 |
 | `grasp/plan_scene.py` | 계획이 가정한 테이블과 대상을 셀에 다시 세움 |
 | `grasp/play_in_cell.py` | 궤적을 셀에서 재생, 3인칭과 머리 camera 두 영상 |
-| `grasp/capture_rgbd.py` | 머리 RGB-D 한 장을 GraspGenX가 읽는 형식으로 저장 |
+| `grasp/capture_rgbd.py` | 머리/손목 RGB-D 한 장을 GraspGenX가 읽는 형식으로 저장 |
+| `grasp/merge_captures.py` | 여러 촬영본을 한 점구름 장면으로 합침 |
+| `grasp/probe_wrist_view.py` | 어느 프레임에서 손목 camera가 물체를 보는지 측정 |
+| `grasp/bake_props_usd.py` | 계획의 테이블·물체를 USD로 구움 |
+| `grasp/reach_clip.py` | 플래너 클립의 오른팔을 파지점으로 굽힘 |
+| `map/measure_reach.py` | 팔만 / 팔+허리의 도달 범위 측정 |
 | `common/` | 렉·상자·트레이 부품. humanoid-swarm-sim에서 가져옴 |
 
 ## 실행

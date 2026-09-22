@@ -20,18 +20,26 @@ sys.path.insert(0, os.path.join(REPO, "map"))
 sys.path.insert(0, os.path.join(REPO, "grasp"))
 TRAJ = sys.argv[1] if len(sys.argv) > 1 else os.path.join(REPO, "results", "g1_traj.npy")
 META = os.path.splitext(TRAJ)[0] + ".json"
-# Head camera geometry: the D435i's 86 deg horizontal depth FoV, pitched the
-# same 15 deg grasp/capture_rgbd.py uses.
-HEAD_FOV = 86.0
-HEAD_APERTURE = 20.955
-HEAD_FOCAL = HEAD_APERTURE / (2.0 * __import__("math").tan(
-    __import__("math").radians(HEAD_FOV) / 2.0))
-HEAD_PITCH_DEG = 15.0
+# The second view rides the wrist, where Unitree's own G1 datasets put a
+# camera. Numbers are Zulkhuu/g1-wrist-camera-tools' right-side mount, with the
+# D405 optical +Z along the mount body's +Y as that repo states. The head is
+# not used for this view: G1 has no neck joint, so a head camera loses the work
+# as soon as the arm goes sideways.
+WRIST_PARENT = "right_wrist_yaw_link"
+WRIST_MOUNT_XYZ = (0.07, 0.0, 0.0)
+WRIST_MOUNT_RPY = (1.5707963267948966, 0.7853981633974483, 1.5707963267948966)
+WRIST_CAM_XYZ = (0.008, 0.091, 0.002)
+WRIST_CAM_RPY = (1.9792033717615698, 0.3490658503988659, 0.0)
 
 OUT = sys.argv[sys.argv.index("--video") + 1] if "--video" in sys.argv \
     else os.path.join(REPO, "results", "g1_cell_pick.mp4")
+# --no-video runs the same physics and prints the same object track, but skips
+# the cameras. Rendering 830 frames through two cameras is most of the wall
+# clock here, and judging whether a grasp held needs none of it -- this is how
+# a batch of grasp candidates gets evaluated in reasonable time.
+NO_VIDEO = "--no-video" in sys.argv
 
-app = AppLauncher(headless=True, enable_cameras=True).app
+app = AppLauncher(headless=True, enable_cameras=not NO_VIDEO).app
 
 import math  # noqa: E402
 
@@ -48,6 +56,7 @@ from isaaclab_assets.robots.unitree import G1_29DOF_CFG  # noqa: E402
 from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics  # noqa: E402
 
 import cell_layout as L  # noqa: E402
+from plan_scene import FINGER_MU, OBJECT_MU  # noqa: E402
 from plan_scene import (  # noqa: E402
     build as build_plan_scene, torso_pose)
 from props import spawn_props  # noqa: E402
@@ -60,7 +69,11 @@ names = meta["joint_names"]
 FPS = int(meta.get("fps", 30))
 print(f"[play] {traj.shape[0]} frames, {len(names)} joints, {FPS} fps")
 
-sim = SimulationContext(sim_utils.SimulationCfg(dt=1.0 / 120.0, device="cpu"))
+# 1 kHz, the physics step GraspGenX's own dynamic_playback uses (sim_dt=0.001
+# with sim_fps=60, so ~17 solver steps per trajectory waypoint). At 1/120 there
+# are only 2 steps per waypoint and the hand passes through a contact in one
+# step, which reads as the arm swatting the object.
+sim = SimulationContext(sim_utils.SimulationCfg(dt=1.0 / 1000.0, device="cpu"))
 stage = omni.usd.get_context().get_stage()
 UsdGeom.Xform.Define(stage, "/World")
 stage.DefinePrim("/World/Cell", "Xform").GetReferences().AddReference(
@@ -77,11 +90,33 @@ cfg.spawn = cfg.spawn.replace(
     articulation_props=sim_utils.ArticulationRootPropertiesCfg(
         enabled_self_collisions=False, solver_position_iteration_count=12,
         solver_velocity_iteration_count=4, fix_root_link=True))
+# Dex3-1 finger torque, from Unitree's own URDF: every hand joint in
+# g1_29dof_with_hand_rev_1_0.urdf is <limit effort="1.4" velocity="12">.
+# IsaacLab's G1_29DOF_CFG leaves the hands at effort_limit=300, 214x the real
+# actuator, so the closing fingers drive straight through the object and PhysX
+# ejects it instead of stalling them on contact. The trajectory commands the
+# fingers all the way to their joint limits (end2end/tasks.py ramps to
+# close_vals), so what stops them has to be the actuator, not the command.
+cfg.actuators["hands"] = cfg.actuators["hands"].replace(
+    effort_limit=1.4, velocity_limit=12.0)
 yaw = math.radians(-90.0)
 cfg.init_state = cfg.init_state.replace(
     pos=(-1.30, -0.60, cfg.init_state.pos[2]),
     rot=(math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)))
 robot = Articulation(cfg)
+
+# Finger pad friction, from GraspGenX's own --finger_mu default of 3.0. Left
+# alone the stage runs on PhysX's 0.5, and a grasp generated under mu 3 on the
+# pads slips the moment the fingers touch the box.
+_fm = sim_utils.RigidBodyMaterialCfg(static_friction=FINGER_MU,
+                                     dynamic_friction=FINGER_MU,
+                                     restitution=0.0)
+_fm.func("/World/G1/FingerMaterial", _fm)
+# Bound at the articulation root: the link prim paths inside the G1 USD are
+# not /World/G1/<link>, and a subtree binding reaches every collider anyway.
+# The pelvis is pinned for this replay, so the feet never use it.
+sim_utils.bind_physics_material("/World/G1", "/World/G1/FingerMaterial")
+print(f"[play] finger pads mu {FINGER_MU}, object mu {OBJECT_MU}")
 
 # The plan's scene, placed relative to where the robot's torso will stand.
 # This has to happen BEFORE sim.reset(): PhysX builds its scene there, and a
@@ -92,27 +127,60 @@ robot = Articulation(cfg)
 T_torso = torso_pose(cfg.init_state.pos, yaw)
 
 UsdGeom.Xform.Define(stage, "/Render")
-cam = Camera(CameraCfg(
+cam = None if NO_VIDEO else Camera(CameraCfg(
     prim_path="/Render/Cam", update_period=0.0, width=960, height=540,
     data_types=["rgb"],
     spawn=sim_utils.PinholeCameraCfg(focal_length=22.0, clipping_range=(0.05, 40.0))))
 
-# The robot's own view, same mount grasp/capture_rgbd.py shoots from, so the
-# second video shows what the head camera sees while the arm works.
-_hp = math.radians(HEAD_PITCH_DEG) / 2.0
-head_cam = Camera(CameraCfg(
-    prim_path="/World/G1/head_link/head_cam", update_period=0.0,
+# The robot's own view, the same mount grasp/capture_rgbd.py shoots from, so
+# the second video is what the hand sees while it works.
+def _rpy_matrix(r, p_, y):
+    cr, sr = math.cos(r), math.sin(r)
+    cp, sp = math.cos(p_), math.sin(p_)
+    cy, sy = math.cos(y), math.sin(y)
+    return (np.array([[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]])
+            @ np.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]])
+            @ np.array([[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]]))
+
+
+def _link(xyz, rpy):
+    M = np.eye(4)
+    M[:3, :3] = _rpy_matrix(*rpy)
+    M[:3, 3] = xyz
+    return M
+
+
+_T_wrist_cam = (_link(WRIST_MOUNT_XYZ, WRIST_MOUNT_RPY)
+                @ _link(WRIST_CAM_XYZ, WRIST_CAM_RPY)
+                @ _link((0.0, 0.0, 0.0), (-math.pi / 2.0, 0.0, 0.0)))
+_wq = Gf.Matrix4d(_T_wrist_cam.T.tolist()).ExtractRotationQuat()
+head_cam = None if NO_VIDEO else Camera(CameraCfg(
+    prim_path=f"/World/G1/{WRIST_PARENT}/wrist_cam", update_period=0.0,
     width=960, height=540, data_types=["rgb"],
-    offset=CameraCfg.OffsetCfg(pos=(0.08, 0.0, 0.05),
-                               rot=(math.cos(_hp), 0.0, math.sin(_hp), 0.0),
-                               convention="world"),
-    spawn=sim_utils.PinholeCameraCfg(focal_length=HEAD_FOCAL,
-                                     horizontal_aperture=HEAD_APERTURE,
-                                     clipping_range=(0.01, 20.0))))
+    offset=CameraCfg.OffsetCfg(
+        pos=tuple(float(v) for v in _T_wrist_cam[:3, 3]),
+        rot=(float(_wq.GetReal()), *[float(v) for v in _wq.GetImaginary()]),
+        convention="ros"),
+    spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.01, 20.0))))
 
 build_plan_scene(stage, app, meta, T_torso)
 
+# Track the object in Isaac too: the Newton replay is a different engine, and
+# what matters is what this one does. Wrapped before reset -- an asset made
+# after it is never initialised.
+target_body = None
+if "object" in meta:
+    from isaaclab.assets import RigidObject, RigidObjectCfg  # noqa: E402
+    target_body = RigidObject(RigidObjectCfg(prim_path="/World/GraspTarget",
+                                             spawn=None))
+
 sim.reset()
+
+obj_start = None
+if target_body is not None:
+    target_body.update(0.0)
+    obj_start = target_body.data.root_pos_w[0].cpu().numpy()
+    print(f"[obj ] start {np.round(obj_start,4)}")
 
 ids = [robot.find_joints([n])[0][0] for n in names]
 missing = [n for n in names if not robot.find_joints([n])[0]]
@@ -126,9 +194,10 @@ if "object" in meta:
     tgt = 0.5 * (tgt + np.array(T_torso @ np.array(
         meta["object"]["transform_in_torso"]))[:3, 3])
 eye = tgt + np.array([-1.65, -2.05, 1.05])
-cam.set_world_poses_from_view(
-    eyes=torch.tensor([eye], dtype=torch.float32, device=cam.device),
-    targets=torch.tensor([tgt], dtype=torch.float32, device=cam.device))
+if cam is not None:
+    cam.set_world_poses_from_view(
+        eyes=torch.tensor([eye], dtype=torch.float32, device=cam.device),
+        targets=torch.tensor([tgt], dtype=torch.float32, device=cam.device))
 
 # Start the robot AT the plan's first waypoint. Left at G1's default pose the
 # arm snaps across the whole reach in the first frame, and that swing throws
@@ -158,22 +227,42 @@ for i in range(traj.shape[0]):
         robot.write_data_to_sim()
         sim.step()
     robot.update(sim.get_physics_dt())
+    if i % 20 == 0 and target_body is not None:
+        target_body.update(sim.get_physics_dt())
+        op = target_body.data.root_pos_w[0].cpu().numpy()
+        print(f"[obj ] frame {i:5d} pos {np.round(op,4)}  moved "
+              f"{np.linalg.norm(op - obj_start):.4f} m")
     if i % 200 == 0:
         got = np.array([robot.data.joint_pos[0, j].item() for j in ids])
         want = np.array([traj[i, k] for k in range(len(ids))])
         print(f"[play] frame {i:5d} 목표 {np.round(want,2)}")
         print(f"[play]              실제 {np.round(got,2)}  최대오차 "
               f"{np.abs(got-want).max():.3f} rad")
-    app.update()
-    cam.update(0.0)
-    head_cam.update(0.0)
-    frames.append(cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
-    head_frames.append(
-        head_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+    if not NO_VIDEO:
+        app.update()
+        cam.update(0.0)
+        head_cam.update(0.0)
+        frames.append(cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+        head_frames.append(
+            head_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+
+if target_body is not None:
+    target_body.update(sim.get_physics_dt())
+    op = target_body.data.root_pos_w[0].cpu().numpy()
+    d = op - obj_start
+    # Held = the object came up with the hand. The lift is the plan's own
+    # last cartesian segment, so a grasp that worked ends the run higher than
+    # it started; one that was knocked away ends at or below the table.
+    print(f"[eval] end pos {np.round(op,4)}  dxy {np.linalg.norm(d[:2]):.4f} m"
+          f"  dz {d[2]:+.4f} m  -> {'HELD' if d[2] > 0.05 else 'LOST'}")
+
+if NO_VIDEO:
+    sys.stdout.flush()
+    os._exit(0)
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 imageio.mimsave(OUT, frames, fps=FPS, quality=8)
-HEAD_OUT = OUT.replace(".mp4", "_head.mp4")
+HEAD_OUT = OUT.replace(".mp4", "_wrist.mp4")
 imageio.mimsave(HEAD_OUT, head_frames, fps=FPS, quality=8)
 print(f"[play] wrote {OUT}: {len(frames)} frames")
 print(f"[play] wrote {HEAD_OUT}: {len(head_frames)} frames")
