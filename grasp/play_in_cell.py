@@ -163,6 +163,23 @@ head_cam = None if NO_VIDEO else Camera(CameraCfg(
         convention="ros"),
     spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.01, 20.0))))
 
+# Third view: the head camera, the same mount grasp/capture_rgbd.py shoots the
+# capture from -- 86 deg horizontal FoV, pitched 15 deg down because G1 has no
+# neck joint. This is the view the grasp was predicted from, so a render
+# should show it next to what the hand is doing.
+HEAD_FOV, HEAD_APERTURE, HEAD_PITCH_DEG = 86.0, 20.955, 15.0
+_hf = HEAD_APERTURE / (2.0 * math.tan(math.radians(HEAD_FOV) / 2.0))
+_hp = math.radians(HEAD_PITCH_DEG) / 2.0
+eye_cam = None if NO_VIDEO else Camera(CameraCfg(
+    prim_path="/World/G1/head_link/head_cam", update_period=0.0,
+    width=960, height=540, data_types=["rgb"],
+    offset=CameraCfg.OffsetCfg(pos=(0.08, 0.0, 0.05),
+                               rot=(math.cos(_hp), 0.0, math.sin(_hp), 0.0),
+                               convention="world"),
+    spawn=sim_utils.PinholeCameraCfg(focal_length=_hf,
+                                     horizontal_aperture=HEAD_APERTURE,
+                                     clipping_range=(0.01, 20.0))))
+
 build_plan_scene(stage, app, meta, T_torso)
 
 # Track the object in Isaac too: the Newton replay is a different engine, and
@@ -216,7 +233,7 @@ for _ in range(120):
     sim.step()
 robot.update(sim.get_physics_dt())
 
-frames, head_frames = [], []
+frames, head_frames, eye_frames = [], [], []
 substeps = max(1, round((1.0 / FPS) / sim.get_physics_dt()))
 print(f"[play] {substeps} physics steps per trajectory frame")
 for i in range(traj.shape[0]):
@@ -245,6 +262,9 @@ for i in range(traj.shape[0]):
         frames.append(cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
         head_frames.append(
             head_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+        eye_cam.update(0.0)
+        eye_frames.append(
+            eye_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
 
 if target_body is not None:
     target_body.update(sim.get_physics_dt())
@@ -264,6 +284,9 @@ os.makedirs(os.path.dirname(OUT), exist_ok=True)
 imageio.mimsave(OUT, frames, fps=FPS, quality=8)
 HEAD_OUT = OUT.replace(".mp4", "_wrist.mp4")
 imageio.mimsave(HEAD_OUT, head_frames, fps=FPS, quality=8)
+EYE_OUT = OUT.replace(".mp4", "_head.mp4")
+imageio.mimsave(EYE_OUT, eye_frames, fps=FPS, quality=8)
+print(f"[play] wrote {EYE_OUT}: {len(eye_frames)} frames")
 print(f"[play] wrote {OUT}: {len(frames)} frames")
 print(f"[play] wrote {HEAD_OUT}: {len(head_frames)} frames")
 sys.stdout.flush()
