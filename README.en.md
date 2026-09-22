@@ -1,11 +1,16 @@
 # g1-factory-tidy
 
-One Unitree G1 picking things up off the floor of a factory cell and putting them
-on a rack.
+The goal is a factory that tidies itself back to a specified state. You hand the
+robot an image of what tidy looks like; it compares the floor as it is against
+that image and puts back whatever is out of place. What goes where is settled by
+the image, not by a person issuing instructions each time.
 
-The robot is never handed the object's coordinates. Where the object is comes out
-of the RGB-D camera in its head; the true position is read only to score how far
-off the estimate was.
+The robot is never handed the object's coordinates. Where an object is comes out
+of the RGB-D cameras on the robot; the true position is read only to score how
+far off the estimate was.
+
+What is built so far is one piece of that: a single Unitree G1 finding one object
+by vision and picking it up.
 
 ![G1 vision grasp](docs/g1_vision_grasp.gif)
 
