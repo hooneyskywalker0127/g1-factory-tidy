@@ -65,8 +65,13 @@ import onnxruntime as ort  # noqa: E402
 
 FPS = 30                # the planner's own output rate (planner_onnx.md)
 WALK, IDLE = 2, 0       # planner modes
+SQUAT = 4               # planner_onnx.md: mode 4 takes a height, 0.4..0.8 m
 ARRIVE_M = 0.12         # close enough to stop walking
 SETTLE_S = 2.0          # idle at the goal so the tracker ends standing still
+# Squatting needs longer than standing still does: the planner ramps toward a
+# commanded height rather than jumping to it, and two seconds got 13 mm of a
+# 39 mm change.
+SQUAT_S = 6.0
 MAX_S = 40.0            # a walk that has not arrived by now is not going to
 
 # The numbers below are the deployment stack's own, not tuning of ours:
@@ -138,7 +143,8 @@ def _waypoints(path, here, n=4, step=0.25):
     return np.asarray(out[:n])
 
 
-def walk_to(sess, start, goal, seed=0, path=None, look_at=None):
+def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
+            squat_to=None):
     """Roll the planner from `start` to `goal`, steering as the official
     deployment loop does: consume REPLAN frames of a plan, then plan again
     from there with the directions recomputed for where the robot now is."""
@@ -161,7 +167,8 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None):
 
         if arrived_at is None and dist <= ARRIVE_M:
             arrived_at = len(out)
-        if arrived_at is not None and (len(out) - arrived_at) / FPS >= SETTLE_S:
+        hold_s = SQUAT_S if squat_to else SETTLE_S
+        if arrived_at is not None and (len(out) - arrived_at) / FPS >= hold_s:
             break
 
         if arrived_at is None:
@@ -184,11 +191,21 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None):
         else:
             # Standing at the goal. Idle is a static mode: the reference only
             # replans it on a mode/facing/height change, which arriving is.
-            mode = IDLE
+            #
+            # With a height asked for, stand at THAT height instead. The plan
+            # the arm will run was made for a torso at a particular height,
+            # and a walk does not end at the height the robot spawns at --
+            # 0.7888 against 0.750 on this clip. Those 39 mm put every one of
+            # the 71 grasps out of reach: cuRobo's IK got within 6.2 mm of the
+            # best of them against a 5 mm tolerance, so it returned nothing.
+            # planner_onnx.md gives mode 4 a height between 0.4 and 0.8 m for
+            # exactly this, so the robot squats the difference rather than the
+            # plan being bent to meet it.
+            mode = SQUAT if squat_to else IDLE
             move = np.array([[1e-6, 0.0, 0.0]], np.float32)
             face = goal_face
 
-        inp = _inputs(mode, seed, -1.0)
+        inp = _inputs(mode, seed, squat_to if mode == SQUAT else -1.0)
         inp["movement_direction"] = move
         inp["facing_direction"] = face
         if path is not None and arrived_at is None:
@@ -282,8 +299,10 @@ def main():
         goal = tuple(float(v) for v in sys.argv[6:9])
 
     sess = ort.InferenceSession(find_planner(), providers=["CPUExecutionProvider"])
+    squat_to = (float(sys.argv[sys.argv.index("--squat-to") + 1])
+                if "--squat-to" in sys.argv else None)
     qpos, arrived = walk_to(sess, start, goal, path=path,
-                            look_at=look_at)
+                            look_at=look_at, squat_to=squat_to)
     if len(qpos) == 0:
         raise SystemExit("[walk] planner returned nothing")
 
