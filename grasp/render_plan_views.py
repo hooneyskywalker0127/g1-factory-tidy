@@ -51,19 +51,27 @@ FPS = 30
 PALM = "right_hand_palm_link"
 
 
-def observed_cloud():
+FAR_CAP = (sys.argv[sys.argv.index("--far") + 1]
+           if "--far" in sys.argv else None)
+FAR_GRASPS = (sys.argv[sys.argv.index("--far-grasps") + 1]
+              if "--far-grasps" in sys.argv else None)
+
+
+def observed_cloud(cap=None, label=None):
     """Unproject the segmented object back out of the depth image.
 
     This is the cloud GraspGenX was conditioned on -- not the mesh, not the
     simulator's ground truth. If it looks thin, that IS what the model had.
     """
-    meta = json.load(open(os.path.join(CAP, "meta_data.json")))
+    cap = cap or CAP
+    label = label or LABEL
+    meta = json.load(open(os.path.join(cap, "meta_data.json")))
     K = np.asarray(meta["intrinsics"], dtype=np.float64)
     cam = np.asarray(meta["camera_pose"], dtype=np.float64)
     pfc = np.asarray(meta.get("plan_from_cell") or np.eye(4), dtype=np.float64)
-    depth = np.load(os.path.join(CAP, "depth.npy"))
-    seg = np.array(Image.open(os.path.join(CAP, "seg.png")))
-    lid = meta["label_map"][LABEL]
+    depth = np.load(os.path.join(cap, "depth.npy"))
+    seg = np.array(Image.open(os.path.join(cap, "seg.png")))
+    lid = meta["label_map"][label]
 
     m = (seg == lid) & np.isfinite(depth) & (depth > 0)
     ys, xs = np.nonzero(m)
@@ -114,6 +122,25 @@ def main():
     frames = d["frames"]
     palm = np.array([[p["transform"] for p in f["parts"] if p["name"] == PALM][0]
                      for f in frames], dtype=np.float64)
+    # What the robot saw from three metres away, for the frames it spends
+    # walking. Until now the lead frames showed the close-up cloud held still,
+    # which is the one observation the robot does not have yet while it is
+    # still crossing the room. The far capture is what decided that it had to
+    # walk at all, so that is what belongs on screen while it does.
+    far_cloud = far_grasps = None
+    if FAR_CAP:
+        far_cloud = observed_cloud(FAR_CAP, LABEL)
+        if FAR_GRASPS:
+            fg = json.load(open(FAR_GRASPS))
+            far_grasps = np.asarray(fg["grasps"], dtype=np.float64)
+            # Those are in the cell's own frame; the near cloud and the
+            # trajectory live in the planner's, one robot_base_pose above.
+            far_grasps = far_grasps.copy()
+            far_grasps[:, 2, 3] += BASE_Z
+        far_cloud = far_cloud.copy()
+        print(f"[views] far cloud {far_cloud.shape[0]} pts"
+              + (f", {len(far_grasps)} far grasps" if far_grasps is not None else ""))
+
     print(f"[views] cloud {cloud.shape[0]} pts, {len(grasps)} grasps, "
           f"{len(frames)} trajectory frames, {LEAD} lead frames")
 
@@ -125,19 +152,27 @@ def main():
     cloud_out, traj_out = f"{OUT}_cloud.mp4", f"{OUT}_traj.mp4"
     w = imageio.get_writer(cloud_out, fps=FPS, quality=8)
     for i in range(n):
+        walking = far_cloud is not None and i < LEAD
+        pts = far_cloud if walking else cloud
+        cand = far_grasps if (walking and far_grasps is not None) else grasps
         ax.clear()
-        setup(ax, cloud, f"observed cloud + {len(grasps)} grasp candidates")
-        ax.scatter(cloud[:, 0], cloud[:, 1], cloud[:, 2], s=3,
-                   c="#7fb3ff", alpha=0.85, linewidths=0)
+        setup(ax, pts, ("seen from 3.9 m: %d pts, %d grasps -- too far to reach"
+                        % (len(pts), len(cand))) if walking else
+              f"observed cloud + {len(grasps)} grasp candidates")
+        ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], s=3,
+                   c="#ffb27f" if walking else "#7fb3ff",
+                   alpha=0.85, linewidths=0)
         # The candidates sit almost on top of each other -- they are 80
         # top-down grasps on one small box face, and that IS the answer the
         # model gave. Drawn long enough to see the spread rather than hidden
         # by it: only the approach axis, so the picture stays readable.
-        for g in grasps:
+        for g in cand:
             a, b = axes_at(g, 0.035)[1]          # grasp-frame y = approach
             ax.plot(*zip(a, b), color="#b0b0b0", lw=0.8, alpha=0.75)
-        for (a, b), col in zip(axes_at(chosen, 0.05), ("#ff5a5a", "#5aff8f", "#5a9dff")):
-            ax.plot(*zip(a, b), color=col, lw=2.4)
+        if not walking:
+            for (a, b), col in zip(axes_at(chosen, 0.05),
+                                   ("#ff5a5a", "#5aff8f", "#5a9dff")):
+                ax.plot(*zip(a, b), color=col, lw=2.4)
         # turn slowly so the shape of the cloud reads in a flat image
         ax.view_init(elev=22, azim=-60 + 360.0 * i / max(n, 1))
         w.append_data(grab(fig))
