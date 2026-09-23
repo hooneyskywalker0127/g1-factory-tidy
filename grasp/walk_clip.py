@@ -72,6 +72,8 @@ SETTLE_S = 2.0          # idle at the goal so the tracker ends standing still
 # commanded height rather than jumping to it, and two seconds got 13 mm of a
 # 39 mm change.
 SQUAT_S = 12.0
+STEADY_N = 45          # frames of pelvis height that have to agree
+STEADY_M = 0.002       # ...to within this, before the squat counts as landed
 MAX_S = 40.0            # a walk that has not arrived by now is not going to
 
 # The numbers below are the deployment stack's own, not tuning of ours:
@@ -168,8 +170,22 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
         if arrived_at is None and dist <= ARRIVE_M:
             arrived_at = len(out)
         hold_s = SQUAT_S if squat_to else SETTLE_S
-        if arrived_at is not None and (len(out) - arrived_at) / FPS >= hold_s:
-            break
+        held = 0 if arrived_at is None else (len(out) - arrived_at) / FPS
+        if arrived_at is not None and held >= hold_s:
+            # With a height commanded, twelve seconds is a floor and not the
+            # end. The planner ramps toward the height and from some starts it
+            # is still swinging when the clock runs out -- measured, one clip
+            # ended 0.7665 with 13.4 mm of travel across its last two seconds
+            # while another from the same code ended 0.7525 with 0.6 mm. What
+            # the pick needs is not a duration, it is a pelvis that has
+            # stopped moving, so wait for the planner's own output to settle
+            # and let MAX_S be the thing that gives up.
+            if squat_to is None:
+                break
+            recent = np.asarray([o[2] for o in out[-STEADY_N:]], np.float32)
+            if len(recent) >= STEADY_N and \
+                    float(recent.max() - recent.min()) <= STEADY_M:
+                break
 
         if arrived_at is None:
             mode = WALK

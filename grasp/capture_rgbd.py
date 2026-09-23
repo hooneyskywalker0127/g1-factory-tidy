@@ -34,10 +34,41 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "map"))
 sys.path.insert(0, os.path.join(REPO, "grasp"))
 
-_args = [a for a in sys.argv[1:] if not a.startswith("--")]
+def _isnum(a):
+    try:
+        float(a)
+        return True
+    except ValueError:
+        return False
+
+
+# Positional args are the looking pose; a flag's value is not one of them, so
+# only numbers count.
+_args = [a for a in sys.argv[1:] if not a.startswith("--") and _isnum(a)]
 STAND_X = float(_args[0]) if len(_args) > 0 else -1.30
 STAND_Y = float(_args[1]) if len(_args) > 1 else -0.60
 STAND_YAW = float(_args[2]) if len(_args) > 2 else -90.0
+# Or take the looking pose from the walk itself, so a run from a different
+# start does not need the arrival typed out. The clip's last frame is where
+# the robot is; --back then steps it straight backwards along its own heading,
+# which is a property of the depth camera (the object has to sit outside its
+# 0.40 m blind zone) and not a place in the cell.
+if "--stand-from-walk" in sys.argv:
+    import math as _math, joblib as _jl0, numpy as _np0
+    _c0 = list(_jl0.load(
+        sys.argv[sys.argv.index("--stand-from-walk") + 1]).values())[0]
+    _t0 = _np0.asarray(_c0["root_trans_offset"])[-1]
+    _q0 = _np0.asarray(_c0["root_rot"])[-1]          # xyzw
+    _x, _y, _z, _w = (float(v) for v in _q0)
+    _yaw0 = _math.atan2(2 * (_w * _z + _x * _y), 1 - 2 * (_y * _y + _z * _z))
+    _back = (float(sys.argv[sys.argv.index("--back") + 1])
+             if "--back" in sys.argv else 0.0)
+    STAND_X = float(_t0[0]) - _back * _math.cos(_yaw0)
+    STAND_Y = float(_t0[1]) - _back * _math.sin(_yaw0)
+    STAND_YAW = _math.degrees(_yaw0)
+    print(f"[cap] looking from ({STAND_X:.3f}, {STAND_Y:.3f}) "
+          f"yaw {STAND_YAW:.1f} deg -- the walk's last frame backed off "
+          f"{_back:.2f} m")
 OUT = (sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv
        else os.path.join(REPO, "results", "capture"))
 PLAN = sys.argv[sys.argv.index("--plan") + 1] if "--plan" in sys.argv else None

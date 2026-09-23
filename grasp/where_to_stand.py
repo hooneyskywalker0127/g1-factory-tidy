@@ -65,6 +65,12 @@ def _wrap(a):
     return (a + math.pi) % (2.0 * math.pi) - math.pi
 
 
+# What the pick is built around: the object sits this far in front of the
+# reaching pose. capture_rgbd.py uses the same number to decide how far back
+# to shoot from, since it is inside the depth camera's 0.40 m blind zone.
+PLAN_REACH = 0.35
+
+
 def _desk_from_grasps(tools):
     """The desk, positioned from what the camera saw rather than an assumed stand.
 
@@ -216,9 +222,28 @@ def main():
                             np.cos(bearing - stands[:, 2])))
     # Bucket the angle so near-equal headings are separated by confidence
     # rather than by a fraction of a degree.
+    # ...and among those, stand near enough that the arm is not at full
+    # stretch. Dropping the stands inside the desk also pushes the survivors
+    # outward, and the first run after that filter chose one 0.473 m from the
+    # object against 0.351 m for the stand that works: cuRobo's IK still
+    # reaches the grasp from there, but plan_grasp falls back to "approach
+    # only" -- it can get the palm to the box and cannot then close and lift.
+    # Reach is what the arm has left over, so it belongs in the ranking next
+    # to facing. The distance is to the grasps the camera produced, bucketed
+    # at 5 cm so it separates stands rather than sorting on millimetres.
+    # The distance to aim for is not ours either: the pick is built around the
+    # object sitting PLAN_REACH in front of the reaching pose -- the same
+    # number capture_rgbd.py shoots from behind, because it is inside the
+    # depth camera's blind zone. Rank by how near a stand comes to that, then
+    # by facing. Measured the other way round, facing first, the winner was
+    # 0.425 m out and plan_grasp could only manage "approach only".
+    reach = np.linalg.norm(stands[:, :2] - centre[:2], axis=1)
     idx = sorted(np.nonzero(ok)[0],
-                 key=lambda i: (round(math.degrees(off[i]) / 10.0),
+                 key=lambda i: (round(abs(reach[i] - PLAN_REACH) / 0.05),
+                                round(math.degrees(off[i]) / 10.0),
                                 -conf[i], err[i]))[0]
+    print(f"[stand] chosen stand is {reach[idx]:.3f} m from the grasps; "
+          f"the clear ones span {reach[ok].min():.3f}..{reach[ok].max():.3f} m")
     print(f"[stand] object sits {math.degrees(off[ok].min()):.1f}"
           f"..{math.degrees(off[ok].max()):.1f} deg off the body's front "
           f"across the reachable stands; taking "
