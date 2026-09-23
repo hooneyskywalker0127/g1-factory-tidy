@@ -146,6 +146,10 @@ if "--pelvis-from-walk" in sys.argv:
                        else "pos"])
     PELVIS_Z = float(_r[-1, 2])
     print(f"[cap] pelvis z {PELVIS_Z:.4f} read from the walk's last frame")
+elif "--pelvis-z" in sys.argv:
+    # An explicit height, for sweeping the reach envelope.
+    PELVIS_Z = float(sys.argv[sys.argv.index("--pelvis-z") + 1])
+    print(f"[cap] pelvis z {PELVIS_Z:.4f} (given)")
 else:
     PELVIS_Z = SCENE_Z
 cfg.init_state = cfg.init_state.replace(
