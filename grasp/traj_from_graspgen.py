@@ -31,27 +31,13 @@ d = json.load(open(src))
 frames = d["frames"]
 q = np.array([f["joint_position"] for f in frames], dtype=np.float32)
 names = ARM + HAND
-base = None
-if q.shape[1] == len(names) + 3:
-    # A whole-body plan: cuRobo's floating base (base_j_x, base_j_y,
-    # base_j_ztheta) leads the row. Those are not arm joints -- they are where
-    # the robot stands, frame by frame, which is the walk. Split them off and
-    # write them beside the arm trajectory.
-    base, q = q[:, :3], q[:, 3:]
 if q.shape[1] != len(names):
     raise SystemExit(f"{q.shape[1]} columns but {len(names)} joint names")
 
-# torso_link is what the cell places the plan's scene against. In an arm-only
-# plan it is parts[0] and never moves. In a whole-body plan the base moves it
-# every frame, so take it where the pick actually happens -- the last frame --
-# and look it up by name rather than by position, because that chain starts at
-# the pelvis.
-_names = [p["name"] for p in frames[0]["parts"]]
-if "torso_link" not in _names:
-    raise SystemExit("no torso_link in parts: " + ", ".join(_names[:4]))
-_ti = _names.index("torso_link")
-_tf = -1 if base is not None else 0
-torso = np.array(frames[_tf]["parts"][_ti]["transform"], dtype=np.float64)
+# torso_link is the plan's root; it is parts[0] and does not move.
+torso = np.array(frames[0]["parts"][0]["transform"], dtype=np.float64)
+if frames[0]["parts"][0]["name"] != "torso_link":
+    raise SystemExit("parts[0] is not torso_link: " + frames[0]["parts"][0]["name"])
 # Where the object is depends on the playback mode the plan was replayed in:
 # kinematic leaves it in `static`, dynamic moves it every frame so it lives in
 # `objects` + `frames[*].object_poses`. Either way we want its mesh and its
@@ -86,7 +72,6 @@ for name, item in (d.get("static") or {}).items():
 mesh = _abs(mesh)
 meta = {
     "joint_names": names,
-    "base_path": (base.tolist() if base is not None else None),
     "fps": d["fps"],
     "phases": [f["phase"] for f in frames],
     "object": {"mesh": mesh, "transform_in_torso": obj_in_torso.tolist()},

@@ -112,9 +112,29 @@ def main():
         dtype=torch.float32, device="cuda")          # wxyz, as cuRobo wants
 
     n = len(tools)
-    pose = GoalToolPose(tool_frames=[TOOL],
-                        position=pos.reshape(n, 1, 1, 1, 3),
-                        quaternion=quat.reshape(n, 1, 1, 1, 4))
+    # The floating-base build declares a second tool frame, torso_link, so the
+    # body can be given an opinion of its own (cuRobo takes one goal and one
+    # ToolPoseCriteria per frame). Here it is given no opinion at all: a
+    # placeholder goal with disabled criteria, so it constrains nothing.
+    #
+    # Which way the body ends up facing is then read off the answers rather
+    # than asked for. It has to be: "stand so the object is in front of you"
+    # depends on where you end up standing, so asking for a heading and
+    # re-asking from the answer chases its own tail -- measured, 75 -> 57 ->
+    # 107 degrees off instead of settling. Every solution here already reaches
+    # the grasp, so scoring them costs nothing and cannot fail.
+    frames = list(ik.kinematics.tool_frames)
+    pos_f = pos.reshape(n, 1, 1, 1, 3)
+    quat_f = quat.reshape(n, 1, 1, 1, 4)
+    if len(frames) > 1:
+        from curobo._src.cost.tool_pose_criteria import ToolPoseCriteria
+        ik.update_tool_pose_criteria(
+            {f: (ToolPoseCriteria() if f == TOOL else ToolPoseCriteria.disabled())
+             for f in frames})
+        pos_f = pos_f.repeat(1, 1, len(frames), 1, 1)
+        quat_f = quat_f.repeat(1, 1, len(frames), 1, 1)
+    pose = GoalToolPose(tool_frames=frames, position=pos_f.contiguous(),
+                        quaternion=quat_f.contiguous())
     r = ik.solve_pose(goal_tool_poses=pose)
     ok = r.success.view(-1).cpu().numpy().astype(bool)
     sol = r.solution.view(n, -1, len(names))[:, 0].cpu().numpy()
@@ -126,9 +146,25 @@ def main():
 
     stands = np.stack([sol[:, bx], sol[:, by],
                        np.array([_wrap(v) for v in sol[:, bz]])], axis=1)
-    # Of the grasps that can be reached, take the one the grasp model liked
-    # best. Ties in confidence are broken by IK error.
-    idx = sorted(np.nonzero(ok)[0], key=lambda i: (-conf[i], err[i]))[0]
+    # Of the places the arm can reach from, stand where the object is in front
+    # of you. Every one of these is reachable -- 80 of 80 on this scene -- so
+    # the choice costs nothing in reach, and it decides whether the arm works
+    # across the body or straight ahead. The bearing is measured from each
+    # candidate stand to the grasps the camera produced, so nothing is written
+    # down here either.
+    centre = tools[:, :3, 3].mean(axis=0)
+    bearing = np.arctan2(centre[1] - stands[:, 1], centre[0] - stands[:, 0])
+    off = np.abs(np.arctan2(np.sin(bearing - stands[:, 2]),
+                            np.cos(bearing - stands[:, 2])))
+    # Bucket the angle so near-equal headings are separated by confidence
+    # rather than by a fraction of a degree.
+    idx = sorted(np.nonzero(ok)[0],
+                 key=lambda i: (round(math.degrees(off[i]) / 10.0),
+                                -conf[i], err[i]))[0]
+    print(f"[stand] object sits {math.degrees(off[ok].min()):.1f}"
+          f"..{math.degrees(off[ok].max()):.1f} deg off the body's front "
+          f"across the reachable stands; taking "
+          f"{math.degrees(off[idx]):.1f} deg")
     sx, sy, syaw = stands[idx]
     print(f"[stand] best grasp #{idx} conf {conf[idx]:.3f} "
           f"palm {np.round(tools[idx][:3, 3], 3)} err {err[idx]*1000:.2f} mm")

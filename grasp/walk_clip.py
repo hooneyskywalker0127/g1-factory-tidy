@@ -28,8 +28,26 @@
 #    frame per tick and replans every CONTROLLER_DT (8 frames), so the robot
 #    is always walking toward where the goal is now.
 #
+# 3. It cross-fades one plan into the next. Two plans made 8 frames apart do
+#    not agree exactly on where the robot is, and butting them together leaves
+#    a step at every seam -- 30 of them in a four second walk, which is what
+#    makes a tracked walk judder. The reference blends over 8 frames
+#    (planner_onnx.md, "Animation Blending"): joint and root positions
+#    linearly, root rotation by slerp.
+#
+# 4. It can follow a path rather than a point. Steering straight at the goal
+#    walks through whatever is in between -- on this cell that is the table,
+#    for about three quarters of a second. cuRobo already solved a base path
+#    that avoids it, because the table is in the collision world it planned
+#    against, so the walk follows those waypoints instead of a bearing. The
+#    planner takes them directly: has_specific_target with
+#    specific_target_positions / specific_target_headings, four at a time
+#    (planner_onnx.md, "Advanced Inputs").
+#
 #   python grasp/walk_clip.py OUT_DIR NAME START_X START_Y START_YAW \
 #                                      GOAL_X GOAL_Y GOAL_YAW
+#   python grasp/walk_clip.py OUT_DIR NAME --path results/g1_graspgen.json
+import json
 import math
 import os
 import sys
@@ -62,6 +80,7 @@ MAX_S = 40.0            # a walk that has not arrived by now is not going to
 # which no-ops until CONTROLLER_DT has elapsed). Committing a whole planner
 # output instead is what makes a robot stride past its goal and turn round.
 REPLAN = 8
+BLEND = 8               # planner_onnx.md, "Animation Blending"
 CTX_FRAMES = 4
 CTX_OFFSET = 4 - 4      # -NUM_FRAMES_PER_TOKEN + DEFAULT_PRED_OFFSETS
 
@@ -75,7 +94,51 @@ def _ctx_at(x, y, yaw_deg):
     return np.tile(q, (1, 4, 1)).astype(np.float32)
 
 
-def walk_to(sess, start, goal, seed=0):
+def _slerp(q0, q1, t):
+    """Shortest-arc quaternion interpolation, wxyz, as the reference blends."""
+    d = float(np.dot(q0, q1))
+    if d < 0.0:
+        q1, d = -q1, -d
+    if d > 0.9995:
+        out = q0 + t * (q1 - q0)
+        return out / np.linalg.norm(out)
+    th = math.acos(max(-1.0, min(1.0, d)))
+    s0 = math.sin((1.0 - t) * th) / math.sin(th)
+    s1 = math.sin(t * th) / math.sin(th)
+    return s0 * q0 + s1 * q1
+
+
+def _blend(old, new):
+    """Cross-fade `new` onto `old` over len(new) frames, in qpos layout:
+    [root_xyz(3), root_quat_wxyz(4), dof(29)]."""
+    n = len(new)
+    out = new.copy()
+    for i in range(n):
+        w = (i + 1) / (n + 1)
+        out[i, 0:3] = (1.0 - w) * old[i, 0:3] + w * new[i, 0:3]
+        out[i, 7:] = (1.0 - w) * old[i, 7:] + w * new[i, 7:]
+        out[i, 3:7] = _slerp(old[i, 3:7], new[i, 3:7], w)
+    return out
+
+
+def _waypoints(path, here, n=4, step=0.25):
+    """The next n points along `path`, starting from whatever is nearest to
+    `here` and spaced about `step` metres apart."""
+    d = np.linalg.norm(path[:, :2] - here[None, :2], axis=1)
+    i = int(np.argmin(d))
+    out, last = [], path[i]
+    j = i
+    while len(out) < n and j < len(path):
+        if np.linalg.norm(path[j, :2] - last[:2]) >= step or j == len(path) - 1:
+            out.append(path[j])
+            last = path[j]
+        j += 1
+    while len(out) < n:
+        out.append(path[-1])
+    return np.asarray(out[:n])
+
+
+def walk_to(sess, start, goal, seed=0, path=None, look_at=None):
     """Roll the planner from `start` to `goal`, steering as the official
     deployment loop does: consume REPLAN frames of a plan, then plan again
     from there with the directions recomputed for where the robot now is."""
@@ -86,6 +149,7 @@ def walk_to(sess, start, goal, seed=0):
                            math.sin(math.radians(gyaw)), 0.0]], np.float32)
 
     plan = None
+    prev = None                     # (previous plan, where playback left off)
     ctx = _ctx_at(sx, sy, syaw)
     out, arrived_at = [], None
 
@@ -103,10 +167,20 @@ def walk_to(sess, start, goal, seed=0):
         if arrived_at is None:
             mode = WALK
             move = np.array([[to_goal[0], to_goal[1], 0.0]], np.float32) / max(dist, 1e-6)
-            # Face the way you are walking while there is ground to cover, so
-            # the robot does not sidestep the whole way in; the last stretch
-            # turns onto the heading the pick needs.
-            face = goal_face if dist < 1.0 else move
+            # Keep your eyes on the thing you are going to pick up. The planner
+            # takes movement_direction and facing_direction as separate
+            # world-frame vectors (planner_onnx.md), so where the robot walks
+            # and where it looks are two different questions: it walks at the
+            # stand the plan chose and looks at the object the whole way, which
+            # is also what leaves it facing the object when it arrives. Without
+            # an object to look at it faces the way it is walking and only
+            # turns onto the pick's heading over the last metre.
+            if look_at is not None:
+                to_obj = look_at - root
+                face = np.array([[to_obj[0], to_obj[1], 0.0]], np.float32)
+                face /= max(float(np.linalg.norm(to_obj)), 1e-6)
+            else:
+                face = goal_face if dist < 1.0 else move
         else:
             # Standing at the goal. Idle is a static mode: the reference only
             # replans it on a mode/facing/height change, which arriving is.
@@ -117,6 +191,15 @@ def walk_to(sess, start, goal, seed=0):
         inp = _inputs(mode, seed, -1.0)
         inp["movement_direction"] = move
         inp["facing_direction"] = face
+        if path is not None and arrived_at is None:
+            # Follow cuRobo's collision-free base path. Four waypoints is one
+            # token's worth, which is what the model takes.
+            wp = _waypoints(path, root)
+            inp["has_specific_target"] = np.array([[1]], np.int64)
+            inp["specific_target_positions"] = np.stack(
+                [[w[0], w[1], STAND_ROOT_Z] for w in wp])[None].astype(np.float32)
+            inp["specific_target_headings"] = np.array(
+                [[float(w[2]) for w in wp]], np.float32)
         got, npf = sess.run(None, {"context_mujoco_qpos": ctx, **inp})
         n = int(npf.reshape(-1)[0])
         plan = got[0, :n].astype(np.float32)
@@ -130,9 +213,20 @@ def walk_to(sess, start, goal, seed=0):
         take = body[:REPLAN]
         if len(take) == 0:
             break
+
+        # Cross-fade the seam. The old plan has frames for this stretch too --
+        # it was cut short, not finished -- so blend across them rather than
+        # cutting straight to the new one.
+        if prev is not None:
+            p_plan, p_idx = prev
+            nb = min(BLEND, len(take), max(0, len(p_plan) - p_idx))
+            if nb > 0:
+                take = take.copy()
+                take[:nb] = _blend(p_plan[p_idx:p_idx + nb], take[:nb])
         out.extend(take)
 
         i = len(plan) - len(body) + len(take)      # where playback now sits
+        prev = (plan, i)
         idx = [max(0, min(i + CTX_OFFSET + k, len(plan) - 1)) for k in range(CTX_FRAMES)]
         ctx = plan[idx][None].astype(np.float32)
 
@@ -142,11 +236,23 @@ def walk_to(sess, start, goal, seed=0):
 
 def main():
     out_dir, name = sys.argv[1], sys.argv[2]
-    start = tuple(float(v) for v in sys.argv[3:6])
-    goal = tuple(float(v) for v in sys.argv[6:9])
+    path = None
+    if "--path" in sys.argv:
+        d = json.load(open(sys.argv[sys.argv.index("--path") + 1]))
+        path = np.asarray(d["base_path"], dtype=np.float32)
+        ow = d.get("object_world")
+        look_at = np.asarray(ow[:2], np.float32) if ow else None
+        start = (float(path[0][0]), float(path[0][1]), math.degrees(path[0][2]))
+        goal = (float(path[-1][0]), float(path[-1][1]), math.degrees(path[-1][2]))
+        print(f"[walk] following {len(path)} cuRobo base waypoints")
+    else:
+        look_at = None
+        start = tuple(float(v) for v in sys.argv[3:6])
+        goal = tuple(float(v) for v in sys.argv[6:9])
 
     sess = ort.InferenceSession(find_planner(), providers=["CPUExecutionProvider"])
-    qpos, arrived = walk_to(sess, start, goal)
+    qpos, arrived = walk_to(sess, start, goal, path=path,
+                            look_at=look_at)
     if len(qpos) == 0:
         raise SystemExit("[walk] planner returned nothing")
 
@@ -169,6 +275,25 @@ def main():
     dst = os.path.join(out_dir, f"{name}.pkl")
     joblib.dump({name: qpos_to_motion_lib(qpos, FPS)}, dst, compress=True)
     print(f"[walk] wrote {dst}")
+
+    # The pose the arm is actually in when the walk ends, by joint name.
+    # cuRobo plans from a start state; handed the config's pre-grasp pose it
+    # plans from a pose the robot is not in, and the difference has to be
+    # crossed somehow -- which is the hand teleporting. Given this instead,
+    # the planner makes the whole motion itself, from where the arm is to the
+    # grasp, and there is nothing left to interpolate.
+    import os as _os
+    _cwd = _os.getcwd()
+    _os.chdir("/home/sehoon/Projects/GR00T-WholeBodyControl")
+    try:
+        from foot_height import load_urdf
+        joint_names = load_urdf()[1]
+    finally:
+        _os.chdir(_cwd)
+    end = {n: float(qpos[-1, 7 + i]) for i, n in enumerate(joint_names)}
+    side = os.path.join(out_dir, f"{name}_end.json")
+    json.dump(end, open(side, "w"), indent=1)
+    print(f"[walk] wrote {side} ({len(end)} joints at the walk's last frame)")
 
 
 if __name__ == "__main__":
