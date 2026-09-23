@@ -125,8 +125,31 @@ cfg.spawn = cfg.spawn.replace(
     articulation_props=sim_utils.ArticulationRootPropertiesCfg(
         enabled_self_collisions=False, solver_position_iteration_count=8,
         solver_velocity_iteration_count=4, fix_root_link=True))
+# Two heights that used to be one. SCENE_Z places the plan's desk and box in
+# the cell and must not move -- that is the environment. The ROBOT, though,
+# has to stand where it will actually be standing when the plan runs, which
+# after a walk is the height GR00T's clip ends at and not the height Isaac
+# spawns it at. What ties a capture to a plan is the plan_from_cell recorded
+# below, and that is taken from the robot's pose; shoot from a pose the robot
+# is never in and the plan is off by the difference.
+SCENE_Z = cfg.init_state.pos[2]
+if "--pelvis-from-walk" in sys.argv:
+    # Read it off the clip rather than copying a number out of a log: the
+    # walk's nominal standing height and the height its last frame actually
+    # ends at are not the same (0.793 against 0.7888 on one clip), and 4 mm
+    # is the whole margin between the fingers closing around the box and
+    # closing above it.
+    import joblib as _jl
+    _clip = _jl.load(sys.argv[sys.argv.index("--pelvis-from-walk") + 1])
+    _m = list(_clip.values())[0]
+    _r = np.asarray(_m["root_trans_offset" if "root_trans_offset" in _m
+                       else "pos"])
+    PELVIS_Z = float(_r[-1, 2])
+    print(f"[cap] pelvis z {PELVIS_Z:.4f} read from the walk's last frame")
+else:
+    PELVIS_Z = SCENE_Z
 cfg.init_state = cfg.init_state.replace(
-    pos=(STAND_X, STAND_Y, cfg.init_state.pos[2]),
+    pos=(STAND_X, STAND_Y, PELVIS_Z),
     rot=(math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)))
 robot = Articulation(cfg)
 for _ in range(3):
@@ -135,7 +158,7 @@ for _ in range(3):
 meta = json.load(open(PLAN)) if PLAN else {}
 if meta:
     px, py, pyaw = PLAN_STAND
-    plan_torso = torso_pose((px, py, cfg.init_state.pos[2]), math.radians(pyaw))
+    plan_torso = torso_pose((px, py, SCENE_Z), math.radians(pyaw))
     build_plan_scene(stage, app, meta, plan_torso)
     for i, name in enumerate(
             [s["name"] for s in meta.get("support", [])] + ["object"], start=1):
@@ -310,7 +333,17 @@ Image.fromarray(seg.astype(np.int32), mode="I").save(os.path.join(OUT, "seg.png"
 # robots/*.yaml gives. Anything reading this capture for planning has to move
 # the clouds across, and the only thing needed for that is where the torso
 # stood when the scene was placed.
-plan_from_cell = np.linalg.inv(plan_torso) if meta else np.eye(4)
+# The plan frame is where the torso will be WHEN THE PLAN RUNS, which is not
+# the torso that placed the scene. plan_torso put the desk and the box where
+# they are and stays on the spawn height; this one is the height the robot
+# actually stands at, because every joint angle cuRobo returns is measured
+# from it. One variable doing both jobs is how a robot that walks in and
+# stands 43 mm taller than it spawns reached 43 mm high and took the box off
+# its top edge instead of closing around it.
+plan_from_cell = (np.linalg.inv(torso_pose((PLAN_STAND[0], PLAN_STAND[1],
+                                            PELVIS_Z),
+                                           math.radians(PLAN_STAND[2])))
+                  if meta else np.eye(4))
 
 json.dump({
     "plan_from_cell": plan_from_cell.tolist(),
