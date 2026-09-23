@@ -237,7 +237,29 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None):
 def main():
     out_dir, name = sys.argv[1], sys.argv[2]
     path = None
-    if "--path" in sys.argv:
+    if "--stand" in sys.argv:
+        # Where to walk to, decided by vision rather than typed here.
+        # grasp/where_to_stand.py runs cuRobo's IK on the grasps GraspGen
+        # produced from the far capture, with the floating base free, and the
+        # answer comes back as a place to stand in the cell's own frame. The
+        # start is the robot's own odometry.
+        d = json.load(open(sys.argv[sys.argv.index("--stand") + 1]))
+        st = d["stand"]
+        start = tuple(float(v) for v in sys.argv[3:6])
+        goal = (float(st["x"]), float(st["y"]), float(st["yaw_deg"]))
+        look_at = None
+        # Hand the planner the stand as a target of its own rather than
+        # steering it there by bearing. planner_onnx.md's "Advanced Inputs":
+        # has_specific_target with specific_target_positions /
+        # specific_target_headings. Steering by bearing commits eight frames
+        # at a time and walks past -- measured 0.361 m past this goal, which
+        # the arrival glide would then have to slide across.
+        path = np.array([[goal[0], goal[1], math.radians(goal[2])]],
+                        dtype=np.float32)
+        print(f"[walk] goal from vision: {np.round(goal, 3)} "
+              f"(grasp #{d.get('grasp_index')}, conf {d.get('confidence'):.3f}, "
+              f"{d.get('reachable')}/{d.get('total')} grasps reachable)")
+    elif "--path" in sys.argv:
         d = json.load(open(sys.argv[sys.argv.index("--path") + 1]))
         path = np.asarray(d["base_path"], dtype=np.float32)
         ow = d.get("object_world")
