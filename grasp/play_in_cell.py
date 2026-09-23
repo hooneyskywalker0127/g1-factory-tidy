@@ -38,6 +38,37 @@ OUT = sys.argv[sys.argv.index("--video") + 1] if "--video" in sys.argv \
 # clock here, and judging whether a grasp held needs none of it -- this is how
 # a batch of grasp candidates gets evaluated in reasonable time.
 NO_VIDEO = "--no-video" in sys.argv
+# Writing the leg joint states every physics step is what keeps the lower body
+# from buzzing once the robot stops, but it also disturbs the articulation
+# solver mid-step: measured, the fingers reached only thumb -0.38 / index 0.38
+# by the time the no-walk run had them at -1.46 / 1.63, and the box was pushed
+# away before they closed on it. This turns that write off so the two can be
+# compared.
+FREEZE_LEGS = "--no-freeze-legs" not in sys.argv
+# Every leg write during the trajectory costs the grasp: the box was shoved
+# 119.9 mm with the legs written each substep, 77.6 mm once a frame, 33.9 mm
+# with only the pelvis per substep. This drops the leg writes entirely once
+# the reach starts -- the settle still squares the lower body first.
+LEGS_SETTLE_ONLY = "--legs-settle-only" in sys.argv
+# How often the legs are written during the reach. The box is shoved 119.9 mm
+# when that happens every physics substep, 33.9 mm once a frame, and 1046 mm
+# -- off the table -- when it never happens at all, so the disturbance and the
+# hold trade against each other and the best setting is somewhere between.
+LEG_HOLD_EVERY = int(sys.argv[sys.argv.index("--leg-hold-every") + 1]) \
+    if "--leg-hold-every" in sys.argv else 1
+STIFF_LEGS = "--stiff-legs" in sys.argv
+# Render the walk and stop, leaving the pick to a second run.
+#
+# The two phases are two controllers -- GR00T moves the body, cuRobo moves the
+# arm -- and forcing them into one simulation means holding the pelvis and the
+# legs by hand while the arm works. Every way of doing that costs the grasp:
+# writing the legs each substep shoves the box 119.9 mm, once a frame 33.9 mm,
+# every fourth frame blows the sim up, not at all lets the robot sag and the
+# box travels 1046 mm. The no-walk run, whose pelvis is a real fixed joint,
+# lifts the box by 121.5 mm every time. So the walk is rendered with a free
+# root and the pick with a fixed one, and the two runs are joined on one
+# clock afterwards.
+WALK_ONLY = "--walk-only" in sys.argv
 
 app = AppLauncher(headless=True, enable_cameras=not NO_VIDEO).app
 
@@ -158,6 +189,26 @@ _fm.func("/World/G1/FingerMaterial", _fm)
 sim_utils.bind_physics_material("/World/G1", "/World/G1/FingerMaterial")
 print(f"[play] finger pads mu {FINGER_MU}, object mu {OBJECT_MU}")
 
+# Third view: the head camera, the same mount grasp/capture_rgbd.py shoots the
+# capture from -- 86 deg horizontal FoV, pitched 15 deg down because G1 has no
+# neck joint. This is the view the grasp was predicted from, so a render
+# should show it next to what the hand is doing. (Taken from commit 2bb0fde.)
+HEAD_FOV, HEAD_APERTURE, HEAD_PITCH_DEG = 86.0, 20.955, 15.0
+_hf = HEAD_APERTURE / (2.0 * math.tan(math.radians(HEAD_FOV) / 2.0))
+_hp = math.radians(HEAD_PITCH_DEG) / 2.0
+# Not parented under head_link. IsaacLab's G1 USD merges fixed joints and
+# absorbs head_link into the torso, so that prim path is not a body the
+# articulation moves -- a camera hung there costs a great deal per frame and
+# does not follow a root that is written rather than simulated. This is a free
+# prim whose world pose is set from torso_link each frame, the same way the
+# room camera is placed.
+eye_cam = None if NO_VIDEO else Camera(CameraCfg(
+    prim_path="/Render/HeadCam", update_period=0.0,
+    width=960, height=540, data_types=["rgb"],
+    spawn=sim_utils.PinholeCameraCfg(focal_length=_hf,
+                                     horizontal_aperture=HEAD_APERTURE,
+                                     clipping_range=(0.01, 20.0))))
+
 # The plan's scene, placed relative to where the robot's torso will stand.
 # This has to happen BEFORE sim.reset(): PhysX builds its scene there, and a
 # rigid body added afterwards is never simulated -- it just hangs frozen in
@@ -239,21 +290,49 @@ if cam is not None:
         eyes=torch.tensor([eye], dtype=torch.float32, device=cam.device),
         targets=torch.tensor([tgt], dtype=torch.float32, device=cam.device))
 
-frames, head_frames = [], []
+frames, head_frames, eye_frames = [], [], []
 tgt_q = robot.data.default_joint_pos.clone()
 zero = torch.zeros_like(tgt_q)
 
 
+_TORSO_ID = (robot.find_bodies(["torso_link"])[0] or [None])[0]
+
+
 def _shoot():
-    """One recorded frame, the same pair the trajectory loop collects."""
+    """One recorded frame, the same set the trajectory loop collects."""
     if NO_VIDEO:
         return
+    # The head camera is a prim under head_link, and a prim does not follow a
+    # root that is moved by a WRITE rather than by the simulation (Fabric is
+    # off). During the walk it would sit at the start of the room looking at
+    # nothing, so its world pose is set from torso_link every frame. head_link
+    # itself is not in the articulation -- IsaacLab's G1 USD merges fixed
+    # joints and absorbs it into the torso -- so the offset is main.urdf's
+    # head_joint transform, folded onto the torso's pose.
+    if _TORSO_ID is not None:
+        _p = robot.data.body_pos_w[0, _TORSO_ID].cpu().numpy()
+        _q = robot.data.body_quat_w[0, _TORSO_ID].cpu().numpy()
+        _w, _x, _y, _z = _q
+        _R = np.array([
+            [1 - 2 * (_y * _y + _z * _z), 2 * (_x * _y - _z * _w), 2 * (_x * _z + _y * _w)],
+            [2 * (_x * _y + _z * _w), 1 - 2 * (_x * _x + _z * _z), 2 * (_y * _z - _x * _w)],
+            [2 * (_x * _z - _y * _w), 2 * (_y * _z + _x * _w), 1 - 2 * (_x * _x + _y * _y)]])
+        _eye = _p + _R @ np.array([0.0039635 + 0.08, 0.0, -0.044 + 0.05])
+        _fwd = _R @ np.array([math.cos(math.radians(HEAD_PITCH_DEG)), 0.0,
+                              -math.sin(math.radians(HEAD_PITCH_DEG))])
+        eye_cam.set_world_poses_from_view(
+            eyes=torch.tensor([_eye], dtype=torch.float32, device=sim.device),
+            targets=torch.tensor([_eye + _fwd], dtype=torch.float32,
+                                 device=sim.device))
     app.update()
     cam.update(0.0)
     head_cam.update(0.0)
+    eye_cam.update(0.0)
     frames.append(cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
     head_frames.append(
         head_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+    eye_frames.append(
+        eye_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
 
 
 if walk is not None:
@@ -281,18 +360,45 @@ if walk is not None:
     # Easing it at the table is worse than the teleport -- measured, the arm
     # sweeps the box 1.17 m onto the floor. So it is done on approach, which
     # is also what a person does: you raise your hand as you walk up.
-    _lift_n = min(45, len(walk["dof"]))
-    _lift_from = len(walk["dof"]) - _lift_n
+    # Legs from the clip, arm from the plan -- for the whole walk.
+    #
+    # This is how the stack is built, not a trick to dodge a seam:
+    # decoupled_wbc.md toggles the lower-body and upper-body policies
+    # separately ("menu + left trigger: toggle lower-body policy / menu +
+    # right trigger: toggle upper-body policy"), so while GR00T walks the
+    # legs the arm is commanded by the manipulation side. Holding the plan's
+    # own start pose there means there is no gap between where the arm is and
+    # where the plan begins, so nothing has to cross it -- which is what the
+    # teleport was.
+    #
+    # Measured, this is also the only pose that CAN be planned from. The
+    # table's collision shape is a solid block floor-to-top, and with the arm
+    # hanging at the robot's side 30 of its 183 collision spheres are inside
+    # it, 22 mm deep; from there cuRobo finds nothing. The plan's start pose
+    # clears the same block by 51 mm, and its hand rides 47 cm above the
+    # tabletop, so walking in with it held passes over the desk rather than
+    # through it.
     _plan_q = [float(traj[0, k]) for k in range(len(ids))]
-    print(f"[walk] replaying {len(walk['dof'])} frames, arm onto the plan's "
-          f"first waypoint over the last {_lift_n}")
+    # The waist comes back to the pose the plan assumes over the last stretch
+    # of the walk. Snapping it at the end instead put 7 degrees of torso tilt
+    # into one physics step and threw the box 51 m; easing it in while the
+    # robot is still walking costs nothing and arrives upright.
+    _waist = [j for j, n in enumerate(robot.joint_names) if "waist" in n]
+    _waist_n = min(45, len(walk["dof"]))
+    _waist_from = len(walk["dof"]) - _waist_n
+    print(f"[walk] replaying {len(walk['dof'])} frames: legs from the clip, "
+          f"arm held at the plan's start pose, waist eased upright over the "
+          f"last {_waist_n}")
     for i in range(len(walk["dof"])):
         for k, jid in enumerate(walk_ids):
             tgt_q[0, jid] = float(walk["dof"][i, k])
-        if i >= _lift_from:
-            a = (i - _lift_from + 1) / _lift_n
-            for k, jid in enumerate(ids):
-                tgt_q[0, jid] = (1.0 - a) * float(tgt_q[0, jid]) + a * _plan_q[k]
+        for k, jid in enumerate(ids):
+            tgt_q[0, jid] = _plan_q[k]
+        if i >= _waist_from:
+            a = (i - _waist_from + 1) / _waist_n
+            for j in _waist:
+                tgt_q[0, j] = ((1.0 - a) * float(tgt_q[0, j])
+                               + a * float(robot.data.default_joint_pos[0, j]))
         q = walk["quat"][i]
         robot.write_root_state_to_sim(torch.tensor(
             [[float(walk["pos"][i][0]), float(walk["pos"][i][1]),
@@ -325,11 +431,64 @@ frozen_ids = frozen_q = frozen_v = None
 if walk is not None:
     # Only the legs. The arm and the hand have to keep doing physics -- they
     # are the things touching the box.
+    # Everything the trajectory does not drive, held where the plan assumes it.
+    #
+    # The legs keep the pose the walk left them in -- that is what standing
+    # looks like. The WAIST does not: the plan's joint angles are measured
+    # from torso_link, and the scene is placed against a torso the checkpoint
+    # builds from the pelvis assuming "the waist joints are at 0 in the
+    # default pose and the plan never moves them". A walk does not end with
+    # the waist at 0, and leaving it where the clip put it tilts the torso --
+    # measured, the torso quaternion came out [0.7185, 0.0621, 0.0637,
+    # -0.6899] against the no-walk run's [-0.7070, -0.0001, -0.0002, 0.7072],
+    # about 7 degrees of roll and pitch. Same stand, same object, same arm
+    # angles to a millirad, and the hand still lands somewhere else.
+    _driven = set(ids)
+    # Legs only. The waist is brought upright over the walk and then left to
+    # its PD target -- tgt_q already holds the plan's value for it. Writing
+    # its joint state every physics step instead, the way the legs are held,
+    # made the articulation fight the solver hard enough to throw the box
+    # 51 m and 1457 m down. Holding a joint kinematically is for the parts
+    # that are doing nothing; the waist carries the arm.
     frozen_ids = [robot.find_joints([n])[0][0] for n in robot.joint_names
                   if ("hip" in n or "knee" in n or "ankle" in n)]
+    frozen_ids = [j for j in frozen_ids if j not in _driven]
     frozen_q = robot.data.joint_pos[0, frozen_ids].clone().unsqueeze(0)
+    if STIFF_LEGS:
+        # Let the legs hold themselves instead of being written.
+        #
+        # Writing their joint state is what disturbs the articulation solver,
+        # and the box feels every bit of it: 119.9 mm shoved when the write
+        # happens each substep, 33.9 mm once a frame, 1046 mm when it never
+        # happens and the robot sags, and an outright blow-up when the writes
+        # are spaced out to every fourth frame. Stiffness is the other way to
+        # keep a joint still, and it costs the solver nothing extra --
+        # IsaacLab exposes it at runtime for exactly this.
+        _sf = 50.0
+        _st = robot.data.joint_stiffness[:, frozen_ids] * _sf
+        _dp = robot.data.joint_damping[:, frozen_ids] * _sf
+        robot.write_joint_stiffness_to_sim(_st, joint_ids=frozen_ids)
+        robot.write_joint_damping_to_sim(_dp, joint_ids=frozen_ids)
+        print(f"[walk] leg gains x{_sf:.0f} so the lower body holds itself")
     frozen_v = torch.zeros_like(frozen_q)
     print(f"[walk] holding {len(frozen_ids)} leg joints still for the reach")
+
+if WALK_ONLY:
+    if not NO_VIDEO:
+        import imageio.v2 as _iio
+        for _fr, _sfx in ((frames, ""), (head_frames, "_wrist"),
+                          (eye_frames, "_head")):
+            if not _fr:
+                continue
+            _out = OUT.replace(".mp4", f"{_sfx}.mp4")
+            _w = _iio.get_writer(_out, fps=FPS, quality=8)
+            for _f in _fr:
+                _w.append_data(_f)
+            _w.close()
+            print(f"[play] wrote {_out}: {len(_fr)} frames")
+    print(f"[walk] walk-only: {len(frames)} frames, stopping before the pick")
+    sys.stdout.flush()
+    os._exit(0)
 
 # Start the robot AT the plan's first waypoint. Left at G1's default pose the
 # arm snaps across the whole reach in the first frame, and that swing throws
@@ -343,9 +502,35 @@ robot.write_data_to_sim()
 # numbers, not dropped, so it starts a hair above its support and needs a
 # moment of gravity to actually rest on it.
 for _ in range(120):
+    if walk is not None:
+        # There is no fix_root_link in a walk run, so an unheld robot spends
+        # these 120 steps sagging on its own legs and the arm then reaches
+        # from a body that is no longer on the stand. The trajectory loop
+        # below already holds it; the settle has to hold it too.
+        robot.write_root_state_to_sim(stand_root)
+        if FREEZE_LEGS:
+            robot.write_joint_state_to_sim(frozen_q, frozen_v,
+                                           joint_ids=frozen_ids)
     robot.write_data_to_sim()
     sim.step()
 robot.update(sim.get_physics_dt())
+
+# What the arm is actually standing on when the plan starts. The same
+# trajectory picks the box up without a walk and tips it with one, so the two
+# runs have to differ somewhere by the time this line is reached -- print it
+# rather than reason about it.
+_ti = robot.find_bodies(["torso_link"])[0]
+if _ti:
+    _t = robot.data.body_pos_w[0, _ti[0]].cpu().numpy()
+    _tq = robot.data.body_quat_w[0, _ti[0]].cpu().numpy()
+    print(f"[start] torso {np.round(_t, 4)} quat {np.round(_tq, 4)}")
+_got = np.array([robot.data.joint_pos[0, j].item() for j in ids])
+_want = np.array([float(traj[0, k]) for k in range(len(ids))])
+print(f"[start] arm error max {np.abs(_got - _want).max()*1000:.2f} mrad, "
+      f"per joint {np.round((_got - _want) * 1000, 1)}")
+if target_body is not None:
+    target_body.update(0.0)
+    print(f"[start] object {np.round(target_body.data.root_pos_w[0].cpu().numpy(), 4)}")
 
 substeps = max(1, round((1.0 / FPS) / sim.get_physics_dt()))
 print(f"[play] {substeps} physics steps per trajectory frame")
@@ -353,16 +538,32 @@ for i in range(traj.shape[0]):
     for k, jid in enumerate(ids):
         tgt_q[0, jid] = float(traj[i, k])
     robot.set_joint_position_target(tgt_q)
+    if (walk is not None and FREEZE_LEGS and not LEGS_SETTLE_ONLY
+            and i % LEG_HOLD_EVERY == 0):
+        # Once per rendered frame, not once per physics substep.
+        #
+        # With a clip there is no fix_root_link, so the pelvis has to be
+        # written -- and the legs with it, or they keep pushing on the floor,
+        # the write cancels the reaction, and the two fight at the physics
+        # rate (the buzz the legs do once the robot stops). But doing that
+        # write inside every substep also disturbs the articulation solver
+        # mid-step, and the hand pays for it: measured, the fingers had only
+        # reached thumb -0.38 / index 0.38 where the no-walk run had -1.46 /
+        # 1.63, so the box was shoved away before they closed on it. Dropping
+        # the write entirely is not an option either -- the unheld robot then
+        # blows up (box thrown 3025 m). Once per frame holds the lower body
+        # and leaves the substeps to the solver.
+        robot.write_joint_state_to_sim(frozen_q, frozen_v,
+                                       joint_ids=frozen_ids)
     for _ in range(substeps):
         if walk is not None:
-            # With a clip there is no fix_root_link to hold the pelvis, so it
-            # is written every step -- and the legs with it. Writing the root
-            # alone is not the same thing: the legs keep pushing on the floor,
-            # the write cancels the reaction, and the two fight at the physics
-            # rate, which is the buzzing the legs do once the robot stops.
+            # The pelvis every substep, the legs only once a frame. Holding
+            # the pelvis is cheap -- it is one body, not a joint the solver is
+            # iterating on -- and letting it drift between substeps lets the
+            # arm's reaction push the whole robot and then snap it back. The
+            # leg joint writes are the ones that disturb the solver, and the
+            # hand is what pays for that.
             robot.write_root_state_to_sim(stand_root)
-            robot.write_joint_state_to_sim(frozen_q, frozen_v,
-                                           joint_ids=frozen_ids)
         robot.write_data_to_sim()
         sim.step()
     robot.update(sim.get_physics_dt())
@@ -377,13 +578,7 @@ for i in range(traj.shape[0]):
         print(f"[play] frame {i:5d} 목표 {np.round(want,2)}")
         print(f"[play]              실제 {np.round(got,2)}  최대오차 "
               f"{np.abs(got-want).max():.3f} rad")
-    if not NO_VIDEO:
-        app.update()
-        cam.update(0.0)
-        head_cam.update(0.0)
-        frames.append(cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
-        head_frames.append(
-            head_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+    _shoot()
 
 if target_body is not None:
     target_body.update(sim.get_physics_dt())
@@ -405,5 +600,8 @@ HEAD_OUT = OUT.replace(".mp4", "_wrist.mp4")
 imageio.mimsave(HEAD_OUT, head_frames, fps=FPS, quality=8)
 print(f"[play] wrote {OUT}: {len(frames)} frames")
 print(f"[play] wrote {HEAD_OUT}: {len(head_frames)} frames")
+EYE_OUT = OUT.replace(".mp4", "_head.mp4")
+imageio.mimsave(EYE_OUT, eye_frames, fps=FPS, quality=8)
+print(f"[play] wrote {EYE_OUT}: {len(eye_frames)} frames")
 sys.stdout.flush()
 os._exit(0)
