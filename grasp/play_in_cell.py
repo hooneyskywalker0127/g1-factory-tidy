@@ -164,10 +164,19 @@ print(f"[play] finger pads mu {FINGER_MU}, object mu {OBJECT_MU}")
 # mid-air. Same ordering map/props.py uses. torso_link sits at a fixed offset
 # from the pelvis (the waist joints are at 0 in the default pose and the plan
 # never moves them), measured off the G1 URDF.
-# ALWAYS the stand the plan was made from, never wherever a walk happens to
-# start: the trajectory's joint angles only reach the object if the object is
-# where the planner thought it was.
-T_torso = torso_pose((-1.30, -0.60, G1_29DOF_CFG.init_state.pos[2]), yaw)
+# The stand the plan was made from -- never wherever a walk happens to start,
+# because the trajectory's joint angles only reach the object if the object is
+# where the planner thought it was. A whole-body plan says where that is: its
+# floating base is in the trajectory, and its last pose is where the robot
+# stands to pick. Otherwise it is the fixed stand the arm-only plans assume.
+if meta.get("base_path"):
+    _b = np.asarray(meta["base_path"], dtype=np.float64)[-1]
+    STAND_XY, yaw = (float(_b[0]), float(_b[1])), float(_b[2])
+    print(f"[play] stand from the plan: {STAND_XY} yaw {math.degrees(yaw):.1f} deg")
+else:
+    STAND_XY = (-1.30, -0.60)
+T_torso = torso_pose((STAND_XY[0], STAND_XY[1],
+                      G1_29DOF_CFG.init_state.pos[2]), yaw)
 
 UsdGeom.Xform.Define(stage, "/Render")
 cam = None if NO_VIDEO else Camera(CameraCfg(
@@ -300,7 +309,6 @@ frames, head_frames, eye_frames = [], [], []
 # so the camera hangs off the torso with that offset folded in.
 _HEAD_FROM_TORSO = (0.0039635, 0.0, -0.044)
 _head_id = robot.find_bodies(["torso_link"])[0][0]
-_wrist_id = robot.find_bodies([WRIST_PARENT])[0][0]
 _T_head_cam = (_link(_HEAD_FROM_TORSO, (0.0, 0.0, 0.0))
                @ _link((0.08, 0.0, 0.05), (0.0, math.radians(HEAD_PITCH_DEG), 0.0)))
 
@@ -333,7 +341,12 @@ def shoot():
     """One frame from each of the three cameras."""
     if NO_VIDEO:
         return
-    _place(head_cam, _wrist_id, _T_wrist_cam, "ros")
+    # Only the head. The wrist camera hangs off right_wrist_yaw_link, which is
+    # a real rigid body -- physics keeps its USD transform current and the
+    # camera follows on its own. head_link is not a body at all (IsaacLab's G1
+    # USD merges fixed joints into torso_link), so its camera prim only moves
+    # when the ROOT's USD transform does, and a root that is written rather
+    # than simulated never updates it. That one has to be placed by hand.
     _place(eye_cam, _head_id, _T_head_cam, "world")
     app.update()
     cam.update(0.0)
@@ -377,8 +390,9 @@ if walk is not None:
     # step of the goal rather than on it -- and the trajectory's joint angles
     # only reach the object from the stand it was planned at. Close that gap
     # before the arm starts instead of reaching from 17 cm off.
-    _sx, _sy, _sz = -1.30, -0.60, float(walk["pos"][-1][2])
-    _syaw = math.radians(-90.0)
+    _sx, _sy = STAND_XY
+    _sz = float(walk["pos"][-1][2])
+    _syaw = yaw
     _sq = (math.cos(_syaw / 2.0), 0.0, 0.0, math.sin(_syaw / 2.0))
     stand_root = torch.tensor(
         [[_sx, _sy, _sz, *_sq, 0, 0, 0, 0, 0, 0]],

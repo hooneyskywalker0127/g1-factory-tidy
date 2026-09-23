@@ -20,9 +20,13 @@ import numpy as np
 from PIL import Image
 
 OUT_DIR = sys.argv[1]
-CAPS = [a for a in sys.argv[2:] if not a.startswith("--")]
-OBJ = (sys.argv[sys.argv.index("--object") + 1] if "--object" in sys.argv
-       else "obj_plan")
+_OBJ_AT = sys.argv.index("--object") if "--object" in sys.argv else None
+OBJ = sys.argv[_OBJ_AT + 1] if _OBJ_AT else "obj_plan"
+# --object's VALUE does not start with "--" either, so it has to be skipped by
+# position, not by shape.
+_SKIP = {_OBJ_AT, _OBJ_AT + 1} if _OBJ_AT else set()
+CAPS = [a for i, a in enumerate(sys.argv)
+        if i >= 2 and i not in _SKIP and not a.startswith("--")]
 
 
 def unproject(cap):

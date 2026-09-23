@@ -24,12 +24,19 @@ Two things this is NOT:
   - It is not a reachability heuristic of ours. The arm envelope is whatever
     the URDF and the solver say it is.
 
+The grasps arrive in the planner's world -- the capture's plan_from_cell and
+then the robot YAML's robot_base_pose, which is what e2e_grasp_demo.py applies
+to them. Both are undone here, because the config this solves is rooted at
+base_link on the CELL floor: a base solution then reads straight off as a place
+to stand in the cell, which is what the walk takes.
+
     conda activate graspgenx
-    python grasp/where_to_stand.py results/far_grasps.json results/stand.json
+    python grasp/where_to_stand.py GRASPS.json CAPTURE_DIR OUT.json [--base-z Z]
 """
 
 import json
 import math
+import os
 import sys
 
 import numpy as np
@@ -59,7 +66,9 @@ def _wrap(a):
 
 
 def main():
-    src, dst = sys.argv[1], sys.argv[2]
+    src, cap, dst = sys.argv[1], sys.argv[2], sys.argv[3]
+    base_z = (float(sys.argv[sys.argv.index("--base-z") + 1])
+              if "--base-z" in sys.argv else 0.98)
     d = json.load(open(src))
     grasps = np.asarray(d["grasps"], dtype=np.float64)
     conf = np.asarray(d["confidence"], dtype=np.float64)
@@ -70,7 +79,19 @@ def main():
     # this config's robot_base_T is identity, so the palm goal is the grasp
     # with the gripper-convention offset on it and nothing else.
     tools = np.array([g @ T_offset for g in grasps])
+
+    # planner world -> cell. e2e_grasp_demo.py moved the capture across with
+    # robot_base_T @ plan_from_cell; undoing both puts the grasps back where
+    # the camera found them, which is the frame the floating base is rooted in.
+    meta = json.load(open(os.path.join(cap, "meta_data.json")))
+    pfc = np.asarray(meta.get("plan_from_cell") or np.eye(4), dtype=np.float64)
+    base_T = np.eye(4)
+    base_T[2, 3] = base_z
+    to_cell = np.linalg.inv(pfc) @ np.linalg.inv(base_T)
+    tools = np.array([to_cell @ T for T in tools])
     print(f"[stand] {len(tools)} grasps, conf {conf.min():.3f}..{conf.max():.3f}")
+    print(f"[stand] in cell coords: palm z {tools[:, 2, 3].min():.3f}"
+          f"..{tools[:, 2, 3].max():.3f}")
 
     from curobo.inverse_kinematics import (InverseKinematics,
                                            InverseKinematicsCfg)
