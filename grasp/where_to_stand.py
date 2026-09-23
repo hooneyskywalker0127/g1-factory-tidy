@@ -65,6 +65,34 @@ def _wrap(a):
     return (a + math.pi) % (2.0 * math.pi) - math.pi
 
 
+def _desk_from_grasps(tools):
+    """The desk, positioned from what the camera saw rather than an assumed stand.
+
+    The box rests on it, so the desk is directly under the grasps: their own
+    spread gives the xy and the mesh the plan used gives the extents. Carrying
+    the plan's support transform across instead ties the desk to whichever
+    stand you assume, which put it 0.23 m out as soon as vision picked a
+    different one.
+    """
+    import trimesh
+    plan_meta = json.load(open(sys.argv[sys.argv.index("--path") + 1]))
+    obstacles = {}
+    ctr_xy = tools[:, :3, 3].mean(axis=0)[:2]
+    for sup in plan_meta.get("support", []):
+        mesh = trimesh.load(sup["mesh"], force="mesh")
+        ext = np.asarray(mesh.extents, dtype=np.float64)
+        top = float(tools[:, 2, 3].min()) - 0.10
+        ctr = np.array([ctr_xy[0], ctr_xy[1], top - ext[2] / 2.0])
+        obstacles[sup["name"]] = {
+            "dims": [float(v) for v in ext],
+            "pose": [float(ctr[0]), float(ctr[1]), float(ctr[2]),
+                     1.0, 0.0, 0.0, 0.0],
+        }
+        print(f"[stand] obstacle '{sup['name']}' {np.round(ext, 3)} "
+              f"at {np.round(ctr, 3)} (top {top:.3f})")
+    return obstacles, plan_meta
+
+
 def main():
     src, cap, dst = sys.argv[1], sys.argv[2], sys.argv[3]
     base_z = (float(sys.argv[sys.argv.index("--base-z") + 1])
@@ -152,6 +180,36 @@ def main():
     # across the body or straight ahead. The bearing is measured from each
     # candidate stand to the grasps the camera produced, so nothing is written
     # down here either.
+    # A stand the arm can reach from is not yet a stand the body can occupy.
+    # cuRobo's own reachable set includes places inside the desk -- measured on
+    # one run, the best-scoring stand sat 131 mm inside its footprint, and the
+    # route planner then correctly refused to walk there and the walk fell back
+    # to going straight. So ask the collision checker which of these poses the
+    # robot can actually be in, and choose among those.
+    #
+    # RobotCollisionChecker is cuRobo's public API for exactly this ("use this
+    # module when building custom collision-aware pipelines outside the main
+    # solvers"), and it is given the same desk the route planner is given.
+    obstacles, plan_meta, stand_deg = None, None, None
+    if "--path" in sys.argv:
+        obstacles, plan_meta = _desk_from_grasps(tools)
+        stand_deg = sys.argv[sys.argv.index("--from") + 1:][:3] \
+            if "--from" in sys.argv else None
+        from curobo.collision_checking import (RobotCollisionChecker,
+                                               RobotCollisionCheckerCfg)
+        chk = RobotCollisionChecker(RobotCollisionCheckerCfg.load_from_config(
+            robot_config=CUROBO_CFG, scene_model={"cuboid": obstacles},
+            n_cuboids=max(4, len(obstacles))))
+        free = chk.validate(torch.tensor(sol, dtype=torch.float32,
+                                         device="cuda").unsqueeze(1))
+        free = free.view(-1).cpu().numpy().astype(bool)
+        print(f"[stand] {int((ok & free).sum())}/{int(ok.sum())} reachable "
+              f"stands are also clear of the scene")
+        if (ok & free).any():
+            ok = ok & free
+        else:
+            print("[stand] none of them is clear; keeping the reachable set")
+
     centre = tools[:, :3, 3].mean(axis=0)
     bearing = np.arctan2(centre[1] - stands[:, 1], centre[0] - stands[:, 0])
     off = np.abs(np.arctan2(np.sin(bearing - stands[:, 2]),
@@ -190,35 +248,16 @@ def main():
         # The desk comes from the plan the pick was made against -- its mesh
         # for the extents, its transform for the pose -- so nothing about the
         # scene is described twice.
-        import trimesh
+        PATH_ATTEMPTS = int(sys.argv[sys.argv.index("--path-attempts") + 1]) \
+            if "--path-attempts" in sys.argv else 5
         from curobo.motion_planner import MotionPlanner, MotionPlannerCfg
         from curobo.types import JointState
-
-
-        plan_meta = json.load(open(sys.argv[sys.argv.index("--path") + 1]))
-        stand_deg = sys.argv[sys.argv.index("--from") + 1:][:3] \
-            if "--from" in sys.argv else None
         # Where the desk is, from what the camera saw rather than from any
         # assumed stand. The box rests on it, so the desk is directly under
         # the grasps: their own spread gives the xy, and the mesh the plan
         # used gives the extents. Carrying the plan's support transform
         # across instead ties the desk to whichever stand you assume and puts
         # it 0.23 m out as soon as vision picks a different one.
-        obstacles = {}
-        ctr_xy = tools[:, :3, 3].mean(axis=0)[:2]
-        for sup in plan_meta.get("support", []):
-            mesh = trimesh.load(sup["mesh"], force="mesh")
-            ext = np.asarray(mesh.extents, dtype=np.float64)
-            top = float(tools[:, 2, 3].min()) - 0.10
-            ctr = np.array([ctr_xy[0], ctr_xy[1], top - ext[2] / 2.0])
-            obstacles[sup["name"]] = {
-                "dims": [float(v) for v in ext],
-                "pose": [float(ctr[0]), float(ctr[1]), float(ctr[2]),
-                         1.0, 0.0, 0.0, 0.0],
-            }
-            print(f"[stand] obstacle '{sup['name']}' {np.round(ext, 3)} "
-                  f"at {np.round(ctr, 3)} (top {top:.3f})")
-
         mp = MotionPlanner(MotionPlannerCfg.create(
             robot=CUROBO_CFG, scene_model={"cuboid": obstacles},
             collision_cache={"cuboid": max(4, len(obstacles))}))
@@ -242,7 +281,8 @@ def main():
                 joint_names=mp.joint_names),
             JointState.from_position(
                 torch.tensor([start_q], dtype=torch.float32, device="cuda"),
-                joint_names=mp.joint_names))
+                joint_names=mp.joint_names),
+            max_attempts=PATH_ATTEMPTS)
         if res is not None and bool(res.success.any()):
             # The interpolated plan comes back as [1, 1, horizon, dof] and
             # its dof is the config's FULL cspace -- 20 here, the ten free
@@ -257,8 +297,10 @@ def main():
             print(f"[stand] collision-free base path: {len(base_path)} waypoints, "
                   f"{np.abs(np.diff(base_path[:, :2], axis=0)).sum():.2f} m travelled")
         else:
-            print("[stand] no collision-free base path; the walk will have to "
-                  "steer at the stand directly")
+            why = "plan_cspace returned None" if res is None else str(
+                getattr(res, "status", "no status"))
+            print(f"[stand] no collision-free base path ({why}); the walk will "
+                  f"have to steer at the stand directly")
 
     json.dump({
         "stand": {"x": float(sx), "y": float(sy),
