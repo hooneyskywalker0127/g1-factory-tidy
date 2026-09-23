@@ -71,7 +71,7 @@ SETTLE_S = 2.0          # idle at the goal so the tracker ends standing still
 # Squatting needs longer than standing still does: the planner ramps toward a
 # commanded height rather than jumping to it, and two seconds got 13 mm of a
 # 39 mm change.
-SQUAT_S = 6.0
+SQUAT_S = 12.0
 MAX_S = 40.0            # a walk that has not arrived by now is not going to
 
 # The numbers below are the deployment stack's own, not tuning of ours:
