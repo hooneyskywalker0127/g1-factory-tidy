@@ -78,6 +78,25 @@ if not obj_xyz:
     print("[merge] no camera saw the object")
     sys.exit(2)
 
+if "--balance" in sys.argv and len(obj_xyz) > 1:
+    # Concatenating raw views weights them by sampling density, not by how
+    # much of the object each one shows. The wrist camera sits 0.13 m from the
+    # box and the head 0.95 m, so it contributes twelve points for every one
+    # of the head's: measured, 17263 against 1423, and the merged cloud came
+    # out 92.7% top face. GraspGen conditions on that cloud, and a cloud that
+    # is almost all one flat plane is a plate -- it proposed 28 grasps and not
+    # one of them came from above, against 22 of 55 from the head view alone.
+    #
+    # Taking the same number from each view makes the merge about geometry
+    # instead. No constant: the count is the smallest view's own.
+    n = min(len(a) for a in obj_xyz)
+    rng = np.random.default_rng(0)
+    picks = [rng.choice(len(a), n, replace=False) for a in obj_xyz]
+    obj_xyz = [a[i] for a, i in zip(obj_xyz, picks)]
+    obj_rgb = [c[i] for c, i in zip(obj_rgb, picks)]
+    print(f"[merge] balanced: {n} object points taken from each of "
+          f"{len(obj_xyz)} views")
+
 obj_xyz = np.concatenate(obj_xyz)
 obj_rgb = np.concatenate(obj_rgb)
 scn_xyz = np.concatenate(scn_xyz)
