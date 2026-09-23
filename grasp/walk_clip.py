@@ -322,6 +322,42 @@ def main():
     if len(qpos) == 0:
         raise SystemExit("[walk] planner returned nothing")
 
+    if squat_to is not None and arrived and "--cut-at-height" in sys.argv:
+        # End the clip where the pelvis is at the height that was asked for.
+        #
+        # Across three starts the hold swings 0.6, 14.9 and 21.2 mm and the
+        # clip ends 2.5, 7.5 and 22.2 mm above the commanded height -- the miss
+        # is the swing, and which side it lands on is down to where the cut
+        # falls. All three holds pass through the right height on the way
+        # (72%, 44%, 32% of their frames); the third simply ends outside it and
+        # the pick cannot be planned from there.
+        #
+        # Stop on the pelvis rather than the clock. The target is the height
+        # already commanded, and the arrival is found the way walk_to finds
+        # it -- inside ARRIVE_M of the goal -- but measured on the finished
+        # clip, because walk_to returns whether it arrived and not when.
+        gxy = np.asarray(goal[:2], np.float32)
+        near = np.nonzero(np.linalg.norm(qpos[:, :2] - gxy, axis=1) <= ARRIVE_M)[0]
+        if len(near):
+            a = int(near[0])
+            # --cut-to names the height to stop at, when it differs from the
+            # one commanded. They are not the same question: the command is
+            # what the policy is asked to track, and the cut is which moment of
+            # the resulting swing the pick is planned from. The arm's usable
+            # band was measured by sweeping pelvis height against plan_grasp
+            # (0.750 to 0.760 here), and the middle of that band is a better
+            # place to stop than its edge -- cutting at 0.750 itself landed on
+            # 0.7499 and would not plan.
+            cut_to = (float(sys.argv[sys.argv.index("--cut-to") + 1])
+                      if "--cut-to" in sys.argv else squat_to)
+            k = a + int(np.argmin(np.abs(qpos[a:, 2] - cut_to)))
+            if k + 1 < len(qpos):
+                print(f"[walk] arrived at frame {a}; cut at {k} of {len(qpos)}: "
+                      f"pelvis {float(qpos[k, 2]):.4f} against the "
+                      f"{squat_to:.3f} asked for (last was "
+                      f"{float(qpos[-1, 2]):.4f})")
+                qpos = qpos[:k + 1]
+
     end_xy = qpos[-1, :2]
     err = float(np.linalg.norm(end_xy - np.array(goal[:2])))
     yaw = math.degrees(2.0 * math.atan2(qpos[-1, 6], qpos[-1, 3]))
