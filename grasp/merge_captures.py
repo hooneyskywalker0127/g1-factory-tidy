@@ -20,7 +20,19 @@ import numpy as np
 from PIL import Image
 
 OUT_DIR = sys.argv[1]
-CAPS = [a for a in sys.argv[2:] if not a.startswith("--")]
+# A flag's value is not a capture directory: walk the list and skip the token
+# after any --flag, or "--object obj_plan" is read as a directory called
+# obj_plan.
+CAPS = []
+_skip = False
+for _a in sys.argv[2:]:
+    if _skip:
+        _skip = False
+        continue
+    if _a.startswith("--"):
+        _skip = True
+        continue
+    CAPS.append(_a)
 OBJ = (sys.argv[sys.argv.index("--object") + 1] if "--object" in sys.argv
        else "obj_plan")
 

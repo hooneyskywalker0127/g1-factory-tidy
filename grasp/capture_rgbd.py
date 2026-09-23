@@ -282,7 +282,14 @@ else:
 sim.reset()
 
 if ARM_AT is not None and PLAN:
-    q = np.load(os.path.splitext(PLAN)[0] + ".npy")
+    # The arm pose and the scene need not come from the same plan. Merging a
+    # wrist view with a head view means both captures must sit in one frame,
+    # which is --plan/--plan-stand; but the arm has to be posed from the
+    # trajectory that actually reaches this object from this stand. --arm-from
+    # separates the two.
+    _af = (sys.argv[sys.argv.index("--arm-from") + 1]
+           if "--arm-from" in sys.argv else PLAN)
+    q = np.load(os.path.splitext(_af)[0] + ".npy")
     names = meta["joint_names"]
     ids = [robot.find_joints([n])[0][0] for n in names]
     tgt = robot.data.default_joint_pos.clone()
