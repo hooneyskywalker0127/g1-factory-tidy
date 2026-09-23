@@ -12,6 +12,35 @@ far off the estimate was.
 What is built so far is one piece of that: a single Unitree G1 finding one object
 by vision and picking it up.
 
+## Pipeline
+
+Three open-source pieces in series. The only thing a person supplies is "tidy
+up"; what is where, how to hold it, and how to get to it are settled by these.
+
+**1. GraspGen-X — what to grasp, and how**
+
+![GraspGen-X](docs/graspgen.gif)
+
+One head RGB-D frame gives a point cloud of the object; grasp candidates are
+generated on it and scored. No mesh and no coordinates are handed over -- what
+the model sees is the points the camera actually returned.
+
+**2. cuRobo — how to get the arm there**
+
+![cuRobo](docs/curobo.gif)
+
+A collision-free joint trajectory is solved to the grasp pose. Grasps the arm
+cannot reach fall out here, which is what picks the candidate that is actually
+executable.
+
+**3. GR00T (GEAR-SONIC) — how to get the body there**
+
+![GR00T](docs/gr00t.gif)
+
+If the place the arm can reach from is not the place the robot is standing, it
+has to walk. The kinematic planner writes the walk and the whole-body tracking
+policy follows it.
+
 ![G1 vision grasp](docs/g1_vision_grasp.gif)
 
 A grasp predicted from one head RGB-D frame, executed, and the box lifted. Left is

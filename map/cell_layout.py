@@ -34,18 +34,20 @@ RACK_GAP = 0.03
 # it is the same problem plus a choice of which one. More get added back once
 # one works.
 #
-# Its size comes off the robot, measured with map/measure_g1_hands.py: palms
-# 0.326 m apart, 0.21 m in front of the body. The grip is two hands pressing
-# the side faces -- the finger grasp is what failed on the crate before -- so
-# the box is 0.30 m wide, slightly inside that separation, which leaves the
-# hands pressing inward instead of reaching. At 0.32 m tall the grip point
-# stands 0.16 m off the floor, clear of the backs of the hands.
+# Its size comes off the hand that has to grasp it. The grasp poses are
+# synthesised by Dexonomy, whose Dex3-1 templates are one-handed -- a large
+# diameter wrap, a medium wrap, a four-finger prismatic pinch. Measuring the
+# objects those actually succeeded on, the dimension the fingers close across
+# ran 7 to 117 mm, while the long axis reached 339 mm: the type wraps one span,
+# it does not enclose the whole object. 0.10 m across sits inside that.
 #
-# It also still fits a shelf: 54 mm under the 0.374 m deck spacing and 69 mm
-# inside the 0.369 m front board. Any bigger is easier to pick up and has
-# nowhere to go.
-FLOOR_BOX_SIZE = (0.30, 0.30, 0.32)      # w, d, h
-FLOOR_BOX_MASS = 1.5                     # a press grip holds by friction alone
+# Mass follows the same source: Dex3-1's rated load is 500 g.
+#
+# An earlier version of this box was 0.30 x 0.30 x 0.32 m at 1.5 kg, sized to
+# G1's 0.326 m palm separation for a two-handed press. That grip is not what the
+# hand does, and neither the span nor the mass is within what it can hold.
+FLOOR_BOX_SIZE = (0.20, 0.14, 0.10)      # w, d, h
+FLOOR_BOX_MASS = 0.4
 FLOOR_BOXES = (
     (-2.00, -1.20, 15.0),
 )

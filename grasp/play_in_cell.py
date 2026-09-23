@@ -5,10 +5,18 @@
 # driven on Isaac's 29-dof G1 -- the joint names match exactly, so the
 # trajectory transfers without a mapping table.
 #
-# The root is fixed: the plan moves the waist and right arm only, and a robot
-# that falls over mid-reach says nothing about whether the plan was good.
+# The root is driven, not simulated: the plan moves the waist and right arm
+# only, and a robot that falls over mid-reach says nothing about whether the
+# plan was good. So the pelvis is written where it belongs every frame and the
+# arm does real physics against the object.
 #
-#   python grasp/play_in_cell.py [traj.npy] [--video out.mp4]
+# --walk CLIP.pkl plays a walk in front of the reach, from the same motion_lib
+# clip grasp/walk_clip.py writes. The robot starts wherever that clip starts,
+# walks to where it ends -- which is the stand the plan was made from -- and
+# only then does the trajectory run. Both halves render through the same three
+# cameras, so the walk and the pick are one video, not two.
+#
+#   python grasp/play_in_cell.py [traj.npy] [--video out.mp4] [--walk clip.pkl]
 import json
 import os
 import sys
@@ -38,6 +46,8 @@ OUT = sys.argv[sys.argv.index("--video") + 1] if "--video" in sys.argv \
 # clock here, and judging whether a grasp held needs none of it -- this is how
 # a batch of grasp candidates gets evaluated in reasonable time.
 NO_VIDEO = "--no-video" in sys.argv
+WALK = (sys.argv[sys.argv.index("--walk") + 1]
+        if "--walk" in sys.argv else None)
 
 app = AppLauncher(headless=True, enable_cameras=not NO_VIDEO).app
 
@@ -46,6 +56,7 @@ import math  # noqa: E402
 import imageio.v2 as imageio  # noqa: E402
 import numpy as np  # noqa: E402
 import trimesh  # noqa: E402
+import trimesh.transformations as tf  # noqa: E402
 import torch  # noqa: E402
 import isaaclab.sim as sim_utils  # noqa: E402
 import omni.usd  # noqa: E402
@@ -85,11 +96,35 @@ for _ in range(3):
 spawn_props(stage, app)
 
 # stand the robot where the plan was made: facing the object it reaches for
+# The walk arrives as a motion_lib clip: 29 joints in the URDF's own order,
+# plus a root path. Loaded before the robot is built because it decides where
+# the robot starts.
+walk = None
+if WALK:
+    import joblib  # noqa: E402
+    sys.path.insert(0, "/home/sehoon/Documents/GitHub/humanoid-swarm-sim/common")
+    from foot_height import load_urdf  # noqa: E402
+    _w = list(joblib.load(WALK).values())[0]
+    walk = {"dof": np.asarray(_w["dof"], dtype=np.float32),
+            "pos": np.asarray(_w["root_trans_offset"], dtype=np.float32),
+            "quat": np.asarray(_w["root_rot"], dtype=np.float32)}   # xyzw
+    # load_urdf() reads gear_sonic/data/robots/g1/g1_29dof.urdf by a relative
+    # path, so it only resolves from the SONIC repo root. Borrow that cwd for
+    # the one call rather than leaving this process there.
+    _cwd = os.getcwd()
+    os.chdir("/home/sehoon/Projects/GR00T-WholeBodyControl")
+    try:
+        walk["names"] = load_urdf()[1]
+    finally:
+        os.chdir(_cwd)
+    print(f"[walk] {len(walk['dof'])} frames, "
+          f"{np.round(walk['pos'][0][:2], 2)} -> {np.round(walk['pos'][-1][:2], 2)}")
+
 cfg = G1_29DOF_CFG.replace(prim_path="/World/G1")
 cfg.spawn = cfg.spawn.replace(
     articulation_props=sim_utils.ArticulationRootPropertiesCfg(
         enabled_self_collisions=False, solver_position_iteration_count=12,
-        solver_velocity_iteration_count=4, fix_root_link=True))
+        solver_velocity_iteration_count=4, fix_root_link=walk is None))
 # Dex3-1 finger torque, from Unitree's own URDF: every hand joint in
 # g1_29dof_with_hand_rev_1_0.urdf is <limit effort="1.4" velocity="12">.
 # IsaacLab's G1_29DOF_CFG leaves the hands at effort_limit=300, 214x the real
@@ -100,9 +135,14 @@ cfg.spawn = cfg.spawn.replace(
 cfg.actuators["hands"] = cfg.actuators["hands"].replace(
     effort_limit=1.4, velocity_limit=12.0)
 yaw = math.radians(-90.0)
-cfg.init_state = cfg.init_state.replace(
-    pos=(-1.30, -0.60, cfg.init_state.pos[2]),
-    rot=(math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)))
+_start = (-1.30, -0.60, cfg.init_state.pos[2])
+_rot = (math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0))
+if walk is not None:
+    _q = walk["quat"][0]
+    _start = (float(walk["pos"][0][0]), float(walk["pos"][0][1]),
+              float(walk["pos"][0][2]))
+    _rot = (float(_q[3]), float(_q[0]), float(_q[1]), float(_q[2]))  # -> wxyz
+cfg.init_state = cfg.init_state.replace(pos=_start, rot=_rot)
 robot = Articulation(cfg)
 
 # Finger pad friction, from GraspGenX's own --finger_mu default of 3.0. Left
@@ -124,7 +164,10 @@ print(f"[play] finger pads mu {FINGER_MU}, object mu {OBJECT_MU}")
 # mid-air. Same ordering map/props.py uses. torso_link sits at a fixed offset
 # from the pelvis (the waist joints are at 0 in the default pose and the plan
 # never moves them), measured off the G1 URDF.
-T_torso = torso_pose(cfg.init_state.pos, yaw)
+# ALWAYS the stand the plan was made from, never wherever a walk happens to
+# start: the trajectory's joint angles only reach the object if the object is
+# where the planner thought it was.
+T_torso = torso_pose((-1.30, -0.60, G1_29DOF_CFG.init_state.pos[2]), yaw)
 
 UsdGeom.Xform.Define(stage, "/Render")
 cam = None if NO_VIDEO else Camera(CameraCfg(
@@ -211,6 +254,13 @@ if "object" in meta:
     tgt = 0.5 * (tgt + np.array(T_torso @ np.array(
         meta["object"]["transform_in_torso"]))[:3, 3])
 eye = tgt + np.array([-1.65, -2.05, 1.05])
+if walk is not None:
+    # Frame both ends of the walk plus the table between them, from the cell's
+    # open south-east corner (map/cell_layout.py: only north and west have
+    # walls, so this is the one corner with nothing in the way).
+    mid = 0.5 * (walk["pos"][0][:2] + np.array(tgt[:2]))
+    tgt = np.array([mid[0], mid[1], 0.80])
+    eye = np.array([3.4, -3.2, 2.3])
 if cam is not None:
     cam.set_world_poses_from_view(
         eyes=torch.tensor([eye], dtype=torch.float32, device=cam.device),
@@ -220,8 +270,14 @@ if cam is not None:
 # arm snaps across the whole reach in the first frame, and that swing throws
 # the object off the table before the plan has even started.
 tgt_q = robot.data.default_joint_pos.clone()
-for k, jid in enumerate(ids):
-    tgt_q[0, jid] = float(traj[0, k])
+walk_ids = None
+if walk is not None:
+    walk_ids = [robot.find_joints([n])[0][0] for n in walk["names"]]
+    for k, jid in enumerate(walk_ids):
+        tgt_q[0, jid] = float(walk["dof"][0, k])
+else:
+    for k, jid in enumerate(ids):
+        tgt_q[0, jid] = float(traj[0, k])
 robot.write_joint_state_to_sim(tgt_q, torch.zeros_like(tgt_q))
 robot.set_joint_position_target(tgt_q)
 robot.write_data_to_sim()
@@ -234,6 +290,134 @@ for _ in range(120):
 robot.update(sim.get_physics_dt())
 
 frames, head_frames, eye_frames = [], [], []
+
+
+# head_link is not in the articulation's body list: IsaacLab's G1 USD is
+# imported with fixed joints merged, so the head is part of torso_link. (The
+# swarm repo's demos import with merge_fixed_joints=False for exactly this
+# reason, but that is a different asset than the one this file spawns.) The
+# mount is still exact -- head_joint is fixed, straight out of main.urdf --
+# so the camera hangs off the torso with that offset folded in.
+_HEAD_FROM_TORSO = (0.0039635, 0.0, -0.044)
+_head_id = robot.find_bodies(["torso_link"])[0][0]
+_wrist_id = robot.find_bodies([WRIST_PARENT])[0][0]
+_T_head_cam = (_link(_HEAD_FROM_TORSO, (0.0, 0.0, 0.0))
+               @ _link((0.08, 0.0, 0.05), (0.0, math.radians(HEAD_PITCH_DEG), 0.0)))
+
+
+def _place(camera, body_id, T_mount, convention):
+    """Put a camera where its link is now.
+
+    The cameras are prims under the robot, which is enough while the pelvis is
+    welded in place. It is not enough once the robot walks: the root is moved
+    by writing it, and with Fabric off those writes do not reach the USD
+    transforms the camera prim is parented to, so the view stays behind at the
+    start of the walk. Reading the link pose out of the articulation and
+    setting the camera from it does not care how the robot got there.
+    """
+    p = robot.data.body_pos_w[0, body_id].cpu().numpy()
+    q = robot.data.body_quat_w[0, body_id].cpu().numpy()      # wxyz
+    T = np.eye(4)
+    T[:3, :3] = tf.quaternion_matrix([q[0], q[1], q[2], q[3]])[:3, :3]
+    T[:3, 3] = p
+    W = T @ T_mount
+    wq = Gf.Matrix4d(W.T.tolist()).ExtractRotationQuat()
+    camera.set_world_poses(
+        torch.tensor([W[:3, 3]], dtype=torch.float32, device=camera.device),
+        torch.tensor([[wq.GetReal(), *wq.GetImaginary()]],
+                     dtype=torch.float32, device=camera.device),
+        convention=convention)
+
+
+def shoot():
+    """One frame from each of the three cameras."""
+    if NO_VIDEO:
+        return
+    _place(head_cam, _wrist_id, _T_wrist_cam, "ros")
+    _place(eye_cam, _head_id, _T_head_cam, "world")
+    app.update()
+    cam.update(0.0)
+    head_cam.update(0.0)
+    eye_cam.update(0.0)
+    frames.append(cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+    head_frames.append(
+        head_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+    eye_frames.append(
+        eye_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+
+
+hold_root = None
+if walk is not None:
+    # A replay, not a controller: the clip already says where every joint and
+    # the pelvis are on every frame, so they are written rather than tracked.
+    # Nothing here has to balance -- SONIC's tracker is what proves the walk is
+    # walkable (results in the 260923 videos), and this is the same clip.
+    print(f"[walk] replaying {len(walk['dof'])} frames")
+    zero = torch.zeros((1, robot.num_joints), device=sim.device)
+    for i in range(len(walk["dof"])):
+        for k, jid in enumerate(walk_ids):
+            tgt_q[0, jid] = float(walk["dof"][i, k])
+        q = walk["quat"][i]
+        root = torch.tensor(
+            [[float(walk["pos"][i][0]), float(walk["pos"][i][1]),
+              float(walk["pos"][i][2]), float(q[3]), float(q[0]), float(q[1]),
+              float(q[2]), 0, 0, 0, 0, 0, 0]],
+            dtype=torch.float32, device=sim.device)
+        robot.write_root_state_to_sim(root)
+        robot.write_joint_state_to_sim(tgt_q, zero)
+        # Without this the actuators keep pulling toward whatever target was
+        # set last -- the default stance -- and fight the pose being written
+        # every step, which reads as the legs shaking.
+        robot.set_joint_position_target(tgt_q)
+        robot.write_data_to_sim()
+        sim.step()
+        robot.update(sim.get_physics_dt())
+        shoot()
+    # The planner commits eight frames at a time, so the walk stops within a
+    # step of the goal rather than on it -- and the trajectory's joint angles
+    # only reach the object from the stand it was planned at. Close that gap
+    # before the arm starts instead of reaching from 17 cm off.
+    _sx, _sy, _sz = -1.30, -0.60, float(walk["pos"][-1][2])
+    _syaw = math.radians(-90.0)
+    _sq = (math.cos(_syaw / 2.0), 0.0, 0.0, math.sin(_syaw / 2.0))
+    stand_root = torch.tensor(
+        [[_sx, _sy, _sz, *_sq, 0, 0, 0, 0, 0, 0]],
+        dtype=torch.float32, device=sim.device)
+    glide = 15
+    print(f"[walk] arrived at {np.round(walk['pos'][-1][:2], 3)}; "
+          f"settling onto the stand ({_sx}, {_sy}) over {glide} frames")
+    for i in range(glide):
+        a = (i + 1) / glide
+        robot.write_root_state_to_sim(root * (1.0 - a) + stand_root * a)
+        robot.write_joint_state_to_sim(tgt_q, zero)
+        robot.set_joint_position_target(tgt_q)
+        robot.write_data_to_sim()
+        sim.step()
+        robot.update(sim.get_physics_dt())
+        shoot()
+    hold_root = stand_root
+    # Freezing the pelvis by writing it every step is not the same thing as
+    # the fix_root_link constraint the no-walk run uses: the legs are still
+    # PD-driven and still pushing on the floor, the write cancels the reaction
+    # and its velocity, and the two fight at the physics rate -- which is the
+    # buzzing the legs do once the robot stops. Writing the leg state too
+    # makes the whole lower body kinematic, which is what the welded run
+    # effectively had, and leaves the arm and hand as the only things doing
+    # physics against the object.
+    frozen_ids = [robot.find_joints([n])[0][0] for n in walk["names"]
+                  if ("hip" in n or "knee" in n or "ankle" in n)]
+    frozen_q = robot.data.joint_pos[0, frozen_ids].clone().unsqueeze(0)
+    frozen_v = torch.zeros_like(frozen_q)
+    print(f"[walk] holding {len(frozen_ids)} leg joints still for the reach")
+    # Hand over to the plan: the arm goes to its first waypoint before the
+    # trajectory starts, for the same reason it does without a walk -- left at
+    # the walk's pose it would swing across the table on frame one.
+    for k, jid in enumerate(ids):
+        tgt_q[0, jid] = float(traj[0, k])
+    robot.write_joint_state_to_sim(tgt_q, zero)
+    robot.set_joint_position_target(tgt_q)
+    robot.write_data_to_sim()
+
 substeps = max(1, round((1.0 / FPS) / sim.get_physics_dt()))
 print(f"[play] {substeps} physics steps per trajectory frame")
 for i in range(traj.shape[0]):
@@ -241,6 +425,13 @@ for i in range(traj.shape[0]):
         tgt_q[0, jid] = float(traj[i, k])
     robot.set_joint_position_target(tgt_q)
     for _ in range(substeps):
+        if hold_root is not None:
+            # The root is unwelded so the walk could happen; pin it here by
+            # writing it instead, so the reach is judged the same way it is
+            # without a walk. The legs go with it -- see above.
+            robot.write_root_state_to_sim(hold_root)
+            robot.write_joint_state_to_sim(frozen_q, frozen_v,
+                                           joint_ids=frozen_ids)
         robot.write_data_to_sim()
         sim.step()
     robot.update(sim.get_physics_dt())
@@ -255,16 +446,7 @@ for i in range(traj.shape[0]):
         print(f"[play] frame {i:5d} 목표 {np.round(want,2)}")
         print(f"[play]              실제 {np.round(got,2)}  최대오차 "
               f"{np.abs(got-want).max():.3f} rad")
-    if not NO_VIDEO:
-        app.update()
-        cam.update(0.0)
-        head_cam.update(0.0)
-        frames.append(cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
-        head_frames.append(
-            head_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
-        eye_cam.update(0.0)
-        eye_frames.append(
-            eye_cam.data.output["rgb"][0, ..., :3].cpu().numpy().astype(np.uint8))
+    shoot()
 
 if target_body is not None:
     target_body.update(sim.get_physics_dt())
