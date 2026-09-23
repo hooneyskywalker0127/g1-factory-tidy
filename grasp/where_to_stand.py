@@ -176,9 +176,94 @@ def main():
           f"x {d_reach[:, 0].min():.2f}..{d_reach[:, 0].max():.2f}  "
           f"y {d_reach[:, 1].min():.2f}..{d_reach[:, 1].max():.2f}")
 
+    base_path = None
+    if "--path" in sys.argv:
+        # And how to get there without walking through the desk.
+        #
+        # Handed only a destination the walk goes straight at it, and on this
+        # cell that line clips the desk -- measured, 23 of the 88 moving
+        # frames had the robot's body inside its footprint, closest 0.086 m.
+        # cuRobo already knows where the desk is; plan_cspace with the graph
+        # planner behind it answers with a route around, and walk_clip.py
+        # feeds those waypoints to the planner as specific targets.
+        #
+        # The desk comes from the plan the pick was made against -- its mesh
+        # for the extents, its transform for the pose -- so nothing about the
+        # scene is described twice.
+        import trimesh
+        from curobo.motion_planner import MotionPlanner, MotionPlannerCfg
+        from curobo.types import JointState
+
+
+        plan_meta = json.load(open(sys.argv[sys.argv.index("--path") + 1]))
+        stand_deg = sys.argv[sys.argv.index("--from") + 1:][:3] \
+            if "--from" in sys.argv else None
+        # Where the desk is, from what the camera saw rather than from any
+        # assumed stand. The box rests on it, so the desk is directly under
+        # the grasps: their own spread gives the xy, and the mesh the plan
+        # used gives the extents. Carrying the plan's support transform
+        # across instead ties the desk to whichever stand you assume and puts
+        # it 0.23 m out as soon as vision picks a different one.
+        obstacles = {}
+        ctr_xy = tools[:, :3, 3].mean(axis=0)[:2]
+        for sup in plan_meta.get("support", []):
+            mesh = trimesh.load(sup["mesh"], force="mesh")
+            ext = np.asarray(mesh.extents, dtype=np.float64)
+            top = float(tools[:, 2, 3].min()) - 0.10
+            ctr = np.array([ctr_xy[0], ctr_xy[1], top - ext[2] / 2.0])
+            obstacles[sup["name"]] = {
+                "dims": [float(v) for v in ext],
+                "pose": [float(ctr[0]), float(ctr[1]), float(ctr[2]),
+                         1.0, 0.0, 0.0, 0.0],
+            }
+            print(f"[stand] obstacle '{sup['name']}' {np.round(ext, 3)} "
+                  f"at {np.round(ctr, 3)} (top {top:.3f})")
+
+        mp = MotionPlanner(MotionPlannerCfg.create(
+            robot=CUROBO_CFG, scene_model={"cuboid": obstacles},
+            collision_cache={"cuboid": max(4, len(obstacles))}))
+        # The motion planner orders its joints its own way; the IK solver's
+        # indices do not carry over. Reading the base columns with the wrong
+        # ones returns arm angles dressed up as a route -- it ended 2.2 m from
+        # the goal facing the wrong way, with 2 m jumps between waypoints.
+        mnames = mp.joint_names
+        mbx, mby, mbz = (mnames.index("base_j_x"), mnames.index("base_j_y"),
+                         mnames.index("base_j_ztheta"))
+        q_home = list(mp.default_joint_state.position.view(-1).cpu().numpy())
+        start_q = list(q_home)
+        if stand_deg:
+            start_q[mbx], start_q[mby] = float(stand_deg[0]), float(stand_deg[1])
+            start_q[mbz] = math.radians(float(stand_deg[2]))
+        goal_q = list(q_home)
+        goal_q[mbx], goal_q[mby], goal_q[mbz] = float(sx), float(sy), float(syaw)
+        res = mp.plan_cspace(
+            JointState.from_position(
+                torch.tensor([goal_q], dtype=torch.float32, device="cuda"),
+                joint_names=mp.joint_names),
+            JointState.from_position(
+                torch.tensor([start_q], dtype=torch.float32, device="cuda"),
+                joint_names=mp.joint_names))
+        if res is not None and bool(res.success.any()):
+            # The interpolated plan comes back as [1, 1, horizon, dof] and
+            # its dof is the config's FULL cspace -- 20 here, the ten free
+            # joints and the ten the builder locked -- not the ten
+            # planner.joint_names lists. Reshaping to len(joint_names)
+            # interleaves the two halves, and the "route" that falls out
+            # alternates between two poses and never reaches the goal.
+            q = res.get_interpolated_plan().position
+            q = q.reshape(-1, q.shape[-1])
+            base_path = q[:, [mbx, mby, mbz]].cpu().numpy()
+            base_path[:, 2] = [_wrap(float(v)) for v in base_path[:, 2]]
+            print(f"[stand] collision-free base path: {len(base_path)} waypoints, "
+                  f"{np.abs(np.diff(base_path[:, :2], axis=0)).sum():.2f} m travelled")
+        else:
+            print("[stand] no collision-free base path; the walk will have to "
+                  "steer at the stand directly")
+
     json.dump({
         "stand": {"x": float(sx), "y": float(sy),
                   "yaw_deg": float(math.degrees(syaw))},
+        "base_path": (base_path.tolist() if base_path is not None else None),
         "grasp_index": int(idx),
         "confidence": float(conf[idx]),
         "tool_pose": tools[idx].tolist(),

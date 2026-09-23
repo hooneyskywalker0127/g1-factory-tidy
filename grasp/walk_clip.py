@@ -254,8 +254,17 @@ def main():
         # specific_target_headings. Steering by bearing commits eight frames
         # at a time and walks past -- measured 0.361 m past this goal, which
         # the arrival glide would then have to slide across.
-        path = np.array([[goal[0], goal[1], math.radians(goal[2])]],
-                        dtype=np.float32)
+        if d.get("base_path"):
+            # cuRobo's own collision-free route, planned against the desk it
+            # saw. Given only the destination the walk goes straight at it and
+            # the body clips the desk on the way -- measured, 23 of the 88
+            # moving frames inside its footprint, closest 0.086 m.
+            path = np.asarray(d["base_path"], dtype=np.float32)
+            print(f"[walk] following {len(path)} collision-free waypoints "
+                  f"from cuRobo")
+        else:
+            path = np.array([[goal[0], goal[1], math.radians(goal[2])]],
+                            dtype=np.float32)
         print(f"[walk] goal from vision: {np.round(goal, 3)} "
               f"(grasp #{d.get('grasp_index')}, conf {d.get('confidence'):.3f}, "
               f"{d.get('reachable')}/{d.get('total')} grasps reachable)")
