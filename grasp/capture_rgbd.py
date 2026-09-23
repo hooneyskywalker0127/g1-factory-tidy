@@ -48,11 +48,25 @@ _args = [a for a in sys.argv[1:] if not a.startswith("--") and _isnum(a)]
 STAND_X = float(_args[0]) if len(_args) > 0 else -1.30
 STAND_Y = float(_args[1]) if len(_args) > 1 else -0.60
 STAND_YAW = float(_args[2]) if len(_args) > 2 else -90.0
-# Or take the looking pose from the walk itself, so a run from a different
-# start does not need the arrival typed out. The clip's last frame is where
+# Or take the looking pose from the walk itself. The clip's last frame is where
 # the robot is; --back then steps it straight backwards along its own heading,
 # which is a property of the depth camera (the object has to sit outside its
 # 0.40 m blind zone) and not a place in the cell.
+#
+# READ THIS BEFORE USING IT FOR AN ARRIVAL CAPTURE. The picture has to be taken
+# from where the PICK will run, because that is the pose every joint angle in
+# the plan is measured from. play_in_cell.py pins the pick to its own
+# STAND = (-1.30, -0.60) and glides the robot there after the walk, so the
+# walk's last frame is NOT that pose -- it is 70 to 250 mm away depending on
+# the route. Shooting from there is how a capture ends up looking down the
+# box's long axis: measured, the observed object came out 9 mm across instead
+# of 162, GraspGen saw a sliver and proposed side grasps, and the hand shoved
+# the box 95 mm instead of pressing it down (dz +57.6 mm against +113.7 mm from
+# the same walk shot from the pick's pose). That is v3_start2 against v4_start2
+# in the 260923 folder.
+#
+# So this flag is right only once the pick runs where the walk actually ends.
+# While STAND is pinned, pass the positional arguments instead.
 if "--stand-from-walk" in sys.argv:
     import math as _math, joblib as _jl0, numpy as _np0
     _c0 = list(_jl0.load(
