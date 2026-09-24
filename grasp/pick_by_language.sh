@@ -29,6 +29,7 @@ LOG=$F/run.log
 START_X=1.40; START_Y=0.70
 LOOK_YAWS=(90 -30 -150)          # where it looks, in order, until it finds it
 SCENE="-1.30 -0.60 -90"          # where the desk has always been (the cell)
+CUT_Z=0.755                      # pelvis height the arm plan is made for (hold_search.txt)
 PLAN=$R/results/g1_graspgen.json # the desk's and box's shape, nothing about the stand
 mkdir -p "$F" "$DEST"
 source /home/sehoon/miniconda3/etc/profile.d/conda.sh
@@ -78,13 +79,22 @@ fi
 say "far grasps: $(python3 -c "import json;print(len(json.load(open('$F/far_grasps.json'))['grasps']))") candidates"
 
 # ---- 3. reach from here? no -> where to stand, and how to get there ------
+# where_to_stand.py can also test the stand with the legs in the stance the
+# walk ends in (--stance WALK_end.json --pelvis-z Z, commit df33522). Against
+# the desk modelled as a solid block that leaves 178 of 1264 stands, all of
+# them with the object 67 degrees or more off the body's front, and the arm
+# cannot close from there. The block is the wrong desk: the real one is a top
+# on four legs and the shins go under it, which is what the pick scene now
+# collides against (plan_scene.py). So the stand is chosen for reach and
+# facing, and the legs are left the room they actually have.
+STANCE=""
 if [ ! -f "$F/stand.json" ]; then
   conda activate graspgenx
   python grasp/where_to_stand.py "$F/far_grasps.json" "$FOUND" "$F/stand.json" \
-      --from $START_X $START_Y $FOUND_YAW --path "$PLAN" 2>&1 \
+      --from $START_X $START_Y $FOUND_YAW --path "$PLAN" $STANCE 2>&1 \
       | grep -a "^\[stand\]\|Traceback\|Error" | tee "$F/stand.txt"
 fi
-grep -a "from where it is now\|has to walk\|not required\|STAND AT\|base path" "$F/stand.txt" | while read -r l; do say "$l"; done
+grep -a "from where it is now\|has to walk\|not required\|with the\|STAND AT\|base path" "$F/stand.txt" | while read -r l; do say "$l"; done
 [ -f "$F/stand.json" ] || { say "STOP: no stand"; exit 1; }
 read -r SX SY SYAW <<< "$(python3 -c "
 import json;d=json.load(open('$F/stand.json'))['stand']
@@ -96,7 +106,7 @@ if [ ! -f "$R/results/motion/fable.pkl" ]; then
   python grasp/walk_clip.py results/motion fable $START_X $START_Y ${LOOKED[0]} \
       --look-yaws "$(IFS=,; echo "${LOOKED[*]}")" \
       --stand "$F/stand.json" --squat-to 0.750 --hold-target --goal-at "$F/stand.json" \
-      --cut-at-height --cut-to 0.755 \
+      --cut-at-height --cut-to $CUT_Z \
       2>&1 | grep -a "^\[walk\]\|Traceback\|Error" | tee "$F/walk.txt"
 fi
 grep -a "turned in place\|position error\|frames (" "$F/walk.txt" | while read -r l; do say "$l"; done

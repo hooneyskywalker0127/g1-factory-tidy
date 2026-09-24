@@ -7,13 +7,32 @@
 로봇에게 물체 좌표를 주지 않는 것이 이 저장소의 전제입니다. 물체 위치는 로봇에 달린
 RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점할 때만 씁니다.
 
-지금은 그 중 한 조각을 하고 있습니다. Unitree G1 한 기가 비전으로 물건 하나를 찾아
-집어 드는 것입니다.
+지금은 그 중 한 조각을 하고 있습니다. Unitree G1 한 기가 "책상 위 상자를 집어"라는
+한 문장을 받아, 비전으로 그 물건을 찾고, 걸어가서, 집어 드는 것입니다.
+
+### ▶ 시연 영상 (YouTube)
+
+[![시연 영상 재생](docs/youtube_thumb.jpg)](https://youtu.be/0Tu-V0MvPYc)
+
+위 이미지를 누르면 YouTube에서 재생됩니다 — https://youtu.be/0Tu-V0MvPYc
+
+한 문장에서 파지까지의 전 과정을 영어 자막으로 단계마다 설명한 영상입니다.
+`bash grasp/pick_by_language.sh box table` 한 번의 실행이고,
+`grasp/compose_fable.sh`가 그 결과를 한 영상으로 엮습니다.
 
 ## 파이프라인
 
-세 개의 오픈소스가 순서대로 물립니다. 사람이 주는 것은 "치워라"뿐이고, 어디에 무엇이
+세 개의 오픈소스가 순서대로 물립니다. 사람이 주는 것은 문장 하나뿐이고, 어디에 무엇이
 있는지, 어떻게 잡을지, 어떻게 갈지는 이 셋이 정합니다.
+
+**0. 언어 → 물체 (C-RADIO, cuRobo의 예제)**
+
+머리 camera 한 장을 NVIDIA C-RADIO로 채점합니다. 모델과 텍스트 매칭은 cuRobo 자체
+튜토리얼(`curobo/examples/getting_started/feature_mapping.py`)의 것을 그대로 씁니다.
+"box"가 이긴 영역 중 "table"로 본 면의 윗면에 밑면이 닿아 있는 것만 답이 됩니다.
+선반 위 크레이트(+0.36 m)와 바닥 상자(−0.69 m)는 이 기하로 걸러집니다. 아무것도
+없으면 GR00T 플래너로 제자리 회전해 다시 봅니다. 답은 `obj_lang`이라는 이름으로
+촬영본에 써 넣고, GraspGenX는 그 이름을 읽습니다 (`grasp/find_by_text.py`).
 
 **1. GraspGen-X — 무엇을 어떻게 잡을 것인가**
 
@@ -33,8 +52,12 @@ RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점�
 
 ![GR00T](docs/gr00t.gif)
 
-팔이 닿는 자리가 지금 선 자리가 아니면 걸어가야 합니다. 보행은 kinematic planner가
-만들고 whole-body tracking policy가 따라갑니다.
+팔이 닿는 자리가 지금 선 자리가 아니면 걸어가야 합니다. 걸어야 하는지는 cuRobo IK가
+베이스를 지금 자리에 잠그고 먼저 묻고(0/80이면 걷습니다), 설 자리는 베이스를 풀고
+푼 IK 해 1264개 중 물체를 정면에 두는 것을 고르며, 경로는 `plan_cspace`가 책상을
+피해 냅니다 (`grasp/where_to_stand.py`). 보행 클립은 GR00T의 kinematic planner가
+만듭니다 (`grasp/walk_clip.py`). 셀 안 재생은 아직 그 클립을 그대로 트는 것이고,
+SONIC 추적 정책이 같은 클립을 따라 걷는 것은 공식 평가기로 따로 확인했습니다.
 
 ![G1 vision grasp](docs/g1_vision_grasp.gif)
 
@@ -49,13 +72,22 @@ RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점�
 - 머리 RGB-D 한 장에서 파지 생성 → 경로 계획 → 셀 안 재생 → 들어 올리기
 - 머리와 손목 camera 두 장을 한 점구름으로 합쳐 파지 생성
 - 전신 제어(SONIC) 위에서 골반 고정 없이 서기와 팔 뻗기
+- 한 문장 → C-RADIO로 물체 찾기 → 못 찾으면 돌아서 다시 보기 → 걸어야 하는지 판단
+  → 설 자리와 경로 → 걷기 → 다시 보고 파지 계획 → 집어 들기, 스크립트 한 번에
+  (`grasp/pick_by_language.sh`)
+- 도착 후 다리 지터링 없음. 원인은 IsaacLab `DCMotorCfg`의 토크 한계가 PhysX의
+  잡음 섞인 관절 속도를 받는 것이었고, 골반을 고정한 파지에서는 같은 게인의
+  implicit PD를 씁니다 (`docs/DIAGNOSIS.md`)
 
 ## 아직 안 되는 것
 
 - 닫힌 루프. 시작 전에 한 번 보고 그 뒤에는 눈을 감습니다. 실행 중에 상자가
   움직여도 따라가지 않습니다
-- 파지와 전신 제어가 한 실행 안에 있지 않습니다
-- 팔 7관절만 씁니다. 파지 후보 36개 중 닿는 것은 5개였습니다
+- 파지와 전신 제어가 한 실행 안에 있지 않습니다. 걷기는 플래너 클립을 재생하고,
+  파지는 골반을 고정한 채 재생합니다. 둘의 이음매에 한 프레임의 도약이 남아 있습니다
+- 팔 7관절만 씁니다. 그래서 파지 계획은 골반 높이 0.750~0.760 m에서만 풀리고,
+  걷기 클립을 그 높이에서 잘라 맞춥니다. cuRobo의 전신 계획으로 옮기면 없어질 일입니다
+- 진단 전체와 원본 저장소와 어긋난 곳은 `docs/DIAGNOSIS.md`에 있습니다
 
 ## 셀
 
@@ -230,12 +262,29 @@ GraspGenX에 새 gripper로 등록하고 씁니다.
 | `grasp/probe_wrist_view.py` | 어느 프레임에서 손목 camera가 물체를 보는지 측정 |
 | `grasp/bake_props_usd.py` | 계획의 테이블·물체를 USD로 구움 |
 | `grasp/reach_clip.py` | 플래너 클립의 오른팔을 파지점으로 굽힘 |
+| `grasp/find_by_text.py` | 문장을 촬영본에 접지 (C-RADIO, cuRobo 예제), `obj_lang`으로 씀 |
+| `grasp/where_to_stand.py` | 여기서 닿는가, 어디에 설까, 어떻게 갈까 — cuRobo IK와 `plan_cspace` |
+| `grasp/walk_clip.py` | GR00T 플래너로 회전·보행 클립 생성 |
+| `grasp/render_plan_views.py` | 로봇이 본 점구름·파지 후보·팔 경로를 그린 두 영상 |
+| `grasp/check_render.py` | 렌더된 영상에서 도약·넘어짐 검사 |
+| `grasp/pick_by_language.sh` | 문장에서 파지까지 한 번에. 단계별 출력은 `results/fable/` |
+| `grasp/compose_fable.sh` | 위 결과를 영어 자막이 달린 한 영상으로 |
 | `map/measure_reach.py` | 팔만 / 팔+허리의 도달 범위 측정 |
 | `common/` | 렉·상자·트레이 부품. humanoid-swarm-sim에서 가져옴 |
 
 ## 실행
 
-IsaacLab 2.3.2 / Isaac Sim 5.1 환경에서 실행합니다.
+IsaacLab 2.3.2 / Isaac Sim 5.1 환경에서 실행합니다. 한 문장으로 시작하는 전체
+파이프라인은 이렇게 돌립니다 (env_isaaclab과 graspgenx 두 환경을 번갈아 씁니다).
+
+```
+bash grasp/pick_by_language.sh box table     # 3뷰 영상과 단계별 산출물
+bash grasp/compose_fable.sh                  # 자막 달린 한 영상
+```
+
+C-RADIO는 첫 실행 때 torch.hub로 받아옵니다. graspgenx 환경에는 `open_clip_torch`와
+`einops`가 더 필요합니다 (이 환경의 transformers로는 `siglip2` 어댑터가 열리지 않아
+`clip` 어댑터를 씁니다).
 
 ```
 conda activate env_isaaclab

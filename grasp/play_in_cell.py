@@ -170,6 +170,37 @@ cfg.spawn = cfg.spawn.replace(
 # close_vals), so what stops them has to be the actuator, not the command.
 cfg.actuators["hands"] = cfg.actuators["hands"].replace(
     effort_limit=1.4, velocity_limit=12.0)
+# The legs, when the pelvis is welded: PhysX's own PD, not IsaacLab's
+# DC-motor model.
+#
+# This is the jittering that starts the moment the walk ends, in every
+# delivered video. G1_29DOF_CFG drives the legs with DCMotorCfg, whose torque
+# limit shrinks with the joint's velocity -- and the velocity it is handed is
+# PhysX's estimate, which the SimulationContext itself warns is noisy at this
+# setting (measured: 20-26 rad/s reported on joints that had not moved). In
+# the bent stance the walk ends in, gravity loads the knees and hips; each
+# bad velocity sample collapses the torque limit, the leg drops, the next
+# sample restores it, the leg snaps back at the velocity clamp. With the legs
+# straight down (the config's default pose) the load is small and nothing
+# shows, which is why the no-walk picks never had it.
+#
+# Measured over the 830-frame pick, leg joint motion between rendered frames:
+#   DC motor, desk as one block          384 mrad/frame mean   HELD
+#   DC motor, desk as slab + legs         98                   HELD
+#   DC motor, pelvis 2 cm higher         285                   LOST
+#   DC motor, forces every iteration     113                   LOST
+#   implicit PD, same gains               0.09                 HELD
+# The gains are the config's own; only the torque model changes. --dc-legs
+# keeps the old model, for comparison.
+if not (WBC or SONIC) and "--dc-legs" not in sys.argv:
+    from isaaclab.actuators import ImplicitActuatorCfg
+    for _g in ("legs", "feet"):
+        _a = cfg.actuators[_g]
+        cfg.actuators[_g] = ImplicitActuatorCfg(
+            joint_names_expr=_a.joint_names_expr, stiffness=_a.stiffness,
+            damping=_a.damping, armature=getattr(_a, "armature", None),
+            effort_limit_sim=_a.effort_limit)
+    print("[play] legs and feet on PhysX's implicit PD, the config's gains")
 if SONIC:
     # SONIC's own gains, computed the way policy_parameters.hpp computes them:
     # stiffness = armature * (2*pi*10)^2, damping = 2 * 2 * armature * (2*pi*10),
@@ -1025,6 +1056,10 @@ _got = np.array([robot.data.joint_pos[0, j].item() for j in ids])
 _leg_ids = [robot.find_joints([n])[0][0] for n in robot.joint_names
             if ("hip" in n or "knee" in n or "ankle" in n)]
 _leg_v = []
+# ...and how far they actually move between rendered frames. PhysX's joint
+# velocity is a noisy estimate (the SimulationContext warns about it at
+# startup); what the eye sees is displacement, so record that too.
+_leg_q = []
 _want = np.array([float(traj[0, k]) for k in range(len(ids))])
 print(f"[start] arm error max {np.abs(_got - _want).max()*1000:.2f} mrad, "
       f"per joint {np.round((_got - _want) * 1000, 1)}")
@@ -1083,6 +1118,7 @@ for i in range(traj.shape[0]):
         # diagnostic block and reported five samples out of eight hundred.
         _leg_v.append(float(np.abs(
             robot.data.joint_vel[0, _leg_ids].cpu().numpy()).max()))
+        _leg_q.append(robot.data.joint_pos[0, _leg_ids].cpu().numpy().copy())
     if i % 20 == 0 and target_body is not None:
         target_body.update(sim.get_physics_dt())
         op = target_body.data.root_pos_w[0].cpu().numpy()
@@ -1108,6 +1144,15 @@ if target_body is not None:
         print(f"[legs] joint speed while the arm works: mean {_lv.mean():.3f}"
               f", p95 {np.percentile(_lv, 95):.3f}, max {_lv.max():.3f} rad/s"
               f"  ({len(_lv)} frames)")
+    if len(_leg_q) > 1:
+        _dq = np.abs(np.diff(np.asarray(_leg_q), axis=0)) * 1000.0   # mrad
+        _worst = int(np.argmax(_dq.max(axis=0)))
+        _mv = np.asarray(_leg_q).ptp(axis=0) * 1000.0
+        print(f"[legs] motion between frames: mean {_dq.max(axis=1).mean():.2f}"
+              f", p95 {np.percentile(_dq.max(axis=1), 95):.2f}, max "
+              f"{_dq.max():.2f} mrad/frame; worst joint "
+              f"{robot.joint_names[_leg_ids[_worst]]}; total swing per joint "
+              f"{np.round(_mv, 1)} mrad")
     print(f"[eval] end pos {np.round(op,4)}  dxy {np.linalg.norm(d[:2]):.4f} m"
           f"  dz {d[2]:+.4f} m  -> {'HELD' if d[2] > 0.05 else 'LOST'}")
 

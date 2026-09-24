@@ -114,15 +114,50 @@ def spawn_support(stage, name, mesh_path, T_torso, T_in_torso):
     # the object in mid-air (measured: object pushed from 0.7647 to 0.7781
     # against a 0.7640 top). cuRobo plans against this table as a
     # `cuboid_from_extents` too, so the box is also what the plan assumed.
+    #
+    # But one box the size of the whole desk makes the space under the top
+    # solid, and the robot stands with its shins in that space: at the stand
+    # the arm reaches from, four leg links sit inside the block and the
+    # contact solver throws them out every step -- measured, the leg joints
+    # moved 384 mrad between rendered frames for the whole pick (0.08 with
+    # the legs straight down, clear of the block), which is the jittering
+    # in every delivered video. Raising the pelvis 2 cm did not change it;
+    # the floor was never the problem. Using the desk's own triangle mesh
+    # instead freed the legs but the box slid off the grasp (LOST): the
+    # tabletop contact the grasp was tuned against is this box's flat top.
+    #
+    # So keep the box for the tabletop and give the legs their own: the
+    # slab is the mesh's top down to its underside, the legs are the four
+    # clusters of vertices below it, each in its own bounding box. Same top
+    # face as before, and air where the desk has air.
     lo, hi = m.bounds
-    box = UsdGeom.Cube.Define(stage, path + "/Collider")
-    box.CreateSizeAttr(2.0)
-    bxf = UsdGeom.Xformable(box.GetPrim())
-    bxf.AddTranslateOp().Set(Gf.Vec3d(*((lo + hi) / 2.0)))
-    bxf.AddScaleOp().Set(Gf.Vec3f(*((hi - lo) / 2.0)))
-    UsdGeom.Imageable(box.GetPrim()).CreateVisibilityAttr("invisible")
-    UsdPhysics.CollisionAPI.Apply(box.GetPrim())
-    _tight_contact(box.GetPrim())
+    v = m.vertices
+    top = hi[2]
+    near_top = v[v[:, 2] > top - 0.10]
+    slab_bottom = float(near_top[:, 2].min())
+    below = v[v[:, 2] < slab_bottom - 0.01]
+    parts = [((lo[0], lo[1], slab_bottom), (hi[0], hi[1], top))]
+    if len(below):
+        c = (lo[:2] + hi[:2]) / 2.0
+        for qx in (-1.0, 1.0):
+            for qy in (-1.0, 1.0):
+                q = below[((below[:, 0] - c[0]) * qx > 0)
+                          & ((below[:, 1] - c[1]) * qy > 0)]
+                if len(q):
+                    parts.append(((q[:, 0].min(), q[:, 1].min(), lo[2]),
+                                  (q[:, 0].max(), q[:, 1].max(), slab_bottom)))
+    for k, (a, b) in enumerate(parts):
+        a, b = np.asarray(a, float), np.asarray(b, float)
+        box = UsdGeom.Cube.Define(stage, f"{path}/Collider{k}")
+        box.CreateSizeAttr(2.0)
+        bxf = UsdGeom.Xformable(box.GetPrim())
+        bxf.AddTranslateOp().Set(Gf.Vec3d(*((a + b) / 2.0)))
+        bxf.AddScaleOp().Set(Gf.Vec3f(*((b - a) / 2.0)))
+        UsdGeom.Imageable(box.GetPrim()).CreateVisibilityAttr("invisible")
+        UsdPhysics.CollisionAPI.Apply(box.GetPrim())
+        _tight_contact(box.GetPrim())
+    print(f"[scene] support '{name}' collides as a slab "
+          f"{top - slab_bottom:.3f} m thick and {len(parts) - 1} legs")
     top = (T @ np.append(m.bounds[1], 1.0))[2]
     print(f"[scene] support '{name}' origin {np.round(T[:3, 3], 3)} top z {top:.3f}")
 
