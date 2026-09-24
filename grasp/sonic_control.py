@@ -130,13 +130,39 @@ def quat_rotate_inverse(q_wxyz, v):
     ])
 
 
+def quat_mul(a, b):
+    """Hamilton product, w x y z -- quat_mul_d in the deployment."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return np.array([aw*bw - ax*bx - ay*by - az*bz,
+                     aw*bx + ax*bw + ay*bz - az*by,
+                     aw*by - ax*bz + ay*bw + az*bx,
+                     aw*bz + ax*by - ay*bx + az*bw])
+
+
+def quat_conj(q):
+    return np.array([q[0], -q[1], -q[2], -q[3]])
+
+
 def quat_to_6d(q_wxyz):
-    """Anchor orientation as the first two columns of the rotation matrix."""
+    """First two columns of the rotation matrix, flattened ROW-WISE.
+
+    g1_deploy_onnx_ref.cpp:679, with its own note that this matches
+    ``.as_matrix()[..., :2].reshape(1, -1)``:
+
+        {R[0][0], R[0][1],  R[1][0], R[1][1],  R[2][0], R[2][1]}
+
+    This file used to return the same six numbers column-wise, which is a
+    different vector for every rotation that is not symmetric.
+    """
     w, x, y, z = q_wxyz
-    return np.array([
-        1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y),
-        2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x),
-    ])
+    r00 = 1 - 2 * (y * y + z * z)
+    r01 = 2 * (x * y - w * z)
+    r10 = 2 * (x * y + w * z)
+    r11 = 1 - 2 * (x * x + z * z)
+    r20 = 2 * (x * z - w * y)
+    r21 = 2 * (y * z + w * x)
+    return np.array([r00, r01, r10, r11, r20, r21])
 
 
 class SonicTracker:
@@ -174,16 +200,43 @@ class SonicTracker:
         self.h_omega = [np.zeros(3) for _ in range(HIST)]
         self.h_grav = [np.array([0.0, 0.0, -1.0]) for _ in range(HIST)]
         self.action = np.zeros(N)
+        # The externally-commanded upper body, 17 values in IsaacLab order, or
+        # None to track the reference's own arms.
+        self.upper = None
 
-    def _future(self, t, arr, width):
+    def set_upper_body(self, vals_il_17):
+        """Run a planned arm over a walking reference.
+
+        g1_deploy_onnx_ref.cpp:780, inside the routine that gathers the
+        encoder's future frames:
+
+            if (has_upper_body_data_) {
+              for (size_t i = 0; i < 17; i++) {
+                current_motion_joint_pos[
+                    upper_body_joint_isaaclab_order_in_isaaclab_index[i]]
+                  = upper_body_joint_positions_buffer_[i];
+              }
+            }
+
+        So the arm command does not get blended in afterwards and it is not a
+        second reference to join: every frame the encoder looks at already has
+        the commanded arm in it. The legs keep walking to the planner's clip
+        and the arm does what cuRobo asked, in one motion.
+        """
+        self.upper = (None if vals_il_17 is None
+                      else np.asarray(vals_il_17, np.float64))
+
+    def _future(self, t, arr, width, upper=False):
         """LOOK frames from t, every STRIDE, clamped at the end of the clip."""
         out = np.zeros((LOOK, width))
         for k in range(LOOK):
             i = min(t + k * STRIDE, self.T - 1)
             out[k] = arr[i]
+        if upper and self.upper is not None:
+            out[:, UPPER_BODY_IL] = self.upper
         return out.reshape(-1)
 
-    def _encode(self, t):
+    def _encode(self, t, base_quat):
         v = np.zeros(ENC_DIM, np.float32)
         o = {}
         p = 0
@@ -204,22 +257,49 @@ class SonicTracker:
         # and the token that comes back is meaningless: measured, the first
         # action asked the joints for 4.0 rad off the default and the robot
         # exploded.
+        # g1 mode fills FOUR fields and no others. observation_config.yaml:
+        #
+        #   encoder_modes:
+        #     - name: "g1"
+        #       mode_id: 0
+        #       required_observations:
+        #         - encoder_mode_4
+        #         - motion_joint_positions_10frame_step5
+        #         - motion_joint_velocities_10frame_step5
+        #         - motion_anchor_orientation_10frame_step5
+        #
+        # The root-height, lower-body, vr_3point, smpl and wrist slots belong
+        # to the teleop and smpl modes. This file used to fill five of them
+        # with real numbers while running as g1, which puts data where the
+        # model was trained to see zeros.
+        #
+        # encoder_mode_4 is the mode ID as a scalar with three zeros after it,
+        # not a one-hot -- GatherEncoderMode writes buf[offset] =
+        # GetEncodeMode() and zeroes the rest. g1 is mode 0, so the field is
+        # all zeros; a one-hot there says mode 1, teleop.
         put("encoder_mode_4", [0.0, 0.0, 0.0, 0.0])
         put("motion_joint_positions_10frame_step5",
-            self._future(t, self.ref_il, N))
+            self._future(t, self.ref_il, N, upper=True))
         put("motion_joint_velocities_10frame_step5",
             self._future(t, self.ref_vel_il, N))
-        put("motion_root_z_position_10frame_step5",
-            self._future(t, self.ref_z.reshape(-1, 1), 1))
-        put("motion_root_z_position", [self.ref_z[min(t, self.T - 1)]])
-        put("motion_anchor_orientation", quat_to_6d(self.ref_quat[min(t, self.T - 1)]))
+        # The anchor orientation is the reference's root rotation seen from
+        # the robot's own base, not the reference's world rotation.
+        # g1_deploy_onnx_ref.cpp:673, orientation_mode 0:
+        #
+        #     base_to_ref_quat = quat_mul_d(quat_conjugate_d(base_quat),
+        #                                   new_ref_root_rot);
+        #
+        # Feeding the world quaternion instead hands the policy the robot's
+        # whole heading change as an orientation error -- this walk turns
+        # about 60 degrees -- and it spends that on the legs and waist.
+        # apply_delta_heading is identity here: the reference is generated in
+        # the same world frame the robot stands in, so there is no motion
+        # frame to align.
         put("motion_anchor_orientation_10frame_step5",
-            np.stack([quat_to_6d(self.ref_quat[min(t + k * STRIDE, self.T - 1)])
-                      for k in range(LOOK)]))
-        put("motion_joint_positions_lowerbody_10frame_step5",
-            self._future(t, self.ref_il[:, LOWER], len(LOWER)))
-        put("motion_joint_velocities_lowerbody_10frame_step5",
-            self._future(t, self.ref_vel_il[:, LOWER], len(LOWER)))
+            np.stack([quat_to_6d(quat_mul(
+                quat_conj(base_quat),
+                self.ref_quat[min(t + k * STRIDE, self.T - 1)]))
+                for k in range(LOOK)]))
         return self.enc.run(None, {self.enc_in: v[None]})[0].reshape(-1)
 
     def prime(self, q, dq, quat_wxyz, omega_body):
@@ -252,7 +332,7 @@ class SonicTracker:
         self.h_omega = self.h_omega[1:] + [np.asarray(omega_body)]
         self.h_grav = self.h_grav[1:] + [grav]
 
-        token = self._encode(t)
+        token = self._encode(t, np.asarray(quat_wxyz, np.float64))
         v = np.concatenate([
             token,
             np.concatenate(self.h_omega),
@@ -295,7 +375,7 @@ UPPER_BODY_IL = [2, 5, 8, 11, 12, 15, 16, 19, 20, 21, 22, 23, 24, 25, 26,
 
 
 def clip_to_reference(clip, fps):
-    """A walk clip as a SONIC reference: (T50, 29) IsaacLab order at 50 Hz.
+    """A walk clip as a SONIC reference: (T50, 29) hardware order at 50 Hz.
 
     Returns joint positions, root quaternion (w x y z) and root height, all
     resampled onto the controller's clock. motion_reference.md: "Each row is
@@ -305,9 +385,10 @@ def clip_to_reference(clip, fps):
     root = np.asarray(clip["root_trans_offset"], np.float64)
     quat_xyzw = np.asarray(clip["root_rot"], np.float64)  # clips store xyzw
     n = len(dof)
-    iso = np.zeros_like(dof)
-    for mj, il in enumerate(MUJOCO_TO_ISAACLAB):
-        iso[:, il] = dof[:, mj]
+    # Stays in MuJoCo order. SonicTracker takes its reference in the hardware
+    # order the deployment's own default_angles and action_scale are written
+    # in and converts with _to_il; reordering here as well converted it twice.
+    iso = dof
 
     src = np.arange(n) / float(fps)
     n50 = max(2, int(round(n / float(fps) / CONTROL_DT)))
@@ -317,3 +398,4 @@ def clip_to_reference(clip, fps):
     q = np.stack([np.interp(dst, src, quat_xyzw[:, c]) for c in range(4)], axis=1)
     q /= np.linalg.norm(q, axis=1, keepdims=True)
     return pos, q[:, [3, 0, 1, 2]], z                     # xyzw -> wxyz
+    # pos is MuJoCo/hardware order, matching JOINTS/DEFAULT above.
