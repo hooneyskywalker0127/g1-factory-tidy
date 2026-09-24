@@ -95,6 +95,13 @@ ARM_AT = (int(sys.argv[sys.argv.index("--arm-at") + 1])
 _ps = sys.argv.index("--plan-stand") if "--plan-stand" in sys.argv else None
 PLAN_STAND = ((float(sys.argv[_ps + 1]), float(sys.argv[_ps + 2]),
                float(sys.argv[_ps + 3])) if _ps else (STAND_X, STAND_Y, STAND_YAW))
+# Where the furniture goes, which is not the same question as where the plan
+# runs. The desk belongs where it has always been; the robot belongs where
+# vision said to stand. Keeping one number for both moves the desk whenever
+# the stand moves, which is a change to the cell and not to the robot.
+_ss = sys.argv.index("--scene-stand") if "--scene-stand" in sys.argv else None
+SCENE_STAND = ((float(sys.argv[_ss + 1]), float(sys.argv[_ss + 2]),
+                float(sys.argv[_ss + 3])) if _ss else PLAN_STAND)
 
 # --wrist puts the camera on the hand instead of the head, the way Unitree's
 # own G1 datasets and the published mounts do. The chain is
@@ -206,7 +213,7 @@ for _ in range(3):
 
 meta = json.load(open(PLAN)) if PLAN else {}
 if meta:
-    px, py, pyaw = PLAN_STAND
+    px, py, pyaw = SCENE_STAND
     plan_torso = torso_pose((px, py, SCENE_Z), math.radians(pyaw))
     build_plan_scene(stage, app, meta, plan_torso)
     for i, name in enumerate(

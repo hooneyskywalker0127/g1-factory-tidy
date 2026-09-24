@@ -175,6 +175,47 @@ def main():
     err = r.position_error.view(n, -1)[:, 0].cpu().numpy()
 
     print(f"[stand] reachable with the base free: {int(ok.sum())}/{n}")
+
+    # Does it have to walk at all? Ask, rather than assume.
+    #
+    # The pipeline has always planned a stand and then walked to it, which
+    # gets the right answer without ever testing the question a person asks
+    # first: can I reach this from where I am? Pin the base where the robot
+    # actually is and solve the same grasps again -- same solver, same
+    # collision world, the only difference being that the base cannot move.
+    if "--from" in sys.argv:
+        _f = sys.argv[sys.argv.index("--from") + 1:][:3]
+        _sx, _sy, _syaw = float(_f[0]), float(_f[1]), math.radians(float(_f[2]))
+        _seed = ik.kinematics.default_joint_position.view(1, -1).clone()
+        _seed[0, bx], _seed[0, by], _seed[0, bz] = _sx, _sy, _syaw
+        import yaml as _yaml
+        _rc = _yaml.safe_load(open(CUROBO_CFG))["robot_cfg"]
+        _rc["kinematics"].setdefault("asset_root_path",
+                                     os.path.dirname(CUROBO_CFG))
+        _lk = dict(_rc["kinematics"].get("lock_joints") or {})
+        _lk.update({"base_j_x": _sx, "base_j_y": _sy, "base_j_ztheta": _syaw})
+        _rc["kinematics"]["lock_joints"] = _lk
+        _here = InverseKinematics(InverseKinematicsCfg.create(
+            robot=_rc, num_seeds=64, max_batch_size=n))
+        _hf = list(_here.kinematics.tool_frames)
+        _hp = pos.reshape(n, 1, 1, 1, 3)
+        _hq = quat.reshape(n, 1, 1, 1, 4)
+        if len(_hf) > 1:
+            from curobo._src.cost.tool_pose_criteria import ToolPoseCriteria
+            _here.update_tool_pose_criteria(
+                {f: (ToolPoseCriteria() if f == TOOL else ToolPoseCriteria.disabled())
+                 for f in _hf})
+            _hp = _hp.repeat(1, 1, len(_hf), 1, 1)
+            _hq = _hq.repeat(1, 1, len(_hf), 1, 1)
+        _r = _here.solve_pose(goal_tool_poses=GoalToolPose(
+            tool_frames=_hf, position=_hp.contiguous(), quaternion=_hq.contiguous()))
+        _n_here = int(_r.success.view(-1).sum())
+        print(f"[stand] from where it is now ({_sx:.2f}, {_sy:.2f}): "
+              f"{_n_here}/{n} grasps reachable")
+        if _n_here == 0:
+            print("[stand] nothing is in reach from here -- it has to walk")
+        else:
+            print(f"[stand] {_n_here} already in reach; walking is not required")
     if not ok.any():
         raise SystemExit("[stand] nothing is reachable even with the base free")
 

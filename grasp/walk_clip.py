@@ -66,7 +66,11 @@ import onnxruntime as ort  # noqa: E402
 FPS = 30                # the planner's own output rate (planner_onnx.md)
 WALK, IDLE = 2, 0       # planner modes
 SQUAT = 4               # planner_onnx.md: mode 4 takes a height, 0.4..0.8 m
-ARRIVE_M = 0.12         # close enough to stop walking
+ARRIVE_M = float(__import__("os").environ.get("ARRIVE_M", "0.12"))
+# How close is close enough to stop walking. The default 0.12 leaves up to
+# 120 mm for play_in_cell to slide the body across with the legs still, which
+# is the lurch in the video -- measured, the frame-to-frame change over those
+# fifteen slide frames peaks at sixteen times the median.
 SETTLE_S = 2.0          # idle at the goal so the tracker ends standing still
 # Squatting needs longer than standing still does: the planner ramps toward a
 # commanded height rather than jumping to it, and two seconds got 13 mm of a
@@ -224,7 +228,20 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
         inp = _inputs(mode, seed, squat_to if mode == SQUAT else -1.0)
         inp["movement_direction"] = move
         inp["facing_direction"] = face
-        if path is not None and arrived_at is None:
+        if arrived_at is not None and "--hold-target" in sys.argv:
+            # Standing still means naming the place, not asking for almost no
+            # movement. planner_onnx.md: below 1e-5 the model "falls back to
+            # using the facing_direction with a small scaling factor", so a
+            # movement_direction of 1e-6 is a slow shove along the way the
+            # robot is looking, and over a squat hold it walks the robot off
+            # its own stand -- measured 42 to 190 mm, which is exactly what
+            # play_in_cell then has to slide back.
+            inp["has_specific_target"] = np.array([[1]], np.int64)
+            inp["specific_target_positions"] = np.stack(
+                [[goal_xy[0], goal_xy[1], STAND_ROOT_Z]] * 4)[None].astype(np.float32)
+            inp["specific_target_headings"] = np.array(
+                [[math.radians(goal[2])] * 4], np.float32)
+        elif path is not None and arrived_at is None:
             # Follow cuRobo's collision-free base path. Four waypoints is one
             # token's worth, which is what the model takes.
             wp = _waypoints(path, root)
@@ -313,6 +330,30 @@ def main():
         look_at = None
         start = tuple(float(v) for v in sys.argv[3:6])
         goal = tuple(float(v) for v in sys.argv[6:9])
+
+    if "--goal-at" in sys.argv:
+        # Walk all the way to the pose the pick will actually run from.
+        #
+        # play_in_cell.py replays the pick with the robot at its own STAND, and
+        # whatever distance the walk stops short of that is closed by sliding
+        # the body there over fifteen frames with the legs still. Measured on
+        # the delivered clips that slide is 70 to 248 mm, and in the video it
+        # is the lurch at 8.4 s: frame-to-frame change peaks at sixteen times
+        # the median right across those fifteen frames. Walking the last
+        # stretch on its own legs costs nothing and there is nothing left to
+        # slide.
+        _a = sys.argv[sys.argv.index("--goal-at") + 1]
+        if _a.endswith(".json"):
+            _d = json.load(open(_a))["stand"]
+            goal = (float(_d["x"]), float(_d["y"]), float(_d["yaw_deg"]))
+        else:
+            _i = sys.argv.index("--goal-at")
+            goal = (float(sys.argv[_i + 1]), float(sys.argv[_i + 2]),
+                    float(sys.argv[_i + 3]))
+        _g = np.array([[goal[0], goal[1], math.radians(goal[2])]], np.float32)
+        path = _g if path is None else np.concatenate([path, _g])
+        print(f"[walk] walking through to {np.round(goal, 3)} -- the pose the "
+              f"pick runs from, so nothing has to be slid afterwards")
 
     sess = ort.InferenceSession(find_planner(), providers=["CPUExecutionProvider"])
     squat_to = (float(sys.argv[sys.argv.index("--squat-to") + 1])

@@ -116,11 +116,20 @@ for _ in range(3):
 spawn_props(stage, app)
 
 # stand the robot where the plan was made: facing the object it reaches for
+WBC = "--wbc" in sys.argv
+NO_SETTLE = "--no-settle" in sys.argv or WBC
+SONIC = "--sonic" in sys.argv   # track the motion with SONIC itself
+# --wbc: stand on GR00T's own balance policy instead of welding the pelvis.
+# Welding it is what a real G1 cannot do, and it is what makes the join
+# between the walk and the pick read as a teleport -- the walk has a body and
+# the pick has a fixture. decoupled_wbc's lower-body policy is trained to hold
+# a stance while the arms move; grasp/wbc_balance.py drives it.
 cfg = G1_29DOF_CFG.replace(prim_path="/World/G1")
 cfg.spawn = cfg.spawn.replace(
     articulation_props=sim_utils.ArticulationRootPropertiesCfg(
         enabled_self_collisions=False, solver_position_iteration_count=12,
-        solver_velocity_iteration_count=4, fix_root_link=True))
+        solver_velocity_iteration_count=4,
+        fix_root_link=not (WBC or SONIC)))
 # Dex3-1 finger torque, from Unitree's own URDF: every hand joint in
 # g1_29dof_with_hand_rev_1_0.urdf is <limit effort="1.4" velocity="12">.
 # IsaacLab's G1_29DOF_CFG leaves the hands at effort_limit=300, 214x the real
@@ -130,10 +139,74 @@ cfg.spawn = cfg.spawn.replace(
 # close_vals), so what stops them has to be the actuator, not the command.
 cfg.actuators["hands"] = cfg.actuators["hands"].replace(
     effort_limit=1.4, velocity_limit=12.0)
+if SONIC:
+    # SONIC's own gains, computed the way policy_parameters.hpp computes them:
+    # stiffness = armature * (2*pi*10)^2, damping = 2 * 2 * armature * (2*pi*10),
+    # with the ankles at twice that. Driving its actions through anything else
+    # is driving a different robot than the one it was trained on.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from sonic_control import JOINTS as _SJ, STIFFNESS as _SK, DAMPING as _SD
+    _kp = dict(zip(_SJ, _SK))
+    _kd = dict(zip(_SJ, _SD))
+    for _g, _act in list(cfg.actuators.items()):
+        _pk, _pd = {}, {}
+        for _n, _v in _kp.items():
+            if any(__import__("re").fullmatch(e.replace(".*", "[a-z_]*"), _n)
+                   for e in _act.joint_names_expr):
+                _pk[_n] = float(_v)
+                _pd[_n] = float(_kd[_n])
+        if _pk:
+            cfg.actuators[_g] = _act.replace(stiffness=_pk, damping=_pd)
+            print(f"[sonic] {_g}: {len(_pk)} joints on SONIC's gains")
+elif WBC:
+    # The gains the balance policy was trained under, from decoupled_wbc's own
+    # g1_gear_wbc.yaml: hips 150, knees 200, ankles 40, waist 250, with
+    # damping 2 / 4 / 2 / 5. Isaac's defaults are close on the hips and knees
+    # and half the policy's on the ankles, which is the joint that actually
+    # keeps a standing robot standing.
+    #
+    # The keys are taken from each group's own joint_names_expr, because a
+    # stiffness dict whose pattern matches nothing in its group is rejected
+    # outright, and which joints sit in which group differs between G1 configs.
+    _KP = (("knee", 200.0), ("hip", 150.0), ("waist", 250.0),
+           ("torso", 250.0), ("ankle", 40.0))
+    _KD = (("knee", 4.0), ("hip", 2.0), ("waist", 5.0),
+           ("torso", 5.0), ("ankle", 2.0))
+    for _g in ("legs", "feet"):
+        _act = cfg.actuators.get(_g)
+        if _act is None:
+            continue
+        _kp, _kd = {}, {}
+        for _e in _act.joint_names_expr:
+            for _key, _v in _KP:
+                if _key in _e:
+                    _kp[_e] = _v
+                    break
+            for _key, _v in _KD:
+                if _key in _e:
+                    _kd[_e] = _v
+                    break
+        if _kp:
+            cfg.actuators[_g] = _act.replace(stiffness=_kp, damping=_kd)
+            print(f"[wbc] {_g}: {len(_kp)} gain patterns set from the policy's yaml")
 yaw = math.radians(-90.0)
 # Where the plan was made, and so where the scene is placed and where the arm
 # has to be standing when it reaches. Nothing below moves it.
-STAND = (-1.30, -0.60, cfg.init_state.pos[2])
+# Where the scene is placed: the desk's own spot in the cell, unchanged.
+SCENE_STAND = (-1.30, -0.60, cfg.init_state.pos[2])
+# Where the robot stands for the pick. Vision chooses it; --pick-stand carries
+# its answer in. Left out, it is the scene's own stand, which is what every
+# run before this did.
+if "--pick-stand" in sys.argv:
+    _i = sys.argv.index("--pick-stand")
+    STAND = (float(sys.argv[_i + 1]), float(sys.argv[_i + 2]),
+             cfg.init_state.pos[2])
+    PICK_YAW = math.radians(float(sys.argv[_i + 3]))
+    print(f"[play] picking from the stand vision chose: "
+          f"{np.round(STAND[:2], 3)} yaw {math.degrees(PICK_YAW):.1f} deg")
+else:
+    STAND = SCENE_STAND
+    PICK_YAW = None
 # A walk, if one was given: the robot starts wherever the clip starts and
 # walks in. The pelvis cannot be pinned for that, and the pick below needs it
 # pinned, so the clip is replayed first and then the robot is put back on
@@ -171,9 +244,10 @@ if WALK:
         pos=tuple(float(v) for v in walk["pos"][0]),
         rot=(float(_q0[3]), float(_q0[0]), float(_q0[1]), float(_q0[2])))
 else:
+    _y = yaw if PICK_YAW is None else PICK_YAW
     cfg.init_state = cfg.init_state.replace(
         pos=STAND,
-        rot=(math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)))
+        rot=(math.cos(_y / 2.0), 0.0, 0.0, math.sin(_y / 2.0)))
 robot = Articulation(cfg)
 
 # Finger pad friction, from GraspGenX's own --finger_mu default of 3.0. Left
@@ -215,7 +289,7 @@ eye_cam = None if NO_VIDEO else Camera(CameraCfg(
 # mid-air. Same ordering map/props.py uses. torso_link sits at a fixed offset
 # from the pelvis (the waist joints are at 0 in the default pose and the plan
 # never moves them), measured off the G1 URDF.
-T_torso = torso_pose(STAND, yaw)
+T_torso = torso_pose(SCENE_STAND, yaw)   # the desk does not move
 
 UsdGeom.Xform.Define(stage, "/Render")
 cam = None if NO_VIDEO else Camera(CameraCfg(
@@ -292,6 +366,29 @@ if cam is not None:
 
 frames, head_frames, eye_frames = [], [], []
 tgt_q = robot.data.default_joint_pos.clone()
+if "--legs-from" in sys.argv:
+    # Start the pick standing the way the walk left the robot standing.
+    #
+    # The two phases are rendered separately, so the pick spawns at the
+    # config's default pose while the walk ends squatted -- knee 0.65 rad, hip
+    # -0.49 -- and joined on one clock that reads as the robot springing
+    # upright in a single frame. Measured on the delivered clip: the root moves
+    # 2.5 mm at the seam, the knee 37 degrees.
+    #
+    # The root is pinned for the pick, so leg angles move the feet and not the
+    # torso: nothing the arm does is affected, only what the seam looks like.
+    # The angles come from the clip's own last frame, which walk_clip.py
+    # already writes out beside it.
+    _ej = os.path.splitext(sys.argv[sys.argv.index("--legs-from") + 1])[0] + "_end.json"
+    _end = json.load(open(_ej))
+    _n = 0
+    for _nm, _v in _end.items():
+        if "hip" in _nm or "knee" in _nm or "ankle" in _nm:
+            _ids = robot.find_joints([_nm])[0]
+            if _ids:
+                tgt_q[0, _ids[0]] = float(_v)
+                _n += 1
+    print(f"[play] legs taken from the walk's last frame: {_n} joints")
 zero = torch.zeros_like(tgt_q)
 
 
@@ -411,21 +508,39 @@ if walk is not None:
         sim.step()
         robot.update(sim.get_physics_dt())
         _shoot()
-    stand_root = torch.tensor(
-        [[STAND[0], STAND[1], STAND[2],
-          math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0),
-          0, 0, 0, 0, 0, 0]], dtype=torch.float32, device=sim.device)
-    last = robot.data.root_state_w[:1].clone()
-    print(f"[walk] settling onto the stand {STAND[:2]} over 15 frames")
-    for i in range(15):
-        a = (i + 1) / 15
-        robot.write_root_state_to_sim(last * (1.0 - a) + stand_root * a)
-        robot.write_joint_state_to_sim(tgt_q, zero)
-        robot.set_joint_position_target(tgt_q)
-        robot.write_data_to_sim()
-        sim.step()
-        robot.update(sim.get_physics_dt())
-        _shoot()
+    # The checkpoint's way: slide the robot onto STAND over 15 frames. It is
+    # what the welded pick needs, because the plan is built for STAND and the
+    # walk does not land exactly there. It is also the leap -- measured on the
+    # delivered video, frames 710-712 carried 9.8x the median frame difference,
+    # the largest in the whole clip. Position was down to 2 mm but the heading
+    # was not: the walk ends 4.66 deg off, and a body that turns 4.66 deg in
+    # half a second with its feet planted is what you see.
+    #
+    # Kept, because it is the path that reaches HELD. --no-settle leaves the
+    # robot where the locomotion policy actually stopped it, for the runs that
+    # plan the pick at that pose instead.
+    _rp = robot.data.root_pos_w[0].cpu().numpy()
+    _rq = robot.data.root_quat_w[0].cpu().numpy()
+    _ry = math.degrees(2.0 * math.atan2(float(_rq[3]), float(_rq[0])))
+    print(f"[walk] stopped at ({_rp[0]:.4f}, {_rp[1]:.4f}, {_ry:.2f} deg)")
+    if NO_SETTLE:
+        print("[walk] not settling -- the pick runs from here, nothing is slid")
+    else:
+        stand_root = torch.tensor(
+            [[STAND[0], STAND[1], STAND[2],
+              math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0),
+              0, 0, 0, 0, 0, 0]], dtype=torch.float32, device=sim.device)
+        last = robot.data.root_state_w[:1].clone()
+        print(f"[walk] settling onto the stand {STAND[:2]} over 15 frames")
+        for i in range(15):
+            a = (i + 1) / 15
+            robot.write_root_state_to_sim(last * (1.0 - a) + stand_root * a)
+            robot.write_joint_state_to_sim(tgt_q, zero)
+            robot.set_joint_position_target(tgt_q)
+            robot.write_data_to_sim()
+            sim.step()
+            robot.update(sim.get_physics_dt())
+            _shoot()
 
 frozen_ids = frozen_q = frozen_v = None
 if walk is not None:
@@ -450,8 +565,9 @@ if walk is not None:
     # made the articulation fight the solver hard enough to throw the box
     # 51 m and 1457 m down. Holding a joint kinematically is for the parts
     # that are doing nothing; the waist carries the arm.
-    frozen_ids = [robot.find_joints([n])[0][0] for n in robot.joint_names
-                  if ("hip" in n or "knee" in n or "ankle" in n)]
+    frozen_ids = ([] if WBC else
+                  [robot.find_joints([n])[0][0] for n in robot.joint_names
+                   if ("hip" in n or "knee" in n or "ankle" in n)])
     frozen_ids = [j for j in frozen_ids if j not in _driven]
     frozen_q = robot.data.joint_pos[0, frozen_ids].clone().unsqueeze(0)
     if STIFF_LEGS:
@@ -486,9 +602,169 @@ if WALK_ONLY:
                 _w.append_data(_f)
             _w.close()
             print(f"[play] wrote {_out}: {len(_fr)} frames")
+    _got = np.array([robot.data.joint_pos[0, j].item() for j in ids])
+    _want = np.array([float(traj[0, k]) for k in range(len(ids))])
+    _rp = robot.data.root_pos_w[0].cpu().numpy()
+    print(f"[walk] end-of-walk arm error: max {np.abs(_got-_want).max()*1000:.1f} mrad, "
+          f"per joint {np.round((_got-_want)*1000, 1)}")
+    print(f"[walk] end-of-walk root {np.round(_rp, 4)} vs STAND "
+          f"{np.round(np.array(STAND), 4)}  gap "
+          f"{np.linalg.norm(_rp[:2]-np.array(STAND[:2]))*1000:.1f} mm")
     print(f"[walk] walk-only: {len(frames)} frames, stopping before the pick")
     sys.stdout.flush()
     os._exit(0)
+
+sonic = None
+if SONIC:
+    # The reference SONIC tracks: the pose the robot is actually standing in,
+    # with the right arm walking through cuRobo's plan. SONIC is a tracking
+    # model -- give it a motion and it produces the whole body that executes
+    # it, legs included, which is the part this pipeline has been faking.
+    from sonic_control import (SonicTracker, JOINTS as SJ, CONTROL_DT,
+                               DEFAULT as SONIC_DEFAULT)
+    sonic_ids = [robot.find_joints([n])[0][0] for n in SJ]
+    # Stand the robot in the pose the walk actually left it in.
+    #
+    # SONIC's default_angles is a bent-knee stance (hips -0.312, knees 0.669)
+    # and it has its own pelvis height. Putting the pelvis at the height the
+    # plan was made for and the joints at that stance is two different robots
+    # at once: measured, the torso settled at 0.7195 instead of 0.79 and
+    # toppled. The walk's last frame is a leg pose that genuinely stands at
+    # this height, which is the whole point of having walked there.
+    _pose = SONIC_DEFAULT.copy()
+    _ej = (os.path.splitext(sys.argv[sys.argv.index("--legs-from") + 1])[0]
+           + "_end.json") if "--legs-from" in sys.argv else None
+    if _ej and os.path.exists(_ej):
+        _end = json.load(open(_ej))
+        for _c, _n in enumerate(SJ):
+            if _n in _end:
+                _pose[_c] = float(_end[_n])
+        print(f"[sonic] standing in the walk's last pose from {os.path.basename(_ej)}")
+    else:
+        print("[sonic] standing in SONIC's own default stance")
+    for _c, _j in enumerate(sonic_ids):
+        tgt_q[0, _j] = float(_pose[_c])
+    robot.write_joint_state_to_sim(tgt_q, torch.zeros_like(tgt_q))
+    robot.set_joint_position_target(tgt_q)
+    robot.write_data_to_sim()
+    sim.step()
+    robot.update(sim.get_physics_dt())
+    _now = robot.data.joint_pos[0, sonic_ids].cpu().numpy().astype(np.float64)
+    _ref = np.tile(_now, (traj.shape[0], 1))
+    # ids[] are the joints the plan drives, in the plan's own order; map the
+    # ones SONIC knows about onto its columns.
+    _plan_to_sonic = {}
+    for _k, _jid in enumerate(ids):
+        _nm = robot.joint_names[_jid]
+        if _nm in SJ:
+            _plan_to_sonic[_k] = SJ.index(_nm)
+    for _k, _c in _plan_to_sonic.items():
+        _ref[:, _c] = traj[:, _k]
+    # SONIC's clock is 50 Hz and the plan's is FPS (30). motion_reference.md is
+    # explicit -- "each row is one timestep at 50 Hz" -- and the encoder's
+    # lookahead is ten frames at twenty milliseconds, so handing it rows at 30
+    # fps stretches the future it is shown by a factor of 1.67. Resample.
+    _n50 = max(2, int(round(traj.shape[0] / FPS / CONTROL_DT)))
+    _src = np.arange(traj.shape[0]) / FPS
+    _dst = np.arange(_n50) * CONTROL_DT
+    _ref = np.stack([np.interp(_dst, _src, _ref[:, c]) for c in range(_ref.shape[1])],
+                    axis=1)
+    print(f"[sonic] reference resampled {traj.shape[0]} frames at {FPS} fps "
+          f"-> {_n50} at {1/CONTROL_DT:.0f} Hz")
+    # The reference's own root pose, not a placeholder. The deployment reads
+    # both off the motion itself (BodyPositions(frame)[0] for the height, the
+    # anchor quaternion for motion_anchor_orientation), and telling SONIC the
+    # reference faces +x while the robot faces -90 degrees is a mismatch it
+    # would have to fight for the whole clip.
+    _rq = robot.data.root_quat_w[0].cpu().numpy().astype(np.float64)
+    _rz = float(robot.data.root_pos_w[0, 2].item())
+    sonic = SonicTracker(_ref,
+                         ref_quat=np.tile(_rq, (len(_ref), 1)),
+                         ref_root_z=np.full(len(_ref), _rz))
+    print(f"[sonic] reference anchored at root z {_rz:.4f}, "
+          f"quat {np.round(_rq, 4)}")
+    sonic.prime(robot.data.joint_pos[0, sonic_ids].cpu().numpy().astype(np.float64),
+                robot.data.joint_vel[0, sonic_ids].cpu().numpy().astype(np.float64),
+                _rq, robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64))
+    sonic_dec = max(1, round(CONTROL_DT / sim.get_physics_dt()))
+    sonic_t = 0
+    print(f"[sonic] tracking {traj.shape[0]} reference frames, "
+          f"{len(_plan_to_sonic)} of them driven by the plan, "
+          f"every {sonic_dec} physics steps")
+    # The hand joints are not SONIC's; the plan still drives them.
+    sonic_hand_k = [k for k in range(len(ids)) if k not in _plan_to_sonic]
+
+
+def _sonic_step(_unused=None):
+    """One 50 Hz tick of the tracker; writes all 29 targets."""
+    global sonic_t
+    q = robot.data.joint_pos[0, sonic_ids].cpu().numpy().astype(np.float64)
+    dq = robot.data.joint_vel[0, sonic_ids].cpu().numpy().astype(np.float64)
+    quat = robot.data.root_quat_w[0].cpu().numpy().astype(np.float64)
+    om = robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64)
+    out = sonic.step(min(sonic_t, sonic.T - 1), q, dq, quat, om)
+    sonic_t += 1
+    for _c, _j in enumerate(sonic_ids):
+        tgt_q[0, _j] = float(out[_c])
+
+
+wbc = None
+if WBC:
+    # GR00T's balance policy, stepped at its own rate. sim2mujoco runs 5 ms
+    # physics with a decimation of 4, so the policy sees 50 Hz; Isaac's dt is
+    # whatever plan_scene set, so the decimation is computed rather than
+    # copied.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from wbc_balance import BalanceWBC, LEG_WAIST, POLICY_JOINTS
+    wbc = BalanceWBC()
+    wbc_ids = [robot.find_joints([n])[0][0] for n in LEG_WAIST]
+    # Exactly the 29 joints the policy was trained on, in its own order. This
+    # robot has 43 -- the Dex3-1 fingers are not among them.
+    obs_ids = [robot.find_joints([n])[0][0] for n in POLICY_JOINTS]
+    # Everything the trajectory does not command and the policy does not
+    # drive: the left arm and its hand.
+    _driven = set(wbc_ids) | set(ids)
+    hold_ids = [j for j in range(robot.num_joints) if j not in _driven]
+    wbc_dec = max(1, round(0.02 / sim.get_physics_dt()))
+    print(f"[wbc] holding {len(hold_ids)} uncommanded joints at their measured pose")
+    _hold_pending = True
+    print(f"[wbc] balance policy on {len(wbc_ids)} joints, "
+          f"observing {len(obs_ids)}, every {wbc_dec} physics steps")
+
+
+def _wbc_hold_uncommanded():
+    """Hold every upper-body joint the plan does not command.
+
+    GR00T's own rule, from decoupled_wbc's run_g1_control_loop.py: when there
+    is no command for the upper body it does not fall back to a configured
+    pose, it targets what the robot is currently holding --
+
+        upper_body_cmd = {"target_upper_body_pose":
+                          obs["q"][robot_model.get_joint_group_indices("upper_body")]}
+
+    The plan drives the right arm and says nothing about the left, so the left
+    arm is exactly that case. Left at Isaac's default it swings forward through
+    the desk; held the way GR00T holds an uncommanded joint, it stays where the
+    walk left it.
+    """
+    for _j in hold_ids:
+        tgt_q[0, _j] = robot.data.joint_pos[0, _j]
+
+
+def _wbc_step():
+    """One policy tick: read the robot, write leg and waist targets."""
+    global _hold_pending
+    if _hold_pending:
+        _wbc_hold_uncommanded()
+        _hold_pending = False
+    q = robot.data.joint_pos[0, obs_ids].cpu().numpy().astype(np.float32)
+    dq = robot.data.joint_vel[0, obs_ids].cpu().numpy().astype(np.float32)
+    quat = robot.data.root_quat_w[0].cpu().numpy().astype(np.float32)
+    omega = robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float32)
+    tgt = wbc.step(q, dq, quat, omega)
+    for _k, _j in enumerate(wbc_ids):
+        tgt_q[0, _j] = float(tgt[_k])
+
 
 # Start the robot AT the plan's first waypoint. Left at G1's default pose the
 # arm snaps across the whole reach in the first frame, and that swing throws
@@ -501,8 +777,19 @@ robot.write_data_to_sim()
 # Let the scene settle before recording: the object is placed from the plan's
 # numbers, not dropped, so it starts a hair above its support and needs a
 # moment of gravity to actually rest on it.
-for _ in range(120):
-    if walk is not None:
+for _si in range(120):
+    if SONIC:
+        if _si % sonic_dec == 0:
+            _sonic_step()
+            sonic_t = 0          # settling holds frame 0, it does not advance
+        for _k in sonic_hand_k:
+            tgt_q[0, ids[_k]] = float(traj[0, _k])
+        robot.set_joint_position_target(tgt_q)
+    elif WBC:
+        if _si % wbc_dec == 0:
+            _wbc_step()
+        robot.set_joint_position_target(tgt_q)
+    elif walk is not None:
         # There is no fix_root_link in a walk run, so an unheld robot spends
         # these 120 steps sagging on its own legs and the arm then reaches
         # from a body that is no longer on the stand. The trajectory loop
@@ -538,7 +825,8 @@ for i in range(traj.shape[0]):
     for k, jid in enumerate(ids):
         tgt_q[0, jid] = float(traj[i, k])
     robot.set_joint_position_target(tgt_q)
-    if (walk is not None and FREEZE_LEGS and not LEGS_SETTLE_ONLY
+    if (not WBC and walk is not None and FREEZE_LEGS
+            and not LEGS_SETTLE_ONLY
             and i % LEG_HOLD_EVERY == 0):
         # Once per rendered frame, not once per physics substep.
         #
@@ -555,8 +843,18 @@ for i in range(traj.shape[0]):
         # and leaves the substeps to the solver.
         robot.write_joint_state_to_sim(frozen_q, frozen_v,
                                        joint_ids=frozen_ids)
-    for _ in range(substeps):
-        if walk is not None:
+    for _ss in range(substeps):
+        if SONIC:
+            if (i * substeps + _ss) % sonic_dec == 0:
+                _sonic_step()
+                for _k in sonic_hand_k:
+                    tgt_q[0, ids[_k]] = float(traj[i, _k])
+                robot.set_joint_position_target(tgt_q)
+        elif WBC:
+            if (i * substeps + _ss) % wbc_dec == 0:
+                _wbc_step()
+                robot.set_joint_position_target(tgt_q)
+        elif walk is not None:
             # The pelvis every substep, the legs only once a frame. Holding
             # the pelvis is cheap -- it is one body, not a joint the solver is
             # iterating on -- and letting it drift between substeps lets the

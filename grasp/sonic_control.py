@@ -1,0 +1,303 @@
+"""SONIC's tracking controller, so the robot executes a motion instead of miming it.
+
+Up to now this pipeline used SONIC's *planner* -- gen_planner_motion.py makes a
+reference clip -- and then replayed that clip kinematically, writing the root
+pose and joint angles straight into the simulator. The robot was never
+balancing; it was a puppet. That is why the pick had to weld the pelvis to the
+world, why unwelding it fell over, and why the join between the two phases
+looked like a teleport.
+
+SONIC is a motion *tracking* model. GR00T-WholeBodyControl's README: "SONIC
+uses motion tracking as a scalable training task", and the deployment stack
+"plays back pre-loaded reference motions -- sequences of joint positions,
+velocities, and full body kinematics that the policy tracks". Give it the
+reference and it produces the whole body, 29 joints, at 50 Hz.
+
+Everything here is read off the deployment implementation, not guessed:
+
+  policy/release/model_encoder.onnx     1762 -> 64  latent motion token
+  policy/release/model_decoder.onnx      994 -> 29  joint actions
+  policy/release/observation_config.yaml            which fields, in order
+  src/g1/g1_deploy_onnx_ref/include/policy_parameters.hpp
+                                        default angles, action scale, gains
+  src/g1/g1_deploy_onnx_ref/src/g1_deploy_onnx_ref.cpp
+                                        each field's width, and
+                                        q_target = default + action * scale
+"""
+import os
+
+import numpy as np
+import onnxruntime as ort
+
+DEPLOY = "/home/sehoon/Projects/GR00T-WholeBodyControl/gear_sonic_deploy"
+POLICY = os.path.join(DEPLOY, "policy", "release")
+
+# IsaacLab joint order, the order every SONIC vector is in.
+JOINTS = [
+    "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint",
+    "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+    "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint",
+    "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+    "waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint",
+    "left_shoulder_pitch_joint", "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint", "left_elbow_joint", "left_wrist_roll_joint",
+    "left_wrist_pitch_joint", "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint", "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint", "right_elbow_joint", "right_wrist_roll_joint",
+    "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+]
+N = len(JOINTS)
+
+DEFAULT = np.array([
+    -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,
+    -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,
+    0.0, 0.0, 0.0,
+    0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0,
+    0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0,
+], np.float64)
+
+_W = 10.0 * 2.0 * np.pi                 # natural frequency, 10 Hz
+_ARM = {"5020": 0.003609725, "7520_14": 0.010177520,
+        "7520_22": 0.025101925, "4010": 0.00425}
+_EFF = {"5020": 25.0, "7520_14": 88.0, "7520_22": 139.0, "4010": 5.0}
+_MOTOR = (["7520_22", "7520_22", "7520_14", "7520_22", "5020", "5020"] * 2
+          + ["7520_14", "5020", "5020"]
+          + ["5020"] * 4 + ["5020", "4010", "4010"]
+          + ["5020"] * 4 + ["5020", "4010", "4010"])
+STIFFNESS = np.array([_ARM[m] * _W * _W for m in _MOTOR])
+DAMPING = np.array([2.0 * 2.0 * _ARM[m] * _W for m in _MOTOR])
+# 0.25 * effort_limit / stiffness, as policy_parameters.hpp computes it.
+ACTION_SCALE = np.array([0.25 * _EFF[m] / (_ARM[m] * _W * _W) for m in _MOTOR])
+# Ankle pitch and roll are driven at twice the nominal stiffness.
+for _i in (4, 5, 10, 11):
+    STIFFNESS[_i] *= 2.0
+    DAMPING[_i] *= 2.0
+
+CONTROL_DT = 0.02                       # 50 Hz, the controller's own rate
+HIST = 10                               # history frames, step 1
+LOOK = 10                               # reference lookahead frames
+STRIDE = 5                              # ...every 5th frame (step5)
+
+# Encoder input, in the order observation_config.yaml lists the enabled fields.
+_ENC = [("encoder_mode_4", 4),
+        ("motion_joint_positions_10frame_step5", LOOK * N),
+        ("motion_joint_velocities_10frame_step5", LOOK * N),
+        ("motion_root_z_position_10frame_step5", LOOK),
+        ("motion_root_z_position", 1),
+        ("motion_anchor_orientation", 6),
+        ("motion_anchor_orientation_10frame_step5", LOOK * 6),
+        ("motion_joint_positions_lowerbody_10frame_step5", 120),
+        ("motion_joint_velocities_lowerbody_10frame_step5", 120),
+        ("vr_3point_local_target", 9),
+        ("vr_3point_local_orn_target", 12),
+        ("smpl_joints_10frame_step1", 720),
+        ("smpl_anchor_orientation_10frame_step1", 60),
+        ("motion_joint_positions_wrists_10frame_step1", 60)]
+ENC_DIM = sum(d for _, d in _ENC)       # 1762
+
+# Decoder input, same source.
+_DEC = [("token_state", 64),
+        ("his_base_angular_velocity_10frame_step1", HIST * 3),
+        ("his_body_joint_positions_10frame_step1", HIST * N),
+        ("his_body_joint_velocities_10frame_step1", HIST * N),
+        ("his_last_actions_10frame_step1", HIST * N),
+        ("his_gravity_dir_10frame_step1", HIST * 3)]
+DEC_DIM = sum(d for _, d in _DEC)       # 994
+
+# The lower body the encoder asks for: 12 leg joints over 10 frames.
+LOWER = list(range(12))
+
+
+def _to_il(v_hw):
+    """Hardware/MuJoCo-ordered joint vector -> IsaacLab order."""
+    return np.array([v_hw[MUJOCO_TO_ISAACLAB[i]] for i in range(len(v_hw))])
+
+
+def quat_rotate_inverse(q_wxyz, v):
+    """Rotate v into the body frame of q. Same form as the deploy code."""
+    w, x, y, z = q_wxyz
+    c = np.array([w, -x, -y, -z])
+    return np.array([
+        v[0] * (c[0] ** 2 + c[1] ** 2 - c[2] ** 2 - c[3] ** 2)
+        + v[1] * 2 * (c[1] * c[2] - c[0] * c[3])
+        + v[2] * 2 * (c[1] * c[3] + c[0] * c[2]),
+        v[0] * 2 * (c[1] * c[2] + c[0] * c[3])
+        + v[1] * (c[0] ** 2 - c[1] ** 2 + c[2] ** 2 - c[3] ** 2)
+        + v[2] * 2 * (c[2] * c[3] - c[0] * c[1]),
+        v[0] * 2 * (c[1] * c[3] - c[0] * c[2])
+        + v[1] * 2 * (c[2] * c[3] + c[0] * c[1])
+        + v[2] * (c[0] ** 2 - c[1] ** 2 - c[2] ** 2 + c[3] ** 2),
+    ])
+
+
+def quat_to_6d(q_wxyz):
+    """Anchor orientation as the first two columns of the rotation matrix."""
+    w, x, y, z = q_wxyz
+    return np.array([
+        1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y),
+        2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x),
+    ])
+
+
+class SonicTracker:
+    """Runs SONIC over a reference motion and returns 29 joint targets.
+
+    reference: (T, 29) joint positions at 50 Hz, IsaacLab order.
+    ref_quat:  (T, 4) root orientation, w x y z. Optional; identity if absent.
+    ref_root_z:(T,) root height. Optional; the standing height if absent.
+    """
+
+    def __init__(self, reference, ref_quat=None, ref_root_z=None):
+        self.ref = np.asarray(reference, np.float64)
+        self.T = len(self.ref)
+        self.ref_vel = np.zeros_like(self.ref)
+        self.ref_vel[1:] = (self.ref[1:] - self.ref[:-1]) / CONTROL_DT
+        self.ref_il = np.stack([_to_il(r) for r in self.ref])
+        self.ref_vel_il = np.stack([_to_il(r) for r in self.ref_vel])
+        self.ref_quat = (np.tile([1.0, 0, 0, 0], (self.T, 1))
+                         if ref_quat is None else np.asarray(ref_quat, np.float64))
+        self.ref_z = (np.full(self.T, 0.78) if ref_root_z is None
+                      else np.asarray(ref_root_z, np.float64))
+
+        self.enc = ort.InferenceSession(
+            os.path.join(POLICY, "model_encoder.onnx"),
+            providers=["CPUExecutionProvider"])
+        self.dec = ort.InferenceSession(
+            os.path.join(POLICY, "model_decoder.onnx"),
+            providers=["CPUExecutionProvider"])
+        self.enc_in = self.enc.get_inputs()[0].name
+        self.dec_in = self.dec.get_inputs()[0].name
+
+        self.h_q = [np.zeros(N) for _ in range(HIST)]
+        self.h_dq = [np.zeros(N) for _ in range(HIST)]
+        self.h_act = [np.zeros(N) for _ in range(HIST)]
+        self.h_omega = [np.zeros(3) for _ in range(HIST)]
+        self.h_grav = [np.array([0.0, 0.0, -1.0]) for _ in range(HIST)]
+        self.action = np.zeros(N)
+
+    def _future(self, t, arr, width):
+        """LOOK frames from t, every STRIDE, clamped at the end of the clip."""
+        out = np.zeros((LOOK, width))
+        for k in range(LOOK):
+            i = min(t + k * STRIDE, self.T - 1)
+            out[k] = arr[i]
+        return out.reshape(-1)
+
+    def _encode(self, t):
+        v = np.zeros(ENC_DIM, np.float32)
+        o = {}
+        p = 0
+        for name, d in _ENC:
+            o[name] = (p, d)
+            p += d
+
+        def put(name, vals):
+            s, d = o[name]
+            a = np.asarray(vals, np.float32).reshape(-1)
+            v[s:s + min(d, a.size)] = a[:d]
+
+        # encoder_mode_4 is the mode ID as a scalar with three zeros after it,
+        # not a one-hot -- GatherEncoderMode writes
+        # buf[offset] = GetEncodeMode() and zeroes the rest. g1 is mode 0, so
+        # this field is all zeros. Writing a one-hot puts a 1 in the first slot,
+        # which says mode 1 (teleop) while the rest of the vector is g1 data,
+        # and the token that comes back is meaningless: measured, the first
+        # action asked the joints for 4.0 rad off the default and the robot
+        # exploded.
+        put("encoder_mode_4", [0.0, 0.0, 0.0, 0.0])
+        put("motion_joint_positions_10frame_step5",
+            self._future(t, self.ref_il, N))
+        put("motion_joint_velocities_10frame_step5",
+            self._future(t, self.ref_vel_il, N))
+        put("motion_root_z_position_10frame_step5",
+            self._future(t, self.ref_z.reshape(-1, 1), 1))
+        put("motion_root_z_position", [self.ref_z[min(t, self.T - 1)]])
+        put("motion_anchor_orientation", quat_to_6d(self.ref_quat[min(t, self.T - 1)]))
+        put("motion_anchor_orientation_10frame_step5",
+            np.stack([quat_to_6d(self.ref_quat[min(t + k * STRIDE, self.T - 1)])
+                      for k in range(LOOK)]))
+        put("motion_joint_positions_lowerbody_10frame_step5",
+            self._future(t, self.ref_il[:, LOWER], len(LOWER)))
+        put("motion_joint_velocities_lowerbody_10frame_step5",
+            self._future(t, self.ref_vel_il[:, LOWER], len(LOWER)))
+        return self.enc.run(None, {self.enc_in: v[None]})[0].reshape(-1)
+
+    def prime(self, q, dq, quat_wxyz, omega_body):
+        """Fill the history with the state the robot is actually in.
+
+        The deployment runs a state logger and only activates the policy once
+        GetLatest() has real frames to return. Starting with ten frames of
+        zeros tells the policy the robot was at its default pose with no
+        gravity a fifth of a second ago, and the first action it returns is
+        enormous -- measured, 3.6 rad off the default, which in a simulator is
+        an explosion.
+        """
+        grav = quat_rotate_inverse(quat_wxyz, np.array([0.0, 0.0, -1.0]))
+        self.h_q = [_to_il(np.asarray(q) - DEFAULT) for _ in range(HIST)]
+        self.h_dq = [_to_il(np.asarray(dq)) for _ in range(HIST)]
+        self.h_omega = [np.asarray(omega_body).copy() for _ in range(HIST)]
+        self.h_grav = [grav.copy() for _ in range(HIST)]
+        self.h_act = [np.zeros(N) for _ in range(HIST)]
+
+    def step(self, t, q, dq, quat_wxyz, omega_body):
+        """One 50 Hz tick. Returns 29 joint position targets."""
+        grav = quat_rotate_inverse(quat_wxyz, np.array([0.0, 0.0, -1.0]))
+        # The model speaks IsaacLab order; DEFAULT, ACTION_SCALE and JOINTS
+        # here are the hardware order the deployment's own arrays are written
+        # in (g1_deploy_onnx_ref.cpp indexes default_angles with the hardware
+        # index and the model output with isaaclab_to_mujoco). Reorder on the
+        # way in, and back on the way out.
+        self.h_q = self.h_q[1:] + [_to_il(np.asarray(q) - DEFAULT)]
+        self.h_dq = self.h_dq[1:] + [_to_il(np.asarray(dq))]
+        self.h_omega = self.h_omega[1:] + [np.asarray(omega_body)]
+        self.h_grav = self.h_grav[1:] + [grav]
+
+        token = self._encode(t)
+        v = np.concatenate([
+            token,
+            np.concatenate(self.h_omega),
+            np.concatenate(self.h_q),
+            np.concatenate(self.h_dq),
+            np.concatenate(self.h_act),
+            np.concatenate(self.h_grav),
+        ]).astype(np.float32)
+        assert v.size == DEC_DIM, f"decoder input {v.size}, expected {DEC_DIM}"
+
+        self.action = self.dec.run(None, {self.dec_in: v[None]})[0].reshape(-1)
+        self.h_act = self.h_act[1:] + [self.action.copy()]
+        act_hw = np.array([self.action[ISAACLAB_TO_MUJOCO[i]] for i in range(N)])
+        return DEFAULT + act_hw * ACTION_SCALE
+
+
+# MuJoCo joint order -> IsaacLab, from the deployment's own policy_parameters.hpp.
+# Our walk clips store dof in MuJoCo order (gen_planner_motion.py takes
+# qpos[7:36]); everything SONIC reads is IsaacLab order.
+MUJOCO_TO_ISAACLAB = [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10,
+                      16, 23, 5, 11, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28]
+ISAACLAB_TO_MUJOCO = [0, 3, 6, 9, 13, 17, 1, 4, 7, 10, 14, 18, 2, 5, 8,
+                      11, 15, 19, 21, 23, 25, 27, 12, 16, 20, 22, 24, 26, 28]
+
+
+def clip_to_reference(clip, fps):
+    """A walk clip as a SONIC reference: (T50, 29) IsaacLab order at 50 Hz.
+
+    Returns joint positions, root quaternion (w x y z) and root height, all
+    resampled onto the controller's clock. motion_reference.md: "Each row is
+    one timestep at 50 Hz".
+    """
+    dof = np.asarray(clip["dof"], np.float64)            # (T, 29) MuJoCo order
+    root = np.asarray(clip["root_trans_offset"], np.float64)
+    quat_xyzw = np.asarray(clip["root_rot"], np.float64)  # clips store xyzw
+    n = len(dof)
+    iso = np.zeros_like(dof)
+    for mj, il in enumerate(MUJOCO_TO_ISAACLAB):
+        iso[:, il] = dof[:, mj]
+
+    src = np.arange(n) / float(fps)
+    n50 = max(2, int(round(n / float(fps) / CONTROL_DT)))
+    dst = np.arange(n50) * CONTROL_DT
+    pos = np.stack([np.interp(dst, src, iso[:, c]) for c in range(N)], axis=1)
+    z = np.interp(dst, src, root[:, 2])
+    q = np.stack([np.interp(dst, src, quat_xyzw[:, c]) for c in range(4)], axis=1)
+    q /= np.linalg.norm(q, axis=1, keepdims=True)
+    return pos, q[:, [3, 0, 1, 2]], z                     # xyzw -> wxyz
