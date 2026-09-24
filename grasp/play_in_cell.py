@@ -117,6 +117,28 @@ spawn_props(stage, app)
 
 # stand the robot where the plan was made: facing the object it reaches for
 WBC = "--wbc" in sys.argv
+# --drive STAND.json: one loop for the whole thing.
+#
+# decoupled_wbc takes navigate_cmd and target_upper_body_pose in the SAME
+# call (g1_decoupled_whole_body_policy.get_action), and picks the walking or
+# the standing policy off the command's magnitude with no reset between them:
+#
+#     if np.linalg.norm(self.cmd) < 0.05: policy = self.policy_1   # standing
+#     else:                               policy = self.policy_2   # walking
+#
+# So walking to the object and reaching for it are not two phases to join.
+# They are one loop whose command decays to zero on arrival. Both poses come
+# out of where_to_stand's own file: base_path[0] is where the robot is,
+# "stand" is where cuRobo decided it has to be.
+DRIVE = None
+if "--drive" in sys.argv:
+    import json as _json
+    _d = _json.load(open(sys.argv[sys.argv.index("--drive") + 1]))
+    _g = _d["stand"]
+    _b = _d["base_path"][0]
+    DRIVE = {"goal": (float(_g["x"]), float(_g["y"]),
+                      math.radians(float(_g["yaw_deg"]))),
+             "start": (float(_b[0]), float(_b[1]), float(_b[2]))}
 NO_SETTLE = "--no-settle" in sys.argv or WBC
 SONIC = "--sonic" in sys.argv   # track the motion with SONIC itself
 # --wbc: stand on GR00T's own balance policy instead of welding the pelvis.
@@ -243,6 +265,16 @@ if WALK:
     cfg.init_state = cfg.init_state.replace(
         pos=tuple(float(v) for v in walk["pos"][0]),
         rot=(float(_q0[3]), float(_q0[0]), float(_q0[1]), float(_q0[2])))
+elif DRIVE is not None:
+    cfg = cfg.replace(spawn=cfg.spawn.replace(
+        articulation_props=cfg.spawn.articulation_props.replace(
+            fix_root_link=False)))
+    _sx, _sy, _syaw = DRIVE["start"]
+    cfg.init_state = cfg.init_state.replace(
+        pos=(_sx, _sy, STAND[2]),
+        rot=(math.cos(_syaw / 2.0), 0.0, 0.0, math.sin(_syaw / 2.0)))
+    print(f"[drive] starting where the robot is: ({_sx:.3f}, {_sy:.3f}, "
+          f"{math.degrees(_syaw):.1f} deg)")
 else:
     _y = yaw if PICK_YAW is None else PICK_YAW
     cfg.init_state = cfg.init_state.replace(
@@ -751,7 +783,7 @@ def _wbc_hold_uncommanded():
         tgt_q[0, _j] = robot.data.joint_pos[0, _j]
 
 
-def _wbc_step():
+def _wbc_step(nav=None):
     """One policy tick: read the robot, write leg and waist targets."""
     global _hold_pending
     if _hold_pending:
@@ -761,7 +793,7 @@ def _wbc_step():
     dq = robot.data.joint_vel[0, obs_ids].cpu().numpy().astype(np.float32)
     quat = robot.data.root_quat_w[0].cpu().numpy().astype(np.float32)
     omega = robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float32)
-    tgt = wbc.step(q, dq, quat, omega)
+    tgt = wbc.step(q, dq, quat, omega, nav)
     for _k, _j in enumerate(wbc_ids):
         tgt_q[0, _j] = float(tgt[_k])
 
@@ -801,6 +833,67 @@ for _si in range(120):
     robot.write_data_to_sim()
     sim.step()
 robot.update(sim.get_physics_dt())
+
+if DRIVE is not None and wbc is not None:
+    # Walk there. Same loop, same policy stack, same observation -- the only
+    # thing that changes on arrival is that the command goes to zero and
+    # g1_gear_wbc_policy picks the standing network instead of the walking
+    # one. Nothing is welded, nothing is frozen, nothing is slid.
+    #
+    # The command itself is a velocity toward the goal in the body frame.
+    # decoupled_wbc's own sources for it are a keyboard and a teleop stream,
+    # both of which hand the policy [vx, vy, wz] directly, so turning a goal
+    # into that is ours; the goal is not.
+    _gx, _gy, _gyaw = DRIVE["goal"]
+    _ARRIVE, _YAWTOL = 0.06, math.radians(4.0)
+    _nav = np.zeros(3, np.float32)
+    _arrived_for = 0
+    _drove = 0
+    _every = max(1, round((1.0 / FPS) / sim.get_physics_dt()))
+    print(f"[drive] walking to ({_gx:.3f}, {_gy:.3f}, "
+          f"{math.degrees(_gyaw):.1f} deg) under the policy")
+    for _step in range(int(60.0 / sim.get_physics_dt())):
+        if _step % wbc_dec == 0:
+            _p = robot.data.root_pos_w[0].cpu().numpy()
+            _q = robot.data.root_quat_w[0].cpu().numpy()
+            _y = 2.0 * math.atan2(float(_q[3]), float(_q[0]))
+            _dx, _dy = _gx - float(_p[0]), _gy - float(_p[1])
+            _c, _sn = math.cos(_y), math.sin(_y)
+            _ex, _ey = _c * _dx + _sn * _dy, -_sn * _dx + _c * _dy
+            _dist = math.hypot(_ex, _ey)
+            _dyaw = math.atan2(math.sin(_gyaw - _y), math.cos(_gyaw - _y))
+            if _dist > _ARRIVE:
+                _nav[0] = float(np.clip(1.2 * _ex, -0.5, 0.5))
+                _nav[1] = float(np.clip(1.2 * _ey, -0.3, 0.3))
+                _nav[2] = float(np.clip(1.5 * math.atan2(_ey, _ex), -0.6, 0.6))
+            elif abs(_dyaw) > _YAWTOL:
+                _nav[:] = (0.0, 0.0, float(np.clip(1.2 * _dyaw, -0.6, 0.6)))
+            else:
+                _nav[:] = 0.0
+            _wbc_step(_nav)
+            if _dist <= _ARRIVE and abs(_dyaw) <= _YAWTOL:
+                _arrived_for += 1
+            else:
+                _arrived_for = 0
+        for _k in range(len(ids)):
+            tgt_q[0, ids[_k]] = float(traj[0, _k])
+        robot.set_joint_position_target(tgt_q)
+        robot.write_data_to_sim()
+        sim.step()
+        robot.update(sim.get_physics_dt())
+        _drove += 1
+        if _drove % _every == 0:
+            _shoot()
+        # Half a second standing still at the goal, then the plan starts from
+        # exactly the pose the policy left the robot in.
+        if _arrived_for >= 25:
+            break
+    _p = robot.data.root_pos_w[0].cpu().numpy()
+    _q = robot.data.root_quat_w[0].cpu().numpy()
+    _y = math.degrees(2.0 * math.atan2(float(_q[3]), float(_q[0])))
+    print(f"[drive] {_drove} steps; arrived at ({_p[0]:.4f}, {_p[1]:.4f}, "
+          f"{_y:.2f} deg), {math.hypot(_p[0]-_gx, _p[1]-_gy)*1000:.1f} mm and "
+          f"{abs(_y - math.degrees(_gyaw)):.2f} deg from the goal")
 
 # What the arm is actually standing on when the plan starts. The same
 # trajectory picks the box up without a walk and tips it with one, so the two

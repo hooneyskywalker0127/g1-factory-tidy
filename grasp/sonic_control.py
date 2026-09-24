@@ -110,7 +110,7 @@ LOWER = list(range(12))
 
 def _to_il(v_hw):
     """Hardware/MuJoCo-ordered joint vector -> IsaacLab order."""
-    return np.array([v_hw[MUJOCO_TO_ISAACLAB[i]] for i in range(len(v_hw))])
+    return np.array([v_hw[ISAACLAB_TO_MUJOCO[i]] for i in range(len(v_hw))])
 
 
 def quat_rotate_inverse(q_wxyz, v):
@@ -265,17 +265,33 @@ class SonicTracker:
 
         self.action = self.dec.run(None, {self.dec_in: v[None]})[0].reshape(-1)
         self.h_act = self.h_act[1:] + [self.action.copy()]
-        act_hw = np.array([self.action[ISAACLAB_TO_MUJOCO[i]] for i in range(N)])
+        act_hw = np.array([self.action[MUJOCO_TO_ISAACLAB[i]] for i in range(N)])
         return DEFAULT + act_hw * ACTION_SCALE
 
 
-# MuJoCo joint order -> IsaacLab, from the deployment's own policy_parameters.hpp.
-# Our walk clips store dof in MuJoCo order (gen_planner_motion.py takes
-# qpos[7:36]); everything SONIC reads is IsaacLab order.
-MUJOCO_TO_ISAACLAB = [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10,
+# The two index maps, from the deployment's own policy_parameters.hpp. They
+# were named backwards here, and one of the three uses read the wrong one.
+#
+# policy_parameters.hpp lists the same 17 upper-body joints twice, once with
+# each indexing, which pins the direction down with no guessing:
+#
+#   upper_body_joint_mujoco_order_in_mujoco_index   = {12,13,14,...,28}
+#   upper_body_joint_mujoco_order_in_isaaclab_index = { 2, 5, 8,...,28}
+#
+# so MuJoCo 12 (waist_yaw) is IsaacLab 2. IsaacLab's order is not
+# legs-waist-arms; it is breadth-first, left and right interleaved.
+ISAACLAB_TO_MUJOCO = [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10,
                       16, 23, 5, 11, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28]
-ISAACLAB_TO_MUJOCO = [0, 3, 6, 9, 13, 17, 1, 4, 7, 10, 14, 18, 2, 5, 8,
+MUJOCO_TO_ISAACLAB = [0, 3, 6, 9, 13, 17, 1, 4, 7, 10, 14, 18, 2, 5, 8,
                       11, 15, 19, 21, 23, 25, 27, 12, 16, 20, 22, 24, 26, 28]
+
+# The 17 joints an external arm command replaces in the reference, IsaacLab
+# indices, verbatim from policy_parameters.hpp:80. This is how GR00T runs a
+# planned arm over a walking reference -- g1_deploy_onnx_ref.cpp:780 swaps
+# them in while it gathers the encoder's future frames, so there is no
+# separate reference to build and no seam to join.
+UPPER_BODY_IL = [2, 5, 8, 11, 12, 15, 16, 19, 20, 21, 22, 23, 24, 25, 26,
+                 27, 28]
 
 
 def clip_to_reference(clip, fps):
