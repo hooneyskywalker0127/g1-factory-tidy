@@ -90,17 +90,33 @@ class BalanceWBC:
         self.dof_vel_scale = float(cfg["dof_vel_scale"])
         self.ang_vel_scale = float(cfg["ang_vel_scale"])
         self.cmd_scale = np.asarray(cfg["cmd_scale"], np.float32)
-        # Standing still: loco_cmd zero is what selects the balance policy over
-        # the walk one in the reference loop.
+        # The navigation command, [vx, vy, wz]. This is the whole difference
+        # between walking and standing: g1_gear_wbc_policy.py picks the policy
+        # off its magnitude, on the same observation, with no reset in between.
+        #
+        #     if np.linalg.norm(self.cmd) < 0.05:
+        #         policy = self.policy_1      # standing
+        #     else:
+        #         policy = self.policy_2      # walking
+        #
+        # So there is no walk phase and no pick phase to join -- there is one
+        # loop whose command decays to zero on arrival. Pinning this to zero,
+        # the way this file used to, is what left the walk to a separate clip
+        # and put a seam between them.
         self.loco_cmd = np.zeros(3, np.float32)
+        self.SWITCH = 0.05
         self.height_cmd = float(cfg["height_cmd"] if height_cmd is None
                                 else height_cmd)
         self.rpy_cmd = np.asarray(cfg.get("rpy_cmd", [0.0, 0.0, 0.0]), np.float32)
 
-        self.sess = ort.InferenceSession(
+        self.stand_sess = ort.InferenceSession(
             os.path.join(WBC, cfg["policy_path"]),
             providers=["CPUExecutionProvider"])
-        self.in_name = self.sess.get_inputs()[0].name
+        self.walk_sess = ort.InferenceSession(
+            os.path.join(WBC, cfg["walk_policy_path"]),
+            providers=["CPUExecutionProvider"])
+        self.in_name = self.stand_sess.get_inputs()[0].name
+        self.walking = False
 
         self.action = np.zeros(self.n_act, np.float32)
         self.hist = [np.zeros(self.obs_dim, np.float32)] * self.hist_len
@@ -125,10 +141,19 @@ class BalanceWBC:
         o[13 + 2 * n:13 + 2 * n + self.n_act] = self.action
         return o
 
-    def step(self, qj, dqj, quat_wxyz, omega_body):
-        """qj/dqj: all 29 joints in LEG_WAIST + arm order. Returns 15 targets."""
+    def step(self, qj, dqj, quat_wxyz, omega_body, nav_cmd=None):
+        """qj/dqj: all 29 joints in LEG_WAIST + arm order. Returns 15 targets.
+
+        nav_cmd is [vx, vy, wz] in the body frame. Give it a velocity and the
+        robot walks; let it fall below 0.05 and the same observation goes to
+        the standing policy instead.
+        """
+        if nav_cmd is not None:
+            self.loco_cmd = np.asarray(nav_cmd, np.float32)
         self.hist = self.hist[1:] + [self._observe(qj, dqj, quat_wxyz, omega_body)]
         obs = np.concatenate(self.hist)[None].astype(np.float32)
-        self.action = self.sess.run(None, {self.in_name: obs})[0].squeeze()
+        self.walking = bool(np.linalg.norm(self.loco_cmd) >= self.SWITCH)
+        sess = self.walk_sess if self.walking else self.stand_sess
+        self.action = sess.run(None, {self.in_name: obs})[0].squeeze()
         self.target = self.action * self.action_scale + self.default
         return self.target
