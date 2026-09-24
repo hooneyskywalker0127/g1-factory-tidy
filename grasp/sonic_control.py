@@ -68,8 +68,12 @@ STIFFNESS = np.array([_ARM[m] * _W * _W for m in _MOTOR])
 DAMPING = np.array([2.0 * 2.0 * _ARM[m] * _W for m in _MOTOR])
 # 0.25 * effort_limit / stiffness, as policy_parameters.hpp computes it.
 ACTION_SCALE = np.array([0.25 * _EFF[m] / (_ARM[m] * _W * _W) for m in _MOTOR])
-# Ankle pitch and roll are driven at twice the nominal stiffness.
-for _i in (4, 5, 10, 11):
+# Ankle pitch, ankle roll, waist roll and waist pitch are driven at twice the
+# nominal stiffness -- policy_parameters.hpp's kps and kds arrays, which write
+# "2.0 * STIFFNESS_5020" on exactly these six. This file doubled the four
+# ankles and left the two waist joints at half what the policy was trained
+# under, and waist_pitch is the joint that then sat a flat -1.847 rad off.
+for _i in (4, 5, 10, 11, 13, 14):
     STIFFNESS[_i] *= 2.0
     DAMPING[_i] *= 2.0
 

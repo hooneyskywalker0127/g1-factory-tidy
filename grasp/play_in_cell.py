@@ -710,11 +710,32 @@ if SONIC:
     # would have to fight for the whole clip.
     _rq = robot.data.root_quat_w[0].cpu().numpy().astype(np.float64)
     _rz = float(robot.data.root_pos_w[0, 2].item())
-    sonic = SonicTracker(_ref,
-                         ref_quat=np.tile(_rq, (len(_ref), 1)),
-                         ref_root_z=np.full(len(_ref), _rz))
-    print(f"[sonic] reference anchored at root z {_rz:.4f}, "
-          f"quat {np.round(_rq, 4)}")
+    if walk is not None:
+        # One reference for the whole thing: the planner's walk. The arm is
+        # not spliced in here -- it goes in per tick, the way
+        # g1_deploy_onnx_ref.cpp:780 does it, replacing the 17 upper-body
+        # joints of every frame the encoder is shown. So there is no combined
+        # motion to build and no seam between walking and reaching.
+        from sonic_control import clip_to_reference
+        _clip = {"dof": walk["dof"], "root_trans_offset": walk["pos"],
+                 "root_rot": walk["quat"]}
+        _wref, _wq, _wz = clip_to_reference(_clip, FPS)
+        # After the walk the reference holds its last frame; SONIC's lookahead
+        # clamps at T-1 on its own, so the pick just keeps stepping past it.
+        _hold = max(0, _n50 - len(_wref))
+        if _hold:
+            _wref = np.vstack([_wref, np.tile(_wref[-1], (_hold, 1))])
+            _wq = np.vstack([_wq, np.tile(_wq[-1], (_hold, 1))])
+            _wz = np.concatenate([_wz, np.full(_hold, _wz[-1])])
+        sonic = SonicTracker(_wref, ref_quat=_wq, ref_root_z=_wz)
+        print(f"[sonic] reference is the walk itself: {len(_wref)} frames at "
+              f"{1/CONTROL_DT:.0f} Hz, root z {_wz.min():.3f}..{_wz.max():.3f}")
+    else:
+        sonic = SonicTracker(_ref,
+                             ref_quat=np.tile(_rq, (len(_ref), 1)),
+                             ref_root_z=np.full(len(_ref), _rz))
+        print(f"[sonic] reference anchored at root z {_rz:.4f}, "
+              f"quat {np.round(_rq, 4)}")
     sonic.prime(robot.data.joint_pos[0, sonic_ids].cpu().numpy().astype(np.float64),
                 robot.data.joint_vel[0, sonic_ids].cpu().numpy().astype(np.float64),
                 _rq, robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64))
@@ -727,13 +748,26 @@ if SONIC:
     sonic_hand_k = [k for k in range(len(ids)) if k not in _plan_to_sonic]
 
 
-def _sonic_step(_unused=None):
+def _sonic_step(plan_i=0):
     """One 50 Hz tick of the tracker; writes all 29 targets."""
     global sonic_t
     q = robot.data.joint_pos[0, sonic_ids].cpu().numpy().astype(np.float64)
     dq = robot.data.joint_vel[0, sonic_ids].cpu().numpy().astype(np.float64)
     quat = robot.data.root_quat_w[0].cpu().numpy().astype(np.float64)
     om = robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64)
+    # The 17 upper-body joints the deployment overwrites, IsaacLab order,
+    # from the robot's own measured pose with the plan's arm written over it:
+    # GR00T targets what a joint is currently holding when nothing commands it
+    # (run_g1_control_loop.py), and the plan commands only the right arm.
+    from sonic_control import UPPER_BODY_IL, MUJOCO_TO_ISAACLAB
+    _up = np.array([q[_hw] for _hw in range(29)])
+    for _k, _c in _plan_to_sonic.items():
+        _up[_c] = float(traj[min(plan_i, traj.shape[0] - 1), _k])
+    _up_il = np.array([_up[i] for i in range(29)])
+    _il = np.zeros(29)
+    for _hw in range(29):
+        _il[MUJOCO_TO_ISAACLAB[_hw]] = _up_il[_hw]
+    sonic.set_upper_body(_il[UPPER_BODY_IL])
     out = sonic.step(min(sonic_t, sonic.T - 1), q, dq, quat, om)
     sonic_t += 1
     for _c, _j in enumerate(sonic_ids):
@@ -939,7 +973,7 @@ for i in range(traj.shape[0]):
     for _ss in range(substeps):
         if SONIC:
             if (i * substeps + _ss) % sonic_dec == 0:
-                _sonic_step()
+                _sonic_step(i)
                 for _k in sonic_hand_k:
                     tgt_q[0, ids[_k]] = float(traj[i, _k])
                 robot.set_joint_position_target(tgt_q)
