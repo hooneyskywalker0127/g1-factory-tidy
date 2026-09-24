@@ -67,6 +67,8 @@ FPS = 30                # the planner's own output rate (planner_onnx.md)
 WALK, IDLE = 2, 0       # planner modes
 SQUAT = 4               # planner_onnx.md: mode 4 takes a height, 0.4..0.8 m
 ARRIVE_M = float(__import__("os").environ.get("ARRIVE_M", "0.12"))
+# How straight the robot has to be pointing before the clip is allowed to end.
+YAW_TOL_DEG = float(__import__("os").environ.get("YAW_TOL_DEG", "1.5"))
 # How close is close enough to stop walking. The default 0.12 leaves up to
 # 120 mm for play_in_cell to slide the body across with the legs still, which
 # is the lurch in the video -- measured, the frame-to-frame change over those
@@ -175,7 +177,26 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
             arrived_at = len(out)
         hold_s = SQUAT_S if squat_to else SETTLE_S
         held = 0 if arrived_at is None else (len(out) - arrived_at) / FPS
-        if arrived_at is not None and held >= hold_s:
+        # Arriving is a position AND a heading. The hold already names the
+        # goal heading through specific_target_headings, but the exit only
+        # watched the pelvis height, so the clip ended while the robot was
+        # still turning onto it -- measured, -89.26 deg against the -93.91 the
+        # pick wants. play_in_cell then spent that 4.66 degrees in fifteen
+        # frames with the feet planted, which is the leap: frames 710-712 of
+        # the delivered video carried 9.8x the median frame difference, the
+        # largest in the whole clip.
+        #
+        # Wait for the heading too. Nothing is slid afterwards because there
+        # is nothing left to slide.
+        _yaw_err = 180.0
+        if out:
+            _q = out[-1][3:7]
+            _y = math.degrees(math.atan2(
+                2.0 * (_q[0] * _q[3] + _q[1] * _q[2]),
+                1.0 - 2.0 * (_q[2] ** 2 + _q[3] ** 2)))
+            _yaw_err = abs((_y - goal[2] + 180.0) % 360.0 - 180.0)
+        _aimed = _yaw_err <= YAW_TOL_DEG
+        if arrived_at is not None and held >= hold_s and _aimed:
             # With a height commanded, twelve seconds is a floor and not the
             # end. The planner ramps toward the height and from some starts it
             # is still swinging when the clock runs out -- measured, one clip
@@ -284,6 +305,36 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
     return qpos, arrived_at is not None
 
 
+def cut_calm(frames, fps=30, window=15):
+    """End the clip on the calmest frame, not on whichever one came last.
+
+    The squat hold is not a static pose. planner_onnx.md gives mode 4 a height
+    and the model "searches the reference clip's keyframes and selects the one
+    whose root height is closest", and it keeps doing that: measured over the
+    hold of one clip, the knees swung 9.84 and 6.38 degrees and the leg joints
+    averaged 0.151 rad/s with peaks at 0.584. That is the wobble visible in
+    the walk, and it is also the pose --legs-from hands to the pick.
+
+    Cutting is not authoring motion -- every frame is still the planner's.
+    Pick the one where the legs are moving least over a short window.
+    """
+    import numpy as _np
+    a = _np.asarray(frames, _np.float64)
+    leg = a[:, 7:19]                       # qpos: 7 root dims, then the legs
+    sp = _np.abs(_np.diff(leg, axis=0)).max(axis=1) * fps
+    n = len(sp)
+    if n <= window * 2:
+        return frames
+    start = int(n * 0.6)
+    score = _np.array([sp[max(0, i - window):i + 1].mean()
+                       for i in range(start, n)])
+    best = start + int(_np.argmin(score))
+    print(f"[walk] cutting at the calmest frame {best} of {n} "
+          f"({best / fps:.2f}s): legs {score.min():.3f} rad/s over "
+          f"{window} frames, against {sp[-window:].mean():.3f} at the end")
+    return frames[:best + 1]
+
+
 def main():
     out_dir, name = sys.argv[1], sys.argv[2]
     path = None
@@ -358,8 +409,30 @@ def main():
     sess = ort.InferenceSession(find_planner(), providers=["CPUExecutionProvider"])
     squat_to = (float(sys.argv[sys.argv.index("--squat-to") + 1])
                 if "--squat-to" in sys.argv else None)
+
+    # Looking around before walking. The robot is told what to pick up in
+    # words and has to find it first; each look is a head-camera frame at a
+    # heading, and between looks it turns on the spot. The turn is the
+    # planner's own in-place mode: planner_onnx.md, a movement_direction
+    # below 1e-5 "falls back to the facing_direction" and the robot turns to
+    # face it. --look-yaws lists the headings it looked from, first to last;
+    # the walk then starts from the last one.
+    looks = []
+    if "--look-yaws" in sys.argv:
+        yaws = [float(v) for v in
+                sys.argv[sys.argv.index("--look-yaws") + 1].split(",")]
+        sx, sy = start[0], start[1]
+        for ya, yb in zip(yaws[:-1], yaws[1:]):
+            turn, _ = walk_to(sess, (sx, sy, ya), (sx, sy, yb))
+            looks.append(turn)
+            print(f"[walk] turned in place {ya:.0f} -> {yb:.0f} deg to look "
+                  f"again: {len(turn)} frames")
+        start = (sx, sy, yaws[-1])
+
     qpos, arrived = walk_to(sess, start, goal, path=path,
                             look_at=look_at, squat_to=squat_to)
+    if looks:
+        qpos = np.concatenate(looks + [qpos])
     if len(qpos) == 0:
         raise SystemExit("[walk] planner returned nothing")
 

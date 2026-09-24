@@ -117,6 +117,15 @@ spawn_props(stage, app)
 
 # stand the robot where the plan was made: facing the object it reaches for
 WBC = "--wbc" in sys.argv
+# --hold-only: the one question with nothing else in the way -- can the robot
+# hold the pose the walk ends in, under physics, with the arm doing nothing?
+#
+# Every failure in this project lands on the same frame: the one where the
+# walk clip stops and physics starts. 171 mm of slide, a 9.8x leap, a 12.5x
+# spike, a robot in the splits at 23.5 s. Welded, it gets dragged onto the
+# stand; unwelded, it collapses. Those are one problem seen from two sides,
+# and neither side can be judged while an arm is also swinging.
+HOLD_ONLY = "--hold-only" in sys.argv
 # --drive STAND.json: one loop for the whole thing.
 #
 # decoupled_wbc takes navigate_cmd and target_upper_body_pose in the SAME
@@ -219,10 +228,24 @@ SCENE_STAND = (-1.30, -0.60, cfg.init_state.pos[2])
 # Where the robot stands for the pick. Vision chooses it; --pick-stand carries
 # its answer in. Left out, it is the scene's own stand, which is what every
 # run before this did.
+# The pelvis is welded for the pick, and it has to be welded at the height the
+# leg pose actually stands at. --legs-from takes the walk's last leg angles;
+# those angles put the pelvis at the height the walk ended on, not at the
+# config's spawn height. Measured: 0.7622 against 0.7500, so the weld drove
+# the feet 12.2 mm into the floor and held them there. The contact pushes out,
+# the PD pushes back, and the legs shake for the whole pick -- 21.6 rad/s of
+# joint speed while the arm worked. Raising the leg gains only makes the fight
+# harder. Take the height from the same clip the angles came from.
+_PELVIS_Z = cfg.init_state.pos[2]
+if "--legs-from" in sys.argv:
+    import joblib as _jl
+    _lw = list(_jl.load(sys.argv[sys.argv.index("--legs-from") + 1]).values())[0]
+    _PELVIS_Z = float(np.asarray(_lw["root_trans_offset"])[-1, 2])
+    print(f"[play] pelvis welded at {_PELVIS_Z:.4f} m, the height the walk "
+          f"ends at (config spawn is {cfg.init_state.pos[2]:.4f})")
 if "--pick-stand" in sys.argv:
     _i = sys.argv.index("--pick-stand")
-    STAND = (float(sys.argv[_i + 1]), float(sys.argv[_i + 2]),
-             cfg.init_state.pos[2])
+    STAND = (float(sys.argv[_i + 1]), float(sys.argv[_i + 2]), _PELVIS_Z)
     PICK_YAW = math.radians(float(sys.argv[_i + 3]))
     print(f"[play] picking from the stand vision chose: "
           f"{np.round(STAND[:2], 3)} yaw {math.degrees(PICK_YAW):.1f} deg")
@@ -575,6 +598,25 @@ if walk is not None:
             _shoot()
 
 frozen_ids = frozen_q = frozen_v = None
+if walk is None and "--legs-from" in sys.argv and STIFF_LEGS:
+    # The pick renders on its own: --legs-from puts the walk's last leg pose on
+    # the robot and the pelvis is welded, so there is no walk branch and none
+    # of the leg handling below ever runs. The legs then hang on G1's default
+    # PD gains and take the arm's reaction through them -- measured, the leg
+    # joints moving at 21.6 rad/s while the arm worked, which is the tremble.
+    #
+    # Stiffness is how IsaacLab holds a joint still without writing it, and it
+    # costs the solver nothing extra. Same factor the walk path uses.
+    _lids = [robot.find_joints([n])[0][0] for n in robot.joint_names
+             if ("hip" in n or "knee" in n or "ankle" in n)]
+    _lids = [j for j in _lids if j not in set(ids)]
+    _sf = 50.0
+    robot.write_joint_stiffness_to_sim(
+        robot.data.joint_stiffness[:, _lids] * _sf, joint_ids=_lids)
+    robot.write_joint_damping_to_sim(
+        robot.data.joint_damping[:, _lids] * _sf, joint_ids=_lids)
+    print(f"[legs] {len(_lids)} leg joints at x{_sf:.0f} gains so they hold "
+          f"themselves under the arm")
 if walk is not None:
     # Only the legs. The arm and the hand have to keep doing physics -- they
     # are the things touching the box.
@@ -929,6 +971,47 @@ if DRIVE is not None and wbc is not None:
           f"{_y:.2f} deg), {math.hypot(_p[0]-_gx, _p[1]-_gy)*1000:.1f} mm and "
           f"{abs(_y - math.degrees(_gyaw)):.2f} deg from the goal")
 
+if HOLD_ONLY:
+    _sec = 6.0
+    _every = max(1, round((1.0 / FPS) / sim.get_physics_dt()))
+    _n = int(_sec / sim.get_physics_dt())
+    _z0 = float(robot.data.root_pos_w[0, 2].item())
+    print(f"[hold] standing still for {_sec:.0f}s from pelvis z {_z0:.4f}, "
+          f"arm pinned at the plan's first waypoint")
+    for _i in range(_n):
+        if WBC and _i % wbc_dec == 0:
+            _wbc_step()
+        for _k in range(len(ids)):
+            tgt_q[0, ids[_k]] = float(traj[0, _k])
+        robot.set_joint_position_target(tgt_q)
+        robot.write_data_to_sim()
+        sim.step()
+        robot.update(sim.get_physics_dt())
+        if _i % _every == 0:
+            _shoot()
+        if _i % int(0.5 / sim.get_physics_dt()) == 0:
+            _z = float(robot.data.root_pos_w[0, 2].item())
+            _q = robot.data.root_quat_w[0].cpu().numpy()
+            _tilt = math.degrees(2.0 * math.acos(min(1.0, abs(float(_q[0])))))
+            print(f"[hold] t {_i * sim.get_physics_dt():4.1f}s  "
+                  f"pelvis z {_z:.4f}  tilt {_tilt:5.1f} deg")
+    _z = float(robot.data.root_pos_w[0, 2].item())
+    print(f"[hold] {'STOOD' if _z > _z0 - 0.10 else 'FELL'}: "
+          f"pelvis {_z0:.4f} -> {_z:.4f} m")
+    if not NO_VIDEO:
+        import imageio.v2 as _iio
+        for _fr, _sfx in ((frames, ""), (head_frames, "_wrist"), (eye_frames, "_head")):
+            if not _fr:
+                continue
+            _out = OUT.replace(".mp4", f"{_sfx}.mp4")
+            _w = _iio.get_writer(_out, fps=FPS, quality=8)
+            for _f in _fr:
+                _w.append_data(_f)
+            _w.close()
+            print(f"[play] wrote {_out}: {len(_fr)} frames")
+    sys.stdout.flush()
+    os._exit(0)
+
 # What the arm is actually standing on when the plan starts. The same
 # trajectory picks the box up without a walk and tips it with one, so the two
 # runs have to differ somewhere by the time this line is reached -- print it
@@ -939,6 +1022,9 @@ if _ti:
     _tq = robot.data.body_quat_w[0, _ti[0]].cpu().numpy()
     print(f"[start] torso {np.round(_t, 4)} quat {np.round(_tq, 4)}")
 _got = np.array([robot.data.joint_pos[0, j].item() for j in ids])
+_leg_ids = [robot.find_joints([n])[0][0] for n in robot.joint_names
+            if ("hip" in n or "knee" in n or "ankle" in n)]
+_leg_v = []
 _want = np.array([float(traj[0, k]) for k in range(len(ids))])
 print(f"[start] arm error max {np.abs(_got - _want).max()*1000:.2f} mrad, "
       f"per joint {np.round((_got - _want) * 1000, 1)}")
@@ -992,6 +1078,11 @@ for i in range(traj.shape[0]):
         robot.write_data_to_sim()
         sim.step()
     robot.update(sim.get_physics_dt())
+    if _leg_ids:
+        # Every frame. This used to sit inside the "every two hundredth frame"
+        # diagnostic block and reported five samples out of eight hundred.
+        _leg_v.append(float(np.abs(
+            robot.data.joint_vel[0, _leg_ids].cpu().numpy()).max()))
     if i % 20 == 0 and target_body is not None:
         target_body.update(sim.get_physics_dt())
         op = target_body.data.root_pos_w[0].cpu().numpy()
@@ -1012,6 +1103,11 @@ if target_body is not None:
     # Held = the object came up with the hand. The lift is the plan's own
     # last cartesian segment, so a grasp that worked ends the run higher than
     # it started; one that was knocked away ends at or below the table.
+    if _leg_v:
+        _lv = np.asarray(_leg_v)
+        print(f"[legs] joint speed while the arm works: mean {_lv.mean():.3f}"
+              f", p95 {np.percentile(_lv, 95):.3f}, max {_lv.max():.3f} rad/s"
+              f"  ({len(_lv)} frames)")
     print(f"[eval] end pos {np.round(op,4)}  dxy {np.linalg.norm(d[:2]):.4f} m"
           f"  dz {d[2]:+.4f} m  -> {'HELD' if d[2] > 0.05 else 'LOST'}")
 

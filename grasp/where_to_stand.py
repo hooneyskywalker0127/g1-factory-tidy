@@ -44,7 +44,63 @@ import torch
 
 CUROBO_CFG = ("/home/sehoon/Projects/GraspGenX/end2end/curobo_assets/"
               "g1_base_arm.yml")
+# The stand was being chosen with a robot that has no legs.
+#
+# g1_base_arm.yml carries collision spheres for 22 links -- pelvis, torso,
+# head, the right arm and its fingers -- and none for the hips, knees or
+# ankles. So the clearance test could not see a leg, and it passed a stand
+# whose pelvis sits 59 mm from the desk. Measured by forward kinematics at the
+# pose the walk actually ends in, both ankles and both knees were then 110 to
+# 160 mm INSIDE the desk, whose collision shape is a solid block from the
+# floor to its top. The contact solver spends every step pushing them out, at
+# the joint velocity limit: 19.9 rad/s with the legs pinned, 26.1 rad/s with
+# GR00T's balance policy driving them, which is the shaking.
+#
+# cuRobo ships the whole robot: 35 links, 400 spheres, twelve of them on the
+# legs. Use it for the clearance test.
+FULL_CFG = ("/home/sehoon/Projects/g1-dex3-tabletop/third_party/curobo/curobo/"
+            "content/configs/robot/unitree_g1_29dof_retarget.yml")
 TOOL = "right_hand_palm_link"
+
+
+def whole_body_clear(stands, arm_sol, arm_names, obstacles, stance_json,
+                     pelvis_z):
+    """Which of these stands can the WHOLE robot occupy, legs included.
+
+    The stand is where the robot will be standing when it reaches, and it will
+    be standing in the pose the walk leaves it in -- hips back about 30
+    degrees, knees bent, feet apart. That pose puts the feet a long way from
+    the pelvis, which is why a clearance test run on a legless model passes
+    stands the robot cannot physically be in.
+
+    Build the real configuration: the base at the candidate stand, the legs at
+    the stance the walk ends in, the arm at the solution that reaches the
+    grasp. Then ask cuRobo, with the desk it is already given.
+    """
+    import json as _json
+    import yaml as _yaml
+    from curobo.collision_checking import (RobotCollisionChecker,
+                                           RobotCollisionCheckerCfg)
+    names = _yaml.safe_load(open(FULL_CFG))["kinematics"]["cspace"]["joint_names"]
+    stance = _json.load(open(stance_json))
+    q = np.zeros((len(stands), len(names)), np.float32)
+    for j, nm in enumerate(names):
+        if nm in stance:
+            q[:, j] = float(stance[nm])
+    ai = {nm: k for k, nm in enumerate(arm_names)}
+    for j, nm in enumerate(names):
+        if nm in ai:
+            q[:, j] = arm_sol[:, ai[nm]]
+    q[:, names.index("base_j_x")] = stands[:, 0]
+    q[:, names.index("base_j_y")] = stands[:, 1]
+    q[:, names.index("base_j_z")] = pelvis_z
+    q[:, names.index("base_j_ztheta")] = stands[:, 2]
+    chk = RobotCollisionChecker(RobotCollisionCheckerCfg.load_from_config(
+        robot_config=FULL_CFG, scene_model={"cuboid": obstacles},
+        n_cuboids=max(4, len(obstacles))))
+    ok = chk.validate(torch.tensor(q, dtype=torch.float32,
+                                   device="cuda").unsqueeze(1))
+    return ok.view(-1).cpu().numpy().astype(bool)
 
 
 def _xyzw_to_matrix(t, q):
@@ -169,12 +225,26 @@ def main():
         quat_f = quat_f.repeat(1, 1, len(frames), 1, 1)
     pose = GoalToolPose(tool_frames=frames, position=pos_f.contiguous(),
                         quaternion=quat_f.contiguous())
-    r = ik.solve_pose(goal_tool_poses=pose)
+    # Every seed that converged is a place to stand, not only the cheapest
+    # one per grasp. With the base free the solver has no opinion about
+    # heading, so the one solution it ranks first per grasp faces wherever
+    # its seed happened to start -- measured, the nearest any of 80 such
+    # stands came to facing the object was 20.7 degrees, and plan_grasp from
+    # there got the palm to the box and could not close on it. Asking for
+    # SEEDS solutions per grasp (solve_pose's own return_seeds) gives the
+    # ranking below real choices; all of them reach the grasp.
+    SEEDS = 16
+    r = ik.solve_pose(goal_tool_poses=pose, return_seeds=SEEDS)
     ok = r.success.view(-1).cpu().numpy().astype(bool)
-    sol = r.solution.view(n, -1, len(names))[:, 0].cpu().numpy()
-    err = r.position_error.view(n, -1)[:, 0].cpu().numpy()
+    sol = r.solution.view(n * SEEDS, len(names)).cpu().numpy()
+    err = r.position_error.view(-1).cpu().numpy()
+    grasp_of = np.repeat(np.arange(n), SEEDS)      # candidate -> grasp
+    conf = conf[grasp_of]
+    tools = tools[grasp_of]
+    n = n * SEEDS
 
-    print(f"[stand] reachable with the base free: {int(ok.sum())}/{n}")
+    print(f"[stand] reachable with the base free: {int(ok.sum())}/{n} "
+          f"stands ({len(set(grasp_of[ok]))} of {n // SEEDS} grasps)")
 
     # Does it have to walk at all? Ask, rather than assume.
     #
@@ -183,11 +253,20 @@ def main():
     # first: can I reach this from where I am? Pin the base where the robot
     # actually is and solve the same grasps again -- same solver, same
     # collision world, the only difference being that the base cannot move.
+    n_grasps = n // SEEDS
     if "--from" in sys.argv:
         _f = sys.argv[sys.argv.index("--from") + 1:][:3]
         _sx, _sy, _syaw = float(_f[0]), float(_f[1]), math.radians(float(_f[2]))
         _seed = ik.kinematics.default_joint_position.view(1, -1).clone()
         _seed[0, bx], _seed[0, by], _seed[0, bz] = _sx, _sy, _syaw
+        # Two 80-problem, 64-seed solvers do not fit next to each other on a
+        # shared GPU -- measured, the second one asked for 556 MiB with 446
+        # free and the whole stand step died. Everything the first one was
+        # for is already in numpy; let it go before building the second.
+        del ik, r
+        import gc as _gc
+        _gc.collect()
+        torch.cuda.empty_cache()
         import yaml as _yaml
         _rc = _yaml.safe_load(open(CUROBO_CFG))["robot_cfg"]
         _rc["kinematics"].setdefault("asset_root_path",
@@ -196,10 +275,10 @@ def main():
         _lk.update({"base_j_x": _sx, "base_j_y": _sy, "base_j_ztheta": _syaw})
         _rc["kinematics"]["lock_joints"] = _lk
         _here = InverseKinematics(InverseKinematicsCfg.create(
-            robot=_rc, num_seeds=64, max_batch_size=n))
+            robot=_rc, num_seeds=64, max_batch_size=n_grasps))
         _hf = list(_here.kinematics.tool_frames)
-        _hp = pos.reshape(n, 1, 1, 1, 3)
-        _hq = quat.reshape(n, 1, 1, 1, 4)
+        _hp = pos.reshape(n_grasps, 1, 1, 1, 3)
+        _hq = quat.reshape(n_grasps, 1, 1, 1, 4)
         if len(_hf) > 1:
             from curobo._src.cost.tool_pose_criteria import ToolPoseCriteria
             _here.update_tool_pose_criteria(
@@ -210,8 +289,11 @@ def main():
         _r = _here.solve_pose(goal_tool_poses=GoalToolPose(
             tool_frames=_hf, position=_hp.contiguous(), quaternion=_hq.contiguous()))
         _n_here = int(_r.success.view(-1).sum())
+        del _here, _r
+        _gc.collect()
+        torch.cuda.empty_cache()
         print(f"[stand] from where it is now ({_sx:.2f}, {_sy:.2f}): "
-              f"{_n_here}/{n} grasps reachable")
+              f"{_n_here}/{n_grasps} grasps reachable")
         if _n_here == 0:
             print("[stand] nothing is in reach from here -- it has to walk")
         else:
@@ -251,7 +333,21 @@ def main():
                                          device="cuda").unsqueeze(1))
         free = free.view(-1).cpu().numpy().astype(bool)
         print(f"[stand] {int((ok & free).sum())}/{int(ok.sum())} reachable "
-              f"stands are also clear of the scene")
+              f"stands are also clear of the scene (arm and pelvis only)")
+        # And now with the legs. --stance is the walk's own _end.json; the
+        # robot will be standing in that pose when it reaches, and it is the
+        # pose that puts the feet out where the desk is.
+        if "--stance" in sys.argv:
+            _sj = sys.argv[sys.argv.index("--stance") + 1]
+            _pz = float(sys.argv[sys.argv.index("--pelvis-z") + 1]) \
+                if "--pelvis-z" in sys.argv else 0.7622
+            _st = np.stack([sol[:, bx], sol[:, by],
+                            np.array([_wrap(v) for v in sol[:, bz]])], axis=1)
+            whole = whole_body_clear(_st, sol, names, obstacles, _sj, _pz)
+            print(f"[stand] {int((ok & free & whole).sum())}/"
+                  f"{int((ok & free).sum())} of those also clear with the "
+                  f"legs in the stance the walk ends in")
+            free = free & whole
         if (ok & free).any():
             ok = ok & free
         else:
@@ -279,9 +375,14 @@ def main():
     # by facing. Measured the other way round, facing first, the winner was
     # 0.425 m out and plan_grasp could only manage "approach only".
     reach = np.linalg.norm(stands[:, :2] - centre[:2], axis=1)
+    # Ranking used to prefer stands PLAN_REACH (0.35 m) from the grasps. That
+    # is a number typed here, and it is the one that put the pelvis 59 mm from
+    # the desk with the legs inside it. What decides a stand is whether the
+    # robot can be there and reach from there, both of which are already
+    # measured: the clearance filter above and cuRobo's own IK error. Rank on
+    # those and on facing the object, and let distance fall where it falls.
     idx = sorted(np.nonzero(ok)[0],
-                 key=lambda i: (round(abs(reach[i] - PLAN_REACH) / 0.05),
-                                round(math.degrees(off[i]) / 10.0),
+                 key=lambda i: (round(math.degrees(off[i]) / 10.0),
                                 -conf[i], err[i]))[0]
     print(f"[stand] chosen stand is {reach[idx]:.3f} m from the grasps; "
           f"the clear ones span {reach[ok].min():.3f}..{reach[ok].max():.3f} m")
@@ -290,7 +391,7 @@ def main():
           f"across the reachable stands; taking "
           f"{math.degrees(off[idx]):.1f} deg")
     sx, sy, syaw = stands[idx]
-    print(f"[stand] best grasp #{idx} conf {conf[idx]:.3f} "
+    print(f"[stand] best grasp #{grasp_of[idx]} conf {conf[idx]:.3f} "
           f"palm {np.round(tools[idx][:3, 3], 3)} err {err[idx]*1000:.2f} mm")
     print(f"[stand] STAND AT x={sx:.3f} y={sy:.3f} yaw={math.degrees(syaw):.1f} deg")
     # How far the robot would have to go, and how spread out the answers are --
@@ -372,11 +473,11 @@ def main():
         "stand": {"x": float(sx), "y": float(sy),
                   "yaw_deg": float(math.degrees(syaw))},
         "base_path": (base_path.tolist() if base_path is not None else None),
-        "grasp_index": int(idx),
+        "grasp_index": int(grasp_of[idx]),
         "confidence": float(conf[idx]),
         "tool_pose": tools[idx].tolist(),
-        "reachable": int(ok.sum()),
-        "total": int(n),
+        "reachable": int(len(set(grasp_of[ok]))),
+        "total": int(n // SEEDS),
     }, open(dst, "w"), indent=1)
     print(f"[stand] wrote {dst}")
 
