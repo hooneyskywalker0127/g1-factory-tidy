@@ -121,13 +121,36 @@ class BalanceWBC:
         self.action = np.zeros(self.n_act, np.float32)
         self.hist = [np.zeros(self.obs_dim, np.float32)] * self.hist_len
         self.target = self.default.copy()
+        self._primed = False
+
+    def _torso_rpy(self, qj):
+        """Torso orientation relative to the waist, yaw removed.
+
+        g1_decoupled_whole_body_policy.get_action computes this every tick and
+        hands it to the lower-body policy, which writes it into observation
+        slots 4:7 as roll_cmd / pitch_cmd / yaw_cmd:
+
+            waist_yaw_only_rotation = rpy.rpyToMatrix(0, 0, waist_yaw)
+            yaw_only_waist_from_torso = waist_yaw_only_rotation.T @ torso_orientation
+            torso_orientation_rpy = rpy.matrixToRpy(yaw_only_waist_from_torso)
+
+        Between pelvis and torso there is nothing but the waist, so with the
+        waist yaw taken out what remains is the waist roll and pitch. This file
+        left those at the yaml's [0, 0, 0] for the whole run, telling the
+        policy the torso was upright on the pelvis while the arm was pulling it
+        over. Standing still that is true and the robot stood; reaching, it is
+        not, and the legs ran at 25.6 rad/s.
+        """
+        return np.array([qj[LEG_WAIST.index("waist_roll_joint")],
+                         qj[LEG_WAIST.index("waist_pitch_joint")], 0.0],
+                        np.float32)
 
     def _observe(self, qj, dqj, quat_wxyz, omega_body):
         n = len(qj)
         cmd = np.zeros(7, np.float32)
         cmd[:3] = self.loco_cmd * self.cmd_scale
         cmd[3] = self.height_cmd
-        cmd[4:7] = self.rpy_cmd
+        cmd[4:7] = self._torso_rpy(qj)
 
         padded = np.zeros(n, np.float32)
         padded[:len(self.default)] = self.default
@@ -141,6 +164,22 @@ class BalanceWBC:
         o[13 + 2 * n:13 + 2 * n + self.n_act] = self.action
         return o
 
+    def prime(self, qj, dqj, quat_wxyz, omega_body):
+        """Fill the history with the state the robot is actually in.
+
+        The history started as six frames of zeros, which tells the policy the
+        robot was at its default pose with no gravity a tenth of a second ago.
+        The deployment never does that: run_g1_control_loop only activates the
+        policy once the state logger has real frames to hand it, which is what
+        the "]" key is for. Measured with zeros, the policy drove the legs at
+        16.4 rad/s and the robot sat down inside six seconds with the arm
+        holding still.
+        """
+        o = self._observe(np.asarray(qj, np.float32), np.asarray(dqj, np.float32),
+                          quat_wxyz, omega_body)
+        self.hist = [o.copy() for _ in range(self.hist_len)]
+        self._primed = True
+
     def step(self, qj, dqj, quat_wxyz, omega_body, nav_cmd=None):
         """qj/dqj: all 29 joints in LEG_WAIST + arm order. Returns 15 targets.
 
@@ -150,6 +189,11 @@ class BalanceWBC:
         """
         if nav_cmd is not None:
             self.loco_cmd = np.asarray(nav_cmd, np.float32)
+        if not self._primed:
+            # Prime on the first tick rather than asking the caller to do it,
+            # so nothing outside this file has to know about the history.
+            self.prime(qj, dqj, quat_wxyz, omega_body)
+            self._primed = True
         self.hist = self.hist[1:] + [self._observe(qj, dqj, quat_wxyz, omega_body)]
         obs = np.concatenate(self.hist)[None].astype(np.float32)
         self.walking = bool(np.linalg.norm(self.loco_cmd) >= self.SWITCH)

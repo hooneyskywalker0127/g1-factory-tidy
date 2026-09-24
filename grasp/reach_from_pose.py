@@ -1,0 +1,415 @@
+"""From the pose a clip ends in, can the whole body put the right palm on a grasp?
+
+The arm-only planner stops 43-71 mm short of a box on the floor even with
+the pelvis dropped to 0.37 m and the waist at its limit. GR00T's planner has
+the poses that get a person's hand to the floor -- squat, kneel on one knee,
+kneel on both -- and cuRobo's MotionRetargeter (unitree_g1_29dof_retarget.yml,
+35 DOF with the six base joints) solves the whole body at once. So: take the
+clip's last frame as the body, hold the feet where the clip put them, leave
+the pelvis and torso loose, and ask for the wrist on each grasp.
+
+    python grasp/reach_from_pose.py CLIP.pkl GRASPS.json CAPTURE_DIR [--out SEQ.npz]
+
+Prints the wrist error per grasp. With --out, solves the reach as a sequence
+(pre-grasp above the grasp -> grasp -> lift) for the best grasp and writes the
+35-DOF frames, which is the shape a SONIC reference wants.
+"""
+import json
+import math
+import os
+import sys
+
+import joblib
+import numpy as np
+import torch
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from retarget_whole_body import quat_to_mat, mat_to_quat  # noqa: E402
+from curobo.motion_retargeter import (MotionRetargeter, MotionRetargeterCfg,  # noqa: E402
+                                      SequenceGoalToolPose)
+from curobo.types import JointState, ToolPoseCriteria  # noqa: E402
+
+
+def build():
+    """Feet hold the floor; the wrist does the work; everything else, the
+    pelvis included, is loose. The kneel is the planner's, but the last few
+    centimetres of a reach to the floor come from the body leaning over the
+    hand, and a pelvis held at full weight kept the wrist 17 mm off."""
+    hold = ["left_ankle_roll_link", "right_ankle_roll_link"]
+    work = ["right_wrist_yaw_link"]
+    loose = ["pelvis", "torso_link", "left_hip_roll_link", "right_hip_roll_link",
+             "left_knee_link", "right_knee_link", "left_shoulder_roll_link",
+             "left_elbow_link", "left_wrist_yaw_link", "right_shoulder_roll_link",
+             "right_elbow_link"]
+    crit = {}
+    for n in hold + work:
+        crit[n] = ToolPoseCriteria.track_position_and_orientation(
+            xyz=[1.0, 1.0, 1.0], rpy=[0.067, 0.067, 0.067])
+    # Not one loose weight for everything below the wrist. With the whole
+    # body at 0.005 the wrist landed within 9 mm and the body did anything it
+    # liked to get there: a leg swung back, the left arm went up, the kneel
+    # became a one-legged stand (frame 1320 of the first replay). The guide's
+    # split: legs and pelvis matter for balance, the reaching arm's own
+    # shoulder and elbow can go where the wrist needs them, the rest stays put.
+    w_body = float(os.environ.get("BODY_W", "0.3"))    # pelvis, hips, knees, torso
+    w_left = float(os.environ.get("LEFT_W", "0.1"))    # the other arm
+    w_arm = float(os.environ.get("ARM_W", "0.02"))     # right shoulder, elbow
+    for n in loose:
+        lw = (w_arm if n.startswith("right_") and "hip" not in n and "knee" not in n
+              else w_left if n.startswith("left_") and ("shoulder" in n or "elbow" in n or "wrist" in n)
+              else w_body)
+        crit[n] = ToolPoseCriteria.track_position_and_orientation(
+            xyz=[lw] * 3, rpy=[lw * 0.07] * 3)
+    cfg = MotionRetargeterCfg.create(robot=os.environ.get("RETARGET_CFG", "unitree_g1_29dof_retarget.yml"),
+                                     tool_pose_criteria=crit, num_envs=1,
+                                     self_collision_check=True)
+    return MotionRetargeter(cfg), cfg
+
+SWARM = "/home/sehoon/Documents/GitHub/humanoid-swarm-sim"
+# wrist -> palm, from the G1 URDF's right_hand_palm_joint (fixed)
+WRIST_TO_PALM = np.array([0.0415, -0.003, 0.0])
+
+
+def _clip_end(path):
+    m = list(joblib.load(path).values())[0]
+    dof = np.asarray(m["dof"])[-1]                # 29, MuJoCo order
+    root = np.asarray(m["root_trans_offset"])[-1]
+    q = np.asarray(m["root_rot"])[-1]             # xyzw
+    return dof, root, np.array([q[3], q[0], q[1], q[2]])
+
+
+def _joint_names_mujoco():
+    import os as _os
+    cwd = _os.getcwd()
+    _os.chdir("/home/sehoon/Projects/GR00T-WholeBodyControl")
+    try:
+        sys.path.insert(0, os.path.join(SWARM, "common"))
+        from foot_height import load_urdf
+        return load_urdf()[1]
+    finally:
+        _os.chdir(cwd)
+
+
+def _rpy_from_quat(q):
+    w, x, y, z = q
+    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
+    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    return roll, pitch, yaw
+
+
+def grasps_in_cell(grasps_json, cap_dir, base_z=0.98):
+    import trimesh.transformations as tra
+    d = json.load(open(grasps_json))
+    g2t = d["grasp_to_tool_transform"]
+    T = np.eye(4)
+    T[:3, 3] = g2t["translation"]
+    qx = g2t["quaternion_xyzw"]
+    T[:3, :3] = tra.quaternion_matrix([qx[3], qx[0], qx[1], qx[2]])[:3, :3]
+    meta = json.load(open(os.path.join(cap_dir, "meta_data.json")))
+    pfc = np.asarray(meta["plan_from_cell"])
+    B = np.eye(4)
+    B[2, 3] = base_z
+    palms = np.array([np.linalg.inv(pfc) @ np.linalg.inv(B) @ np.asarray(g) @ T
+                      for g in d["grasps"]])
+    # GRASP_ROLL_DEG: turn every palm about its own approach axis (+y). On a
+    # lying 3.7 cm flashlight the palm came down right, 5 cm above it, with
+    # the fingers running ALONG the cylinder and the thumb pushing its side
+    # (results/fable7b/snap_12_grasp_A.png); a pinch closes across an axis,
+    # not along it. A 90 deg roll about the approach is the test of whether
+    # the grasp-to-palm mapping for this hand is a quarter turn off.
+    roll = math.radians(float(os.environ.get("GRASP_ROLL_DEG", "0")))
+    if roll:
+        Ry = np.eye(4)
+        Ry[:3, :3] = np.array([[math.cos(roll), 0, math.sin(roll)], [0, 1, 0], [-math.sin(roll), 0, math.cos(roll)]])
+        palms = np.array([p @ Ry for p in palms])
+        print(f"[reach] every palm rolled {math.degrees(roll):.0f} deg about its approach axis")
+    # the retarget config's tool frame is the wrist: back off along the palm
+    # frame by the fixed palm offset
+    P = np.eye(4)
+    P[:3, 3] = -WRIST_TO_PALM
+    wrists = np.array([p @ P for p in palms])
+    return wrists, np.asarray(d["confidence"])
+
+
+def main():
+    clip, grasps_json, cap = sys.argv[1:4]
+    out = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else None
+    # --place X Y Z: not a grasp but a drop -- take the wrist from where the
+    # clip leaves it to a point above the crate, hold, and the fingers open
+    # (the schedule does the opening). grasps_json and cap are unused then.
+    place = ([float(sys.argv[sys.argv.index("--place") + k]) for k in (1, 2, 3)]
+             if "--place" in sys.argv else None)
+    r, cfg = build()
+    jn = list(r.kinematics.joint_names)
+    dof, root, quat = _clip_end(clip)
+    names = _joint_names_mujoco()
+    q = torch.zeros(1, len(jn), dtype=torch.float32, device="cuda")
+    for i, n in enumerate(names):
+        if n in jn:
+            q[0, jn.index(n)] = float(dof[i])
+    # cuRobo's floating base is three extra links in a chain, X_ROT then
+    # Y_ROT then Z_ROT, so the pelvis rotation it builds is Rx*Ry*Rz --
+    # intrinsic XYZ. Fed the usual yaw-pitch-roll decomposition instead, the
+    # kneel came out pitched -4.4 deg and rolled -12 where the clip has +9.8
+    # and +8.3, and the reach was solved for a body that was not there.
+    from scipy.spatial.transform import Rotation as _R
+    roll, pitch, yaw = _R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_euler("XYZ")
+    for n, v in (("base_j_x", root[0]), ("base_j_y", root[1]), ("base_j_z", root[2]),
+                 ("base_j_xtheta", roll), ("base_j_ytheta", pitch), ("base_j_ztheta", yaw)):
+        if n in jn:
+            q[0, jn.index(n)] = float(v)
+    ks = r.kinematics.compute_kinematics(JointState.from_position(q, joint_names=jn))
+    frames = list(ks.tool_frames)
+    pick = [frames.index(n) for n in cfg.tool_frames]
+    pos0 = ks.tool_poses.position[0, 0, pick].cpu().numpy()      # (L, 3)
+    quat0 = ks.tool_poses.quaternion[0, 0, pick].cpu().numpy()
+    wi = list(cfg.tool_frames).index("right_wrist_yaw_link")
+    print(f"[reach] clip ends: pelvis z {root[2]:.3f}, torso pitch {math.degrees(pitch):+.1f} deg, "
+          f"wrist at {np.round(pos0[wi], 3)}")
+
+    if place is not None:
+        T0 = np.eye(4)
+        T0[:3, 3] = pos0[wi]
+        T0[:3, :3] = quat_to_mat(quat0[wi])
+        Tp = T0.copy()
+        Tp[:3, 3] = place
+        n_go, n_hold = 90, 45
+        targets = []
+        for i in range(n_go):
+            a = (i + 1) / n_go
+            M = T0.copy()
+            M[:3, 3] = T0[:3, 3] + (Tp[:3, 3] - T0[:3, 3]) * a
+            targets.append(M)
+        targets += [Tp.copy() for _ in range(n_hold)]
+        sol, err = solve(targets, from_here=True)
+        print(f"[reach] place: {len(targets)} frames to {np.round(place, 3)}, wrist error "
+              f"mean {err.mean()*1000:.1f} mm, max {err.max()*1000:.1f} mm, at the crate "
+              f"{err[n_go:].mean()*1000:.1f} mm; pelvis z {sol[:, jn.index('base_j_z')].min():.3f}"
+              f"..{sol[:, jn.index('base_j_z')].max():.3f}")
+        np.savez(out, q=sol, joint_names=np.array(jn), err=err, close_from=-1,
+                 lift_from=-1, open_from=n_go, grasp=Tp, best=-1)
+        print(f"[reach] wrote {out}")
+        return
+
+    wrists, conf = grasps_in_cell(grasps_json, cap)
+    print(f"[reach] {len(wrists)} grasps, wrist targets z "
+          f"{wrists[:, 2, 3].min():.3f}..{wrists[:, 2, 3].max():.3f}")
+
+    def solve(targets, from_here=False):
+        """targets: list of 4x4 wrist poses -> solved joint frames (T, 35), errors."""
+        T = len(targets)
+        pos = np.repeat(pos0[None], T, axis=0)
+        qua = np.repeat(quat0[None], T, axis=0)
+        for k, Tw in enumerate(targets):
+            pos[k, wi] = Tw[:3, 3]
+            qua[k, wi] = mat_to_quat(Tw[:3, :3])
+        seq = SequenceGoalToolPose(
+            tool_frames=cfg.tool_frames,
+            position=torch.tensor(pos, dtype=torch.float32, device="cuda")
+            .reshape(T, 1, len(pick), 1, 3).contiguous(),
+            quaternion=torch.tensor(qua, dtype=torch.float32, device="cuda")
+            .reshape(T, 1, len(pick), 1, 4).contiguous())
+        if from_here:
+            # Stream the frames through solve_frame with the warm start seeded
+            # by the pose the clip ends in, so every frame is the velocity-
+            # limited local IK the retargeter uses after its first frame --
+            # from the kneel, not from whichever of 64 seeds the global IK
+            # liked (it liked standing up: a 259 mm, 218 deg seam).
+            from curobo._src.types.tool_pose import GoalToolPose
+            r.reset()
+            r._prev_solution = q.clone().view(1, -1)
+            sols = []
+            for k in range(T):
+                g = GoalToolPose(tool_frames=cfg.tool_frames,
+                                 position=seq.position[k:k + 1].permute(1, 0, 2, 3, 4).contiguous(),
+                                 quaternion=seq.quaternion[k:k + 1].permute(1, 0, 2, 3, 4).contiguous())
+                sols.append(r.solve_frame(g).joint_state.position.view(-1).cpu().numpy())
+            sol = np.stack(sols)
+        else:
+            res = r.solve_sequence(seq)
+            sol = res.joint_state.position.view(T, -1).cpu().numpy()
+        ks2 = r.kinematics.compute_kinematics(JointState.from_position(
+            torch.tensor(sol, dtype=torch.float32, device="cuda"), joint_names=jn))
+        got = ks2.tool_poses.position[:, 0, pick[wi]].cpu().numpy() if ks2.tool_poses.position.dim() == 4 \
+            else ks2.tool_poses.position.view(T, -1, 3)[:, pick[wi]].cpu().numpy()
+        err = np.linalg.norm(got - pos[:, wi], axis=1)
+        return sol, err
+
+    # --all-out FILE: a short kneel -> grasp -> lift sequence for every
+    # candidate, streamed from the kneel pose, for a physics test of each
+    # grasp in the cell (GraspGenX validates its grasps by replaying them
+    # under physics too; this does the same with the body that reaches).
+    if "--all-out" in sys.argv:
+        allf = sys.argv[sys.argv.index("--all-out") + 1]
+        T0 = np.eye(4)
+        T0[:3, 3] = pos0[wi]
+        T0[:3, :3] = quat_to_mat(quat0[wi])
+        seqs, errs = [], []
+        # The approach the way plan_grasp does it: to a pre-grasp 10 cm back
+        # along the approach axis (the palm's +y here, robots/g1_right_arm.yaml
+        # grasp_approach_axis: y), then straight in along that axis. A line
+        # from wherever the wrist is to the grasp pose comes in diagonally
+        # and the hand hits the object on the way -- measured, the clamp was
+        # swept 31 cm before the fingers closed.
+        n_pre, n_in, n_lift = 30, 20, 30
+        n_go = n_pre + n_in
+        # The open fingers must not be under the floor at the grasp pose.
+        # GraspGenX's scene filter samples the floor too sparsely to see it,
+        # and a grasp that put the fingertips 2 cm into the floor pushed the
+        # fingers straight and launched the clamp when they closed. The
+        # fingertips' places in the palm frame are read off the hand once
+        # (results/fable3/dex3_tips_in_palm.json); a grasp whose lowest tip
+        # would be below the support is backed off along its own approach
+        # axis until the tip clears it by 5 mm.
+        tips = None
+        tj = os.path.join(os.path.dirname(cap.rstrip("/")), "dex3_tips_in_palm.json")
+        if not os.path.exists(tj):
+            tj = "/home/sehoon/Documents/GitHub/g1-factory-tidy/results/fable3/dex3_tips_in_palm.json"
+        floor_z = float(os.environ.get("SUPPORT_Z", "0.0"))
+        # FLOOR_CLEAR: how far above the support the lowest open fingertip
+        # must be. 5 mm left the tips at -3 mm after the IK error, pressed
+        # into the floor, and a 1.4 Nm finger could not close against the
+        # floor's friction (velocity-mode close moved the index 0.16 rad in
+        # 6 s). GraspGenX's own filter rejects any grasp whose gripper mesh
+        # is within 2 cm of the observed scene (collision_filter.py,
+        # collision_threshold=0.02); the floor is too sparse in its 8192
+        # sampled points to be seen there, so the same 2 cm is applied here
+        # against the floor plane.
+        # TIP_FLESH: the tips in dex3_tips_in_palm.json are link ORIGINS. The
+        # thumb's flesh reaches about 4 cm past its thumb_2 origin: with that
+        # origin 3.7 cm above the floor the thumb never closed (stuck at its
+        # open 0.72 on every palm-down candidate, mu 10 or 1, rolled or not);
+        # with it 5.7 cm up the thumb closed fully. So the clearance is
+        # measured from 4 cm beyond the origins.
+        floor_clear = float(os.environ.get("FLOOR_CLEAR", "0.005")) + float(os.environ.get("TIP_FLESH", "0.04"))
+        # APPROACH_DEEPER: GraspGenX's g1_dex3_right description copies the
+        # fingertip (7 cm along the approach) from the unitree_g1 family hand
+        # (end2end/write_g1_dex3_config.py: "grasps made against it stop
+        # short and shove the object instead of closing on it"). This hand's
+        # fingers and thumb meet 4.3 cm from the palm (dex3_tips_in_palm.json,
+        # closed), so a grasp lands with its closed pinch point ON the object
+        # surface -- measured on the lying hammer: 0.2 mm outside the head
+        # for the top-down candidates -- and the fingers touch and push. The
+        # grasp is taken 2.7 cm further along its own approach so the object
+        # sits inside the fingers' sweep (1.6..5.4 cm from the palm).
+        deeper = float(os.environ.get("APPROACH_DEEPER", "0"))
+        if deeper:
+            for k in range(len(wrists)):
+                wrists[k][:3, 3] += deeper * wrists[k][:3, 1]
+            print(f"[reach] every grasp taken {deeper*1000:.0f} mm deeper along its approach")
+        if os.path.exists(tj):
+            tips = np.array(list(json.load(open(tj))["open"].values()))     # (3, 3) in palm frame
+            P2 = np.eye(4)
+            P2[:3, 3] = WRIST_TO_PALM
+            for k in range(len(wrists)):
+                palm = wrists[k] @ P2
+                tz = (palm[:3, :3] @ tips.T).T[:, 2] + palm[2, 3]
+                deficit = floor_z + floor_clear - tz.min()
+                ay = wrists[k][:3, 1]                    # approach, into the object
+                if deficit > 0 and ay[2] < -0.2:
+                    back = deficit / (-ay[2])
+                    wrists[k][:3, 3] -= back * ay
+                    print(f"[reach] grasp #{k:2d}: open fingertip {tz.min():+.3f} -> backed off "
+                          f"{back*1000:.0f} mm along the approach")
+                elif deficit > 0:
+                    # A side approach (the hand comes in level, fingers hanging
+                    # to the floor): backing off along the approach does not
+                    # raise the tips. Measured on the lying hammer, #21/#2/#5
+                    # had the model tips at -0.001..+0.006 with the approach
+                    # axis level, and the sim put the lowest tip at -0.003.
+                    # Lift the whole hand straight up by the deficit instead.
+                    wrists[k][2, 3] += deficit
+                    print(f"[reach] grasp #{k:2d}: open fingertip {tz.min():+.3f} -> raised "
+                          f"{deficit*1000:.0f} mm (level approach)")
+        for k, Tg in enumerate(wrists):
+            pre = Tg.copy()
+            pre[:3, 3] = Tg[:3, 3] - 0.10 * Tg[:3, 1]
+            up = Tg.copy()
+            up[:3, 3] = Tg[:3, 3] + np.array([0.0, 0.0, 0.15])
+            targets = []
+            for i in range(n_pre):
+                a = (i + 1) / n_pre
+                M = Tg.copy()
+                M[:3, 3] = T0[:3, 3] + (pre[:3, 3] - T0[:3, 3]) * a
+                targets.append(M)
+            for i in range(n_in):
+                a = (i + 1) / n_in
+                M = Tg.copy()
+                M[:3, 3] = pre[:3, 3] + (Tg[:3, 3] - pre[:3, 3]) * a
+                targets.append(M)
+            for i in range(n_lift):
+                a = (i + 1) / n_lift
+                M = Tg.copy()
+                M[:3, 3] = Tg[:3, 3] + (up[:3, 3] - Tg[:3, 3]) * a
+                targets.append(M)
+            sol, err = solve(targets, from_here=True)
+            seqs.append(sol)
+            errs.append(err)
+            print(f"[reach] grasp #{k:2d} conf {conf[k]:.3f}: at grasp {err[n_go-1]*1000:5.1f} mm, "
+                  f"lift {err[n_go:].mean()*1000:5.1f} mm")
+        np.savez(allf, q=np.stack(seqs), err=np.stack(errs), joint_names=np.array(jn),
+                 n_go=n_go, n_lift=n_lift, grasps=wrists, conf=conf)
+        print(f"[reach] wrote {allf}")
+        return
+
+    # one frame per grasp: which of them can the body reach from here
+    sol, err = solve(list(wrists))
+    order = np.argsort(err)
+    for k in order[:6]:
+        print(f"[reach]   grasp #{k:2d} conf {conf[k]:.3f}  wrist error {err[k]*1000:6.1f} mm  "
+              f"pelvis z {sol[k, jn.index('base_j_z')]:.3f}")
+    best = int(order[0])
+    print(f"[reach] best grasp #{best}: {err[best]*1000:.1f} mm")
+    if out is None:
+        return
+    # The reach as a sequence, starting from where the wrist IS: the clip's
+    # own end pose. A sequence that opens 8 cm back from the grasp asked the
+    # warm start to jump there in one frame and it landed 81 mm off and
+    # stayed in that basin. So: current wrist -> pre-grasp (3 cm back along
+    # the approach, the tool's +z points away from the object) -> grasp ->
+    # hold while the fingers close -> lift 15 cm.
+    Tg = wrists[best]
+    T0 = np.eye(4)
+    T0[:3, 3] = pos0[wi]
+    T0[:3, :3] = quat_to_mat(quat0[wi])
+    back = Tg.copy()
+    back[:3, 3] = Tg[:3, 3] + 0.03 * Tg[:3, 2]
+    up = Tg.copy()
+    up[:3, 3] = Tg[:3, 3] + np.array([0.0, 0.0, 0.15])
+    n_hold, n_in, n_close, n_lift = 60, 30, 30, 45
+
+    def _lerp(A, B, n):
+        out = []
+        for i in range(n):
+            a = (i + 1) / n
+            M = B.copy()
+            M[:3, 3] = A[:3, 3] + (B[:3, 3] - A[:3, 3]) * a
+            out.append(M)
+        return out
+    targets = (_lerp(T0, back, n_hold) + _lerp(back, Tg, n_in)
+               + [Tg.copy() for _ in range(n_close)] + _lerp(Tg, up, n_lift))
+    for k, t in enumerate(targets):
+        if k < n_hold:
+            # orientation: slerp-free blend by keeping the grasp's frame after
+            # the first third; the solver has a rotation weight of 0.067 so a
+            # step in orientation early costs it little
+            t[:3, :3] = T0[:3, :3] if k < n_hold // 3 else Tg[:3, :3]
+        else:
+            t[:3, :3] = Tg[:3, :3]
+    sol, err = solve(targets, from_here=True)
+    print(f"[reach] sequence {len(targets)} frames: wrist error mean {err.mean()*1000:.1f} mm, "
+          f"max {err.max()*1000:.1f} mm; pelvis z {sol[:, jn.index('base_j_z')].min():.3f}"
+          f"..{sol[:, jn.index('base_j_z')].max():.3f}")
+    b = np.cumsum([0, n_hold, n_in, n_close, n_lift])
+    for nm, a, c in zip(("to pre-grasp", "approach", "at grasp", "lift"), b[:-1], b[1:]):
+        print(f"[reach]   {nm:15s} frames {a:3d}..{c-1:3d}  error mean {err[a:c].mean()*1000:5.1f}"
+              f"  max {err[a:c].max()*1000:5.1f} mm")
+    np.savez(out, q=sol, joint_names=np.array(jn), err=err,
+             close_from=n_hold + n_in, lift_from=n_hold + n_in + n_close,
+             grasp=Tg, best=best)
+    print(f"[reach] wrote {out}")
+
+
+if __name__ == "__main__":
+    main()

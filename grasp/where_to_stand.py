@@ -42,8 +42,8 @@ import sys
 import numpy as np
 import torch
 
-CUROBO_CFG = ("/home/sehoon/Projects/GraspGenX/end2end/curobo_assets/"
-              "g1_base_arm.yml")
+CUROBO_CFG = os.environ.get("STAND_CFG") or (
+    "/home/sehoon/Projects/GraspGenX/end2end/curobo_assets/g1_base_arm.yml")
 # The stand was being chosen with a robot that has no legs.
 #
 # g1_base_arm.yml carries collision spheres for 22 links -- pelvis, torso,
@@ -81,7 +81,12 @@ def whole_body_clear(stands, arm_sol, arm_names, obstacles, stance_json,
     import yaml as _yaml
     from curobo.collision_checking import (RobotCollisionChecker,
                                            RobotCollisionCheckerCfg)
-    names = _yaml.safe_load(open(FULL_CFG))["kinematics"]["cspace"]["joint_names"]
+    # The retarget config's top level is "kinematics"; load_from_config wants
+    # it under "robot_cfg", the way the arm config ships it.
+    _full = _yaml.safe_load(open(FULL_CFG))
+    if "robot_cfg" not in _full:
+        _full = {"robot_cfg": _full}
+    names = _full["robot_cfg"]["kinematics"]["cspace"]["joint_names"]
     stance = _json.load(open(stance_json))
     q = np.zeros((len(stands), len(names)), np.float32)
     for j, nm in enumerate(names):
@@ -96,7 +101,7 @@ def whole_body_clear(stands, arm_sol, arm_names, obstacles, stance_json,
     q[:, names.index("base_j_z")] = pelvis_z
     q[:, names.index("base_j_ztheta")] = stands[:, 2]
     chk = RobotCollisionChecker(RobotCollisionCheckerCfg.load_from_config(
-        robot_config=FULL_CFG, scene_model={"cuboid": obstacles},
+        robot_config=_full, scene_model={"cuboid": obstacles},
         n_cuboids=max(4, len(obstacles))))
     ok = chk.validate(torch.tensor(q, dtype=torch.float32,
                                    device="cuda").unsqueeze(1))
@@ -245,6 +250,13 @@ def main():
 
     print(f"[stand] reachable with the base free: {int(ok.sum())}/{n} "
           f"stands ({len(set(grasp_of[ok]))} of {n // SEEDS} grasps)")
+    if "base_j_z" in names and ok.any():
+        _dz = sol[ok, names.index("base_j_z")]
+        print(f"[stand] pelvis height across them: {0.75 + _dz.min():.3f}"
+              f"..{0.75 + _dz.max():.3f} m (URDF stands at 0.750)")
+        _wp = names.index("waist_pitch_joint")
+        print(f"[stand] waist pitch across them: {sol[ok, _wp].min():+.2f}"
+              f"..{sol[ok, _wp].max():+.2f} rad")
 
     # Does it have to walk at all? Ask, rather than assume.
     #
@@ -273,6 +285,8 @@ def main():
                                      os.path.dirname(CUROBO_CFG))
         _lk = dict(_rc["kinematics"].get("lock_joints") or {})
         _lk.update({"base_j_x": _sx, "base_j_y": _sy, "base_j_ztheta": _syaw})
+        if "base_j_z" in names:
+            _lk["base_j_z"] = 0.0
         _rc["kinematics"]["lock_joints"] = _lk
         _here = InverseKinematics(InverseKinematicsCfg.create(
             robot=_rc, num_seeds=64, max_batch_size=n_grasps))
@@ -299,7 +313,17 @@ def main():
         else:
             print(f"[stand] {_n_here} already in reach; walking is not required")
     if not ok.any():
-        raise SystemExit("[stand] nothing is reachable even with the base free")
+        # Nothing converged. With --nearest, take the stands whose best seed
+        # came closest and say how close: the body can still be put there and
+        # the rest of the reach found with the legs (GR00T's own kneel and
+        # squat modes), which this arm-and-waist model does not have.
+        if "--nearest" not in sys.argv:
+            raise SystemExit("[stand] nothing is reachable even with the base free")
+        _cut = np.percentile(err, 10)
+        ok = err <= _cut
+        print(f"[stand] nothing converged; --nearest keeps the {int(ok.sum())} "
+              f"stands within {_cut*1000:.1f} mm of a grasp "
+              f"(best {err.min()*1000:.1f} mm)")
 
     stands = np.stack([sol[:, bx], sol[:, by],
                        np.array([_wrap(v) for v in sol[:, bz]])], axis=1)
@@ -469,9 +493,25 @@ def main():
             print(f"[stand] no collision-free base path ({why}); the walk will "
                   f"have to steer at the stand directly")
 
+    # Every stand that survived the filters, in ranked order. One stand is a
+    # guess: the arm reaches the grasp from it -- cuRobo's IK said 0.00 mm --
+    # and plan_grasp still returned None, because reaching a pose and planning
+    # approach, close and lift through it are different questions. Only
+    # plan_grasp answers the second one, so hand it candidates until one works
+    # rather than betting the run on the top of a ranking.
+    _ranked = sorted(np.nonzero(ok)[0],
+                     key=lambda i: (round(math.degrees(off[i]) / 10.0),
+                                    -conf[i], err[i]))
+    _cands = [{"x": float(stands[i][0]), "y": float(stands[i][1]),
+               "yaw_deg": float(math.degrees(_wrap(stands[i][2]))),
+               "off_deg": float(math.degrees(off[i])),
+               "reach_m": float(reach[i]), "conf": float(conf[i]),
+               "ik_err_mm": float(err[i] * 1000.0)}
+              for i in _ranked[:24]]
     json.dump({
         "stand": {"x": float(sx), "y": float(sy),
                   "yaw_deg": float(math.degrees(syaw))},
+        "candidates": _cands,
         "base_path": (base_path.tolist() if base_path is not None else None),
         "grasp_index": int(grasp_of[idx]),
         "confidence": float(conf[idx]),

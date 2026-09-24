@@ -152,7 +152,7 @@ def _waypoints(path, here, n=4, step=0.25):
 
 
 def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
-            squat_to=None):
+            squat_to=None, ctx0=None):
     """Roll the planner from `start` to `goal`, steering as the official
     deployment loop does: consume REPLAN frames of a plan, then plan again
     from there with the directions recomputed for where the robot now is."""
@@ -164,7 +164,12 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
 
     plan = None
     prev = None                     # (previous plan, where playback left off)
-    ctx = _ctx_at(sx, sy, syaw)
+    # ctx0: the four qpos frames the robot is actually in, when the walk
+    # does not start from standing still -- after a kneel and a lift, say.
+    # Handed its real context the planner makes the transition itself, the
+    # way gen_planner_motion.py chains modes; handed a standing context it
+    # would be told the robot is already up.
+    ctx = _ctx_at(sx, sy, syaw) if ctx0 is None else np.asarray(ctx0, np.float32)[None]
     out, arrived_at = [], None
 
     while len(out) / FPS <= MAX_S:
@@ -196,6 +201,14 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
                 1.0 - 2.0 * (_q[2] ** 2 + _q[3] ** 2)))
             _yaw_err = abs((_y - goal[2] + 180.0) % 360.0 - 180.0)
         _aimed = _yaw_err <= YAW_TOL_DEG
+        # --hold-max S: a ceiling on the hold whatever the heading and the
+        # pelvis are doing. A kneel breathes, so the 2 mm settle test never
+        # passes, and it holds its heading a few degrees off, so the aim
+        # test never passes either; without a ceiling the clip ran to MAX_S
+        # and the robot knelt still for thirty seconds.
+        if (arrived_at is not None and "--hold-max" in sys.argv
+                and held >= float(sys.argv[sys.argv.index("--hold-max") + 1])):
+            break
         if arrived_at is not None and held >= hold_s and _aimed:
             # With a height commanded, twelve seconds is a floor and not the
             # end. The planner ramps toward the height and from some starts it
@@ -207,6 +220,10 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
             # and let MAX_S be the thing that gives up.
             if squat_to is None:
                 break
+            # --hold-max S: the settle test asks the pelvis to sit still to
+            # 2 mm, which a kneel never does (it breathes), so the clip ran
+            # to MAX_S and the robot knelt for thirty seconds. Give the hold
+            # a ceiling of its own.
             recent = np.asarray([o[2] for o in out[-STEADY_N:]], np.float32)
             if len(recent) >= STEADY_N and \
                     float(recent.max() - recent.min()) <= STEADY_M:
@@ -242,11 +259,16 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
             # planner_onnx.md gives mode 4 a height between 0.4 and 0.8 m for
             # exactly this, so the robot squats the difference rather than the
             # plan being bent to meet it.
-            mode = SQUAT if squat_to else IDLE
+            # --hold-mode picks which of the planner's height-aware modes the
+            # robot settles into at the goal: 4 squat (0.4-0.8 m), 5 kneel on
+            # both knees, 6 kneel on one knee (0.2-0.4 m) -- planner_onnx.md's
+            # own table. Kneeling is how the body gets a hand to the floor.
+            mode = (int(sys.argv[sys.argv.index("--hold-mode") + 1])
+                    if "--hold-mode" in sys.argv else SQUAT) if squat_to else IDLE
             move = np.array([[1e-6, 0.0, 0.0]], np.float32)
             face = goal_face
 
-        inp = _inputs(mode, seed, squat_to if mode == SQUAT else -1.0)
+        inp = _inputs(mode, seed, squat_to if mode not in (WALK, IDLE) else -1.0)
         inp["movement_direction"] = move
         inp["facing_direction"] = face
         if arrived_at is not None and "--hold-target" in sys.argv:
@@ -429,8 +451,19 @@ def main():
                   f"again: {len(turn)} frames")
         start = (sx, sy, yaws[-1])
 
+    # --from-clip CLIP.pkl: start where that clip ends, in the pose it ends in.
+    ctx0 = None
+    if "--from-clip" in sys.argv:
+        _c = list(joblib.load(sys.argv[sys.argv.index("--from-clip") + 1]).values())[0]
+        _d, _r, _q = (np.asarray(_c["dof"])[-4:], np.asarray(_c["root_trans_offset"])[-4:],
+                      np.asarray(_c["root_rot"])[-4:])
+        ctx0 = np.concatenate([_r, _q[:, [3, 0, 1, 2]], _d], axis=1)
+        start = (float(_r[-1, 0]), float(_r[-1, 1]),
+                 math.degrees(2.0 * math.atan2(float(_q[-1, 2]), float(_q[-1, 3]))))
+        print(f"[walk] starting from the end of {os.path.basename(sys.argv[sys.argv.index('--from-clip') + 1])}: "
+              f"{np.round(start, 3)}, pelvis {float(_r[-1, 2]):.3f}")
     qpos, arrived = walk_to(sess, start, goal, path=path,
-                            look_at=look_at, squat_to=squat_to)
+                            look_at=look_at, squat_to=squat_to, ctx0=ctx0)
     if looks:
         qpos = np.concatenate(looks + [qpos])
     if len(qpos) == 0:

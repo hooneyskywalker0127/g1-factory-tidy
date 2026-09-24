@@ -38,6 +38,14 @@ for _ in range(3):
 T_torso = np.array(json.load(open(TORSO_JSON))["torso"], dtype=np.float64)
 meta = json.load(open(PLAN))
 build_plan_scene(stage, app, meta, T_torso)
+# The same scene variants props.py takes from the environment, so the
+# evaluator sees the room the language run saw (a crate on the desk).
+if os.environ.get("TIDY_CRATE_ON_DESK"):
+    sys.path.insert(0, os.path.join(REPO, "map"))
+    from props import _place, CRATE_USD  # noqa: E402
+    cx, cy, cz, crz = (float(v) for v in os.environ["TIDY_CRATE_ON_DESK"].split(","))
+    _place(stage, "/World/DeskCrate", CRATE_USD, (cx, cy), cz + 0.002, crz)
+    print("[bake] crate on the desk")
 for _ in range(5):
     app.update()
 

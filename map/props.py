@@ -152,7 +152,13 @@ def spawn_props(stage, app, root="/World/Props"):
     cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
     spawned = {}
 
-    for i, (x, y, rz) in enumerate(L.FLOOR_BOXES):
+    # Scene variants for the language runs, chosen by environment so every
+    # script that spawns the cell sees the same room without a flag each.
+    #   TIDY_NO_FLOOR_CARTON=1        leave the 0.30 m carton out
+    #   TIDY_CRATE_ON_DESK="x,y,z,rz" a crate on the desk (z is the desk top)
+    _skip_carton = bool(os.environ.get("TIDY_NO_FLOOR_CARTON"))
+    _crate_on_desk = os.environ.get("TIDY_CRATE_ON_DESK")
+    for i, (x, y, rz) in enumerate([] if _skip_carton else L.FLOOR_BOXES):
         w, d, h = L.FLOOR_BOX_SIZE
         p = spawn_box(stage, app, f"{root}/Box_{i}", centre_xy=(x, y), base_z=0.0,
                       rotz=rz, width=w, depth=d, height=h)
@@ -162,6 +168,14 @@ def spawn_props(stage, app, root="/World/Props"):
         print(f"[props] Box_{i}   x {lo[0]:+.2f}..{hi[0]:+.2f}  "
               f"y {lo[1]:+.2f}..{hi[1]:+.2f}  z {lo[2]:.2f}..{hi[2]:.2f}")
 
+    if _crate_on_desk:
+        cx, cy, cz, crz = (float(v) for v in _crate_on_desk.split(","))
+        p = _place(stage, f"{root}/DeskCrate", CRATE_USD, (cx, cy), cz + 0.002, crz)
+        app.update()
+        spawned["DeskCrate"] = p
+        lo, hi = _extent(cache, p)
+        print(f"[props] DeskCrate on the desk  x {lo[0]:+.2f}..{hi[0]:+.2f}  "
+              f"y {lo[1]:+.2f}..{hi[1]:+.2f}  z {lo[2]:.2f}..{hi[2]:.2f}")
     for i, (x, y, rz) in enumerate(L.FLOOR_CRATES):
         p = _place(stage, f"{root}/Crate_{i}", CRATE_USD, (x, y), 0.0, rz)
         app.update()

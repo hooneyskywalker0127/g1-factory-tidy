@@ -104,7 +104,7 @@ print(f"[play] {traj.shape[0]} frames, {len(names)} joints, {FPS} fps")
 # with sim_fps=60, so ~17 solver steps per trajectory waypoint). At 1/120 there
 # are only 2 steps per waypoint and the hand passes through a contact in one
 # step, which reads as the arm swatting the object.
-sim = SimulationContext(sim_utils.SimulationCfg(dt=1.0 / 1000.0, device="cpu"))
+sim = SimulationContext(sim_utils.SimulationCfg(dt=1.0 / 1000.0, device="cpu", physx=sim_utils.PhysxCfg(enable_ccd=True)))
 stage = omni.usd.get_context().get_stage()
 UsdGeom.Xform.Define(stage, "/World")
 stage.DefinePrim("/World/Cell", "Xform").GetReferences().AddReference(
@@ -335,6 +335,9 @@ else:
         pos=STAND,
         rot=(math.cos(_y / 2.0), 0.0, 0.0, math.sin(_y / 2.0)))
 robot = Articulation(cfg)
+if os.environ.get("BODY_COLLISION", "0") == "0" and "--hands" in sys.argv:
+    from plan_scene import keep_only_hand_collisions
+    print(f"[walk] body does not collide with the cell; hand links kept: {len(keep_only_hand_collisions(stage))}")
 
 # Finger pad friction, from GraspGenX's own --finger_mu default of 3.0. Left
 # alone the stage runs on PhysX's 0.5, and a grasp generated under mu 3 on the
@@ -416,6 +419,10 @@ head_cam = None if NO_VIDEO else Camera(CameraCfg(
 
 build_plan_scene(stage, app, meta, T_torso)
 
+from plan_scene import floor_slab
+
+floor_slab(stage)
+
 # Track the object in Isaac too: the Newton replay is a different engine, and
 # what matters is what this one does. Wrapped before reset -- an asset made
 # after it is never initialised.
@@ -444,7 +451,13 @@ tgt = np.array([-1.30, -0.75, 0.95])
 if "object" in meta:
     tgt = 0.5 * (tgt + np.array(T_torso @ np.array(
         meta["object"]["transform_in_torso"]))[:3, 3])
-eye = tgt + np.array([-1.65, -2.05, 1.05])
+# --cam-eye DX DY DZ: where the room camera stands relative to what it looks
+# at. The default looks from the south-west, which is the right side of the
+# desk for a pick from the desk; for a box on the floor north-east of the
+# desk it puts the desk and the crate between the camera and the robot.
+_ce = (np.array([float(sys.argv[sys.argv.index("--cam-eye") + k]) for k in (1, 2, 3)])
+       if "--cam-eye" in sys.argv else np.array([-1.65, -2.05, 1.05]))
+eye = tgt + _ce
 if cam is not None:
     cam.set_world_poses_from_view(
         eyes=torch.tensor([eye], dtype=torch.float32, device=cam.device),
@@ -569,15 +582,64 @@ if walk is not None:
     _waist = [j for j, n in enumerate(robot.joint_names) if "waist" in n]
     _waist_n = min(45, len(walk["dof"]))
     _waist_from = len(walk["dof"]) - _waist_n
+    _body_ids = [j for j in range(robot.num_joints) if "hand" not in robot.joint_names[j]]
+    if "--arm-pd" in sys.argv:
+        # The right arm stays a PD articulation, as in every pick that held;
+        # written into place every substep it is a fixture the fingers press
+        # the object against, and the contact solver throws the object.
+        _body_ids = [j for j in _body_ids if not (robot.joint_names[j].startswith("right_")
+                     and ("shoulder" in robot.joint_names[j] or "elbow" in robot.joint_names[j]
+                          or "wrist" in robot.joint_names[j]))]
+        print(f"[walk] right arm PD-driven; {len(_body_ids)} joints written")
     print(f"[walk] replaying {len(walk['dof'])} frames: legs from the clip, "
           f"arm held at the plan's start pose, waist eased upright over the "
           f"last {_waist_n}")
+    # --clip-arms: the clip carries the arms too (a whole-body reach solved
+    # by cuRobo's retargeter), so nothing is overridden; --hands SCHEDULE.npy
+    # drives the fourteen finger joints from a (frames, 14) table in GR00T's
+    # G1_HAND_JOINTS order, the same file the evaluator's SONIC_HAND_SCHEDULE
+    # hook reads.
+    CLIP_ARMS = "--clip-arms" in sys.argv
+    _hands = None
+    _vmode = False
+    if "--hands" in sys.argv:
+        _hands = np.load(sys.argv[sys.argv.index("--hands") + 1])
+        _hand_names = [f"{s}_hand_{j}_joint" for s in ("left", "right")
+                       for j in ("index_0", "index_1", "middle_0", "middle_1",
+                                 "thumb_0", "thumb_1", "thumb_2")]
+        _hand_ids = [robot.find_joints([n])[0][0] for n in _hand_names]
+        print(f"[walk] fingers from {os.path.basename(sys.argv[sys.argv.index('--hands') + 1])}: "
+              f"{_hands.shape}")
+        # CLOSE_MODE=velocity: the Dex3 close the way GraspGenX runs it
+        # (end2end/robots/g1_right_arm.yaml gripper_control_mode: velocity):
+        # while the schedule's right hand is away from open, the right
+        # fingers run with stiffness 0 and damping CLOSE_KD at CLOSE_VEL rad/s
+        # towards closed, and squeeze at whatever they meet. Position mode
+        # "snaps the fingers to the closed angles and they bat the object
+        # away" (their comment; measured here 0/154, 0/40).
+        _vmode = os.environ.get("CLOSE_MODE", "position") == "velocity"
+        _open_r = _hands[0, 7:].copy()
+        _closed_r = _hands[int(np.argmax(np.abs(_hands[:, 7:] - _open_r).sum(1))), 7:]
+        _vel_ids = [j for j, n in zip(_hand_ids[7:], _hand_names[7:]) if "thumb_0" not in n]
+        _vel = torch.tensor([[float(os.environ.get("CLOSE_VEL", "0.25")) * float(np.sign(c - o))
+                              for (j, n), c, o in zip(zip(_hand_ids[7:], _hand_names[7:]), _closed_r, _open_r)
+                              if "thumb_0" not in n]], dtype=torch.float32, device=sim.device)
+        _stiff0 = robot.data.joint_stiffness[:, _vel_ids].clone()
+        _damp0 = robot.data.joint_damping[:, _vel_ids].clone()
+        _squeezing = False
+        if _vmode:
+            print(f"[walk] velocity-mode close: kd {os.environ.get('CLOSE_KD', '8.0')}, "
+                  f"{_vel[0].cpu().numpy()} rad/s")
     for i in range(len(walk["dof"])):
         for k, jid in enumerate(walk_ids):
             tgt_q[0, jid] = float(walk["dof"][i, k])
-        for k, jid in enumerate(ids):
-            tgt_q[0, jid] = _plan_q[k]
-        if i >= _waist_from:
+        if not CLIP_ARMS:
+            for k, jid in enumerate(ids):
+                tgt_q[0, jid] = _plan_q[k]
+        if _hands is not None:
+            for k, jid in enumerate(_hand_ids):
+                tgt_q[0, jid] = float(_hands[min(i, len(_hands) - 1), k])
+        if i >= _waist_from and not CLIP_ARMS:
             a = (i - _waist_from + 1) / _waist_n
             for j in _waist:
                 tgt_q[0, j] = ((1.0 - a) * float(tgt_q[0, j])
@@ -588,6 +650,65 @@ if walk is not None:
               float(walk["pos"][i][2]), float(q[3]), float(q[0]),
               float(q[1]), float(q[2]), 0, 0, 0, 0, 0, 0]],
             dtype=torch.float32, device=sim.device))
+        if _hands is not None:
+            # body written, fingers simulated: a finger whose state is written
+            # every step passes through the box instead of pressing on it.
+            # And the fingers need the frame's full 33 ms of physics, not the
+            # one millisecond step a kinematic replay gets away with -- at one
+            # step per frame the hand closed 1.4 s of PD in a 1403-frame clip
+            # and the box never moved.
+            robot.write_joint_state_to_sim(tgt_q[:, _body_ids], zero[:, _body_ids],
+                                           joint_ids=_body_ids)
+            robot.set_joint_position_target(tgt_q)
+            if _vmode:
+                _want = bool(np.abs(_hands[min(i, len(_hands) - 1), 7:] - _open_r).max() > 1e-6)
+                if _want != _squeezing:
+                    _squeezing = _want
+                    print(f"[walk] frame {i}: fingers {'squeeze (velocity)' if _want else 'release (position)'}")
+                    robot.write_joint_stiffness_to_sim(0.0 if _want else _stiff0, joint_ids=_vel_ids)
+                    robot.write_joint_damping_to_sim(float(os.environ.get("CLOSE_KD", "8.0")) if _want else _damp0,
+                                                     joint_ids=_vel_ids)
+                robot.set_joint_velocity_target(_vel if _squeezing else torch.zeros_like(_vel), joint_ids=_vel_ids)
+            _root = torch.tensor(
+                [[float(walk["pos"][i][0]), float(walk["pos"][i][1]),
+                  float(walk["pos"][i][2]), float(q[3]), float(q[0]),
+                  float(q[1]), float(q[2]), 0, 0, 0, 0, 0, 0]],
+                dtype=torch.float32, device=sim.device)
+            for _ss in range(max(1, round((1.0 / FPS) / sim.get_physics_dt()))):
+                # write_joint_state_to_sim with a subset pushes the whole joint
+                # buffer to PhysX (articulation.py:616, 646): refreshed once a
+                # frame, it reset the simulated fingers every substep and they
+                # moved at 1/33 of their drive. Refresh it first.
+                robot.update(sim.get_physics_dt())
+                robot.set_joint_position_target(tgt_q)
+                if _vmode:
+                    robot.set_joint_velocity_target(_vel if _squeezing else torch.zeros_like(_vel), joint_ids=_vel_ids)
+                robot.write_root_state_to_sim(_root)
+                robot.write_joint_state_to_sim(tgt_q[:, _body_ids], zero[:, _body_ids],
+                                               joint_ids=_body_ids)
+                robot.write_data_to_sim()
+                sim.step()
+            robot.update(sim.get_physics_dt())
+            _every = int(os.environ.get("OBJ_EVERY", "100"))
+            if i % _every == 0 and target_body is not None:
+                target_body.update(sim.get_physics_dt())
+                _op = target_body.data.root_pos_w[0].cpu().numpy()
+                print(f"[obj ] frame {i:5d} pos {np.round(_op, 4)}  moved "
+                      f"{np.linalg.norm(_op - obj_start):.4f} m")
+                _out = []
+                for _ln in ("right_hand_palm_link", "right_hand_index_1_link", "right_hand_thumb_2_link",
+                            "left_ankle_roll_link", "right_ankle_roll_link", "left_knee_link", "right_knee_link"):
+                    _b = robot.find_bodies([_ln])[0]
+                    if _b:
+                        _out.append(f"{_ln.replace('_link', '').replace('right_hand_', 'R.')} "
+                                    f"{np.round(robot.data.body_pos_w[0, _b[0]].cpu().numpy() - _op, 2)}")
+                print(f"[hand] frame {i:5d} rel. to object: " + "  ".join(_out))
+                _rh = [j for j in _hand_ids[7:]]
+                print(f"[hand] frame {i:5d} right finger q {np.round(robot.data.joint_pos[0, _rh].cpu().numpy(), 2)} "
+                      f"target {np.round(tgt_q[0, _rh].cpu().numpy(), 2)}; wrist joints "
+                      f"{np.round([robot.data.joint_pos[0, robot.find_joints([n])[0][0]].item() for n in ('right_wrist_roll_joint', 'right_wrist_pitch_joint', 'right_wrist_yaw_joint')], 2)}")
+            _shoot()
+            continue
         robot.write_joint_state_to_sim(tgt_q, zero)
         robot.set_joint_position_target(tgt_q)
         robot.write_data_to_sim()
@@ -715,6 +836,12 @@ if WALK_ONLY:
     print(f"[walk] end-of-walk root {np.round(_rp, 4)} vs STAND "
           f"{np.round(np.array(STAND), 4)}  gap "
           f"{np.linalg.norm(_rp[:2]-np.array(STAND[:2]))*1000:.1f} mm")
+    if target_body is not None and obj_start is not None:
+        target_body.update(sim.get_physics_dt())
+        _op = target_body.data.root_pos_w[0].cpu().numpy()
+        _d = _op - obj_start
+        print(f"[eval] end pos {np.round(_op, 4)}  dxy {np.linalg.norm(_d[:2]):.4f} m"
+              f"  dz {_d[2]:+.4f} m  -> {'HELD' if _d[2] > 0.05 else 'LOST'}")
     print(f"[walk] walk-only: {len(frames)} frames, stopping before the pick")
     sys.stdout.flush()
     os._exit(0)
@@ -1002,11 +1129,19 @@ if DRIVE is not None and wbc is not None:
           f"{_y:.2f} deg), {math.hypot(_p[0]-_gx, _p[1]-_gy)*1000:.1f} mm and "
           f"{abs(_y - math.degrees(_gyaw)):.2f} deg from the goal")
 
+_leg_ids = [robot.find_joints([n])[0][0] for n in robot.joint_names
+            if ("hip" in n or "knee" in n or "ankle" in n)]
+_leg_v = []
+# ...and how far they actually move between rendered frames. PhysX's joint
+# velocity is a noisy estimate (the SimulationContext warns about it at
+# startup); what the eye sees is displacement, so record that too.
+_leg_q = []
 if HOLD_ONLY:
     _sec = 6.0
     _every = max(1, round((1.0 / FPS) / sim.get_physics_dt()))
     _n = int(_sec / sim.get_physics_dt())
     _z0 = float(robot.data.root_pos_w[0, 2].item())
+    _hv = []
     print(f"[hold] standing still for {_sec:.0f}s from pelvis z {_z0:.4f}, "
           f"arm pinned at the plan's first waypoint")
     for _i in range(_n):
@@ -1020,15 +1155,22 @@ if HOLD_ONLY:
         robot.update(sim.get_physics_dt())
         if _i % _every == 0:
             _shoot()
+        if _leg_ids:
+            _hv.append(float(np.abs(
+                robot.data.joint_vel[0, _leg_ids].cpu().numpy()).max()))
         if _i % int(0.5 / sim.get_physics_dt()) == 0:
             _z = float(robot.data.root_pos_w[0, 2].item())
-            _q = robot.data.root_quat_w[0].cpu().numpy()
-            _tilt = math.degrees(2.0 * math.acos(min(1.0, abs(float(_q[0])))))
+            _w = np.asarray(_hv[-500:]) if _hv else np.zeros(1)
             print(f"[hold] t {_i * sim.get_physics_dt():4.1f}s  "
-                  f"pelvis z {_z:.4f}  tilt {_tilt:5.1f} deg")
+                  f"pelvis z {_z:.4f}  legs mean {_w.mean():6.3f} "
+                  f"max {_w.max():6.3f} rad/s")
     _z = float(robot.data.root_pos_w[0, 2].item())
+    _w = np.asarray(_hv) if _hv else np.zeros(1)
     print(f"[hold] {'STOOD' if _z > _z0 - 0.10 else 'FELL'}: "
           f"pelvis {_z0:.4f} -> {_z:.4f} m")
+    print(f"[hold] legs over {len(_w)} steps: mean {_w.mean():.3f}, "
+          f"p95 {np.percentile(_w, 95):.3f}, max {_w.max():.3f} rad/s "
+          f"-- nothing is commanding them, so this is the floor")
     if not NO_VIDEO:
         import imageio.v2 as _iio
         for _fr, _sfx in ((frames, ""), (head_frames, "_wrist"), (eye_frames, "_head")):
@@ -1053,13 +1195,6 @@ if _ti:
     _tq = robot.data.body_quat_w[0, _ti[0]].cpu().numpy()
     print(f"[start] torso {np.round(_t, 4)} quat {np.round(_tq, 4)}")
 _got = np.array([robot.data.joint_pos[0, j].item() for j in ids])
-_leg_ids = [robot.find_joints([n])[0][0] for n in robot.joint_names
-            if ("hip" in n or "knee" in n or "ankle" in n)]
-_leg_v = []
-# ...and how far they actually move between rendered frames. PhysX's joint
-# velocity is a noisy estimate (the SimulationContext warns about it at
-# startup); what the eye sees is displacement, so record that too.
-_leg_q = []
 _want = np.array([float(traj[0, k]) for k in range(len(ids))])
 print(f"[start] arm error max {np.abs(_got - _want).max()*1000:.2f} mrad, "
       f"per joint {np.round((_got - _want) * 1000, 1)}")

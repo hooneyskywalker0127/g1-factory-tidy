@@ -149,12 +149,16 @@ def grow_above(seed, xyz, valid, top, radius=0.12):
     segmentation starts from; GraspGenX's own scene loaders assume it.
     """
     from scipy import ndimage
-    c = xyz[seed].mean(axis=0)
+    above = xyz[..., 2] > top + 0.005
+    core = seed & above if (seed & above).any() else seed
+    c = xyz[core].mean(axis=0)
     r = np.hypot(xyz[..., 0] - c[0], xyz[..., 1] - c[1])
-    cand = valid & (xyz[..., 2] > top + 0.005) & (r < radius)
+    cand = valid & above & (r < radius)
     lab, n = ndimage.label(cand | seed)
     ids = set(np.unique(lab[seed])) - {0}
-    return np.isin(lab, list(ids)) & cand | seed
+    # only what stands above the support: a seed that spilled onto the floor
+    # (7965 px of 'box' that was mostly floor, from a kneel) leaves it here
+    return np.isin(lab, list(ids)) & cand
 
 
 RESTING = (-0.05, 0.10)     # metres between underside and support top
@@ -167,6 +171,11 @@ def main():
     scale = float(_arg("--scale", "2"))
     adaptor = _arg("--adaptor", "clip")
     min_px = int(_arg("--min-px", "60"))
+    # A region has to look like the word, not merely more like it than the
+    # furniture list. Every true find so far scored 0.76-0.95; a patch of
+    # floor by the rack that 'hammer' won at 0.45 sent the robot walking
+    # there.
+    min_p = float(_arg("--min-p", "0.6"))
 
     meta = json.load(open(os.path.join(cap, "meta_data.json")))
     rgb = np.asarray(Image.open(os.path.join(cap, "rgb.png")).convert("RGB"))
@@ -178,10 +187,19 @@ def main():
     if not os.path.exists(orig):
         os.rename(os.path.join(cap, "seg.png"), orig)
         Image.open(orig).save(os.path.join(cap, "seg.png"))
-    seg = np.asarray(Image.open(orig), dtype=np.int32)
-    meta["label_map"] = {k: v for k, v in meta["label_map"].items()
-                         if k != meta.get("language", {}).get("label")}
+    # More than one thing can be named in one picture ("the clamp on the
+    # floor", "the crate on the table"): earlier answers under other labels
+    # stay in seg.png; only this label's own earlier answer is redone.
+    seg = np.asarray(Image.open(os.path.join(cap, "seg.png")), dtype=np.int32).copy()
+    seg_o = np.asarray(Image.open(orig), dtype=np.int32)
+    langs = meta.setdefault("language_labels", {})
+    if "language" in meta and "label" in meta["language"]:  # older single-answer files
+        langs[meta["language"]["label"]] = meta["language"]
     meta.pop("language", None)
+    if label in meta["label_map"]:
+        _old = meta["label_map"].pop(label)
+        seg[seg == _old] = seg_o[seg == _old]
+        langs.pop(label, None)
     K = np.asarray(meta["intrinsics"], float)
     cam_pose = np.asarray(meta["camera_pose"], float)
     valid = depth > 0
@@ -197,7 +215,8 @@ def main():
           f"{prompts[1:]}")
 
     xyz = transform_xyz(depth_to_camera_xyz(depth, K), cam_pose)
-    cands = components(obj_mask, min_px, depth=depth)
+    cands = [m for m in components(obj_mask, min_px, depth=depth)
+             if float(prob[0][m].mean()) >= min_p]
     if not cands:
         print("NOT FOUND")
         sys.exit(2)
@@ -210,23 +229,49 @@ def main():
         if fl.sum() > 500:
             floor_z = float(np.median(xyz[fl][:, 2]))
             print(f"[text] floor seen at z {floor_z:+.3f} ({int(fl.sum())} px)")
+        else:
+            # Seen from low down and close, the floor is a featureless grey
+            # field and the words do not land on it (measured: 0 px of
+            # 'floor' from a kneel, with the floor voted 'box'). The floor is
+            # still the lowest plane in the picture, so read it off the depth.
+            floor_z = float(np.percentile(xyz[valid][:, 2], 3))
+            print(f"[text] floor not named; lowest plane in the depth at z "
+                  f"{floor_z:+.3f}")
     kept = []
     for i, m in enumerate(cands):
         c = xyz[m].mean(axis=0)
         line = (f"[text]   '{query}' region {int(m.sum()):5d} px at "
                 f"{np.round(c, 2)} p={float(prob[0][m].mean()):.2f}")
         if on:
-            got = resting_gap(m, supports, xyz,
-                              above=None if floor_z is None else floor_z + 0.10)
+            # The floor itself is the support when the sentence says so.
+            _above = (None if (floor_z is None or on == "floor")
+                      else floor_z + 0.10)
+            def _floor_gap(mask):
+                # The floor is one plane, not a region near the object:
+                # measured from the floor pixels' own median height. A 'floor'
+                # region found near a shelf box passed it as resting on the
+                # floor from 0.59 m up. And the thing has to be low, not just
+                # touch the floor somewhere: a rack post labelled 'box' reached
+                # the floor at its foot with its bulk 0.75 m up.
+                _z = xyz[mask][:, 2]
+                if float(np.median(_z)) - floor_z > 0.30:
+                    return (9.0, floor_z)
+                return (float(np.percentile(_z, 5)) - floor_z, floor_z)
+            _on_floor = on == "floor" and floor_z is not None
+            got = _floor_gap(m) if _on_floor else resting_gap(m, supports, xyz, above=_above)
+            if got is not None and not (RESTING[0] < got[0] < RESTING[1]):
+                got = None if _on_floor else got   # a seed that is not on the floor does not grow
             if got is not None:
                 # Grow first, judge after. The words may light up only the
                 # top of the thing -- measured, 64 px of a box seen edge-on,
                 # whose underside then read 0.11 m above the desk and failed
                 # the test. What stands on the surface is the whole grown
                 # region, so that is what the gap is measured on.
-                m = grow_above(m, xyz, valid, got[1])
-                got = resting_gap(m, supports, xyz,
-                                  above=None if floor_z is None else floor_z + 0.10)
+                _g = grow_above(m, xyz, valid, got[1])
+                if _g.any():
+                    m = _g
+                got = (_floor_gap(m) if _on_floor
+                       else resting_gap(m, supports, xyz, above=_above))
             gap = None if got is None else got[0]
             rests = gap is not None and RESTING[0] < gap < RESTING[1]
             line += (f", {'on' if rests else 'NOT on'} '{on}'"
@@ -248,14 +293,16 @@ def main():
     centre = xyz[chosen].mean(axis=0)
 
     new_id = int(max(meta["label_map"].values())) + 1
-    seg = seg.copy()
     seg[chosen] = new_id
     Image.fromarray(seg.astype(np.int32), mode="I").save(
         os.path.join(cap, "seg.png"))
     meta["label_map"][label] = new_id
-    meta["language"] = {"query": query, "on": on, "label": label,
-                        "pixels": int(chosen.sum()),
-                        "centre": [float(v) for v in centre]}
+    langs[label] = {"query": query, "on": on, "label": label,
+                    "pixels": int(chosen.sum()),
+                    "centre": [float(v) for v in centre],
+                    "top": float(np.percentile(xyz[chosen][:, 2], 95)),
+                    "bottom": float(np.percentile(xyz[chosen][:, 2], 5))}
+    meta["language"] = langs[label]                          # the latest, for readers of one
     json.dump(meta, open(os.path.join(cap, "meta_data.json"), "w"), indent=2)
 
     # What it saw, for the record: the frame with the chosen pixels outlined.

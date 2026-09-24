@@ -23,14 +23,14 @@ QUERY="${1:-box}"
 ON="${2:-table}"
 R=/home/sehoon/Documents/GitHub/g1-factory-tidy
 GGX=/home/sehoon/Projects/GraspGenX
-F=$R/results/fable
-DEST="/home/sehoon/Desktop/참고/영상보관/g1-factory-tidy/09/260924/fable"
+F=${FABLE_DIR:-$R/results/fable}
+DEST=${FABLE_DEST:-"/home/sehoon/Desktop/참고/영상보관/g1-factory-tidy/09/260924/fable"}
 LOG=$F/run.log
 START_X=1.40; START_Y=0.70
 LOOK_YAWS=(90 -30 -150)          # where it looks, in order, until it finds it
 SCENE="-1.30 -0.60 -90"          # where the desk has always been (the cell)
 CUT_Z=0.755                      # pelvis height the arm plan is made for (hold_search.txt)
-PLAN=$R/results/g1_graspgen.json # the desk's and box's shape, nothing about the stand
+PLAN=${TIDY_PLAN:-$R/results/g1_graspgen.json} # the desk's and box's shape, nothing about the stand
 mkdir -p "$F" "$DEST"
 source /home/sehoon/miniconda3/etc/profile.d/conda.sh
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
@@ -101,22 +101,22 @@ import json;d=json.load(open('$F/stand.json'))['stand']
 print(f\"{d['x']:.4f} {d['y']:.4f} {d['yaw_deg']:.4f}\")")"
 
 # ---- 4. walk there with GR00T's planner, turning through the looks first --
-if [ ! -f "$R/results/motion/fable.pkl" ]; then
+if [ ! -f "$R/results/motion/$(basename "$F").pkl" ]; then
   conda activate env_isaaclab
-  python grasp/walk_clip.py results/motion fable $START_X $START_Y ${LOOKED[0]} \
+  python grasp/walk_clip.py results/motion $(basename "$F") $START_X $START_Y ${LOOKED[0]} \
       --look-yaws "$(IFS=,; echo "${LOOKED[*]}")" \
       --stand "$F/stand.json" --squat-to 0.750 --hold-target --goal-at "$F/stand.json" \
       --cut-at-height --cut-to $CUT_Z \
       2>&1 | grep -a "^\[walk\]\|Traceback\|Error" | tee "$F/walk.txt"
 fi
 grep -a "turned in place\|position error\|frames (" "$F/walk.txt" | while read -r l; do say "$l"; done
-[ -f "$R/results/motion/fable.pkl" ] || { say "STOP: the walk did not arrive"; exit 1; }
+[ -f "$R/results/motion/$(basename "$F").pkl" ] || { say "STOP: the walk did not arrive"; exit 1; }
 
 # ---- 5. at the stand, look again and plan the pick from what is seen -----
 if [ ! -f "$F/near/meta_data.json" ]; then
   conda activate env_isaaclab
-  python grasp/capture_rgbd.py --stand-from-walk results/motion/fable.pkl --back 0.9 \
-      --pelvis-from-walk results/motion/fable.pkl \
+  python grasp/capture_rgbd.py --stand-from-walk results/motion/$(basename "$F").pkl --back 0.9 \
+      --pelvis-from-walk results/motion/$(basename "$F").pkl \
       --plan "$PLAN" --plan-stand $SX $SY $SYAW --scene-stand $SCENE \
       --out "$F/near" > "$F/near.log" 2>&1
   grep -a "^\[cap\] looking\|pelvis z" "$F/near.log" | while read -r l; do say "$l"; done
@@ -149,12 +149,12 @@ conda activate env_isaaclab
 # ---- 6. replay in the cell: the pick, the walk, three views each ---------
 if [ ! -f "$F/pick.mp4" ]; then
   python grasp/play_in_cell.py "$F/g1_fable.npy" --pick-stand $SX $SY $SYAW \
-      --legs-from results/motion/fable.pkl --video "$F/pick.mp4" > "$F/pick.log" 2>&1
+      --legs-from results/motion/$(basename "$F").pkl --video "$F/pick.mp4" > "$F/pick.log" 2>&1
 fi
 say "pick: $(grep -a "\[eval\]" "$F/pick.log" | tail -1)"
 if [ ! -f "$F/walk.mp4" ]; then
   python grasp/play_in_cell.py "$F/g1_fable.npy" --pick-stand $SX $SY $SYAW \
-      --walk results/motion/fable.pkl --walk-only --video "$F/walk.mp4" > "$F/walk.log" 2>&1
+      --walk results/motion/$(basename "$F").pkl --walk-only --video "$F/walk.mp4" > "$F/walk.log" 2>&1
 fi
 grep -aE "stopped at|settling|walk-only" "$F/walk.log" | tail -3 | while read -r l; do say "$l"; done
 for v in "" _head _wrist; do

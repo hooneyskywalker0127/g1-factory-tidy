@@ -50,11 +50,17 @@ from curobo.types import JointState, ToolPoseCriteria
 # that "torso_link is the plan's root; it is parts[0] and does not move", so
 # every angle in the grasp plan is measured from a torso that stays put. Let
 # the waist drift and the plan's own numbers stop meaning what they meant.
-HOLD = ["pelvis", "torso_link", "left_hip_roll_link", "right_hip_roll_link",
-        "left_ankle_roll_link", "right_ankle_roll_link",
-        "left_knee_link", "right_knee_link"]
+# Only what has to stay put: the feet on the floor and the pelvis over them.
+# Hips, knees and torso were in here at full weight and the solver spent the
+# whole body holding them, leaving the wrist 57 mm off a path that is only
+# 116 mm long. The guide says the opposite: high weight on feet and hips for
+# balance, "low weight" on mid-chain links, "since the elbow and wrist targets
+# already constrain the arm".
+HOLD = ["pelvis", "left_ankle_roll_link", "right_ankle_roll_link"]
 WORK = ["right_wrist_yaw_link"]
-LOOSE = ["left_shoulder_roll_link", "left_elbow_link",
+LOOSE = ["torso_link", "left_hip_roll_link", "right_hip_roll_link",
+         "left_knee_link", "right_knee_link",
+         "left_shoulder_roll_link", "left_elbow_link",
          "left_wrist_yaw_link", "right_shoulder_roll_link",
          "right_elbow_link"]
 STAND_Z = 0.7503                      # the height the walk ends at
@@ -142,6 +148,71 @@ def mat_to_quat(m):
                      (m[1, 2] + m[2, 1]) / s, 0.25 * s])
 
 
+def solve_reach(r, cfg, every=4):
+    """The reach as one whole-body sequence: feet planted, wrist on the plan.
+
+    The plan's joint angles are measured from torso_link and replaying them
+    only works while the torso does not move. GR00T's balance policy outputs
+    fifteen joints -- twelve legs and the three waist joints -- so the moment
+    the lower body is free, the torso moves and the same angles point the hand
+    somewhere else. Measured: the arm tracked its plan to 5.95 mrad and still
+    pushed the box off the table.
+
+    A wrist POSE does not have that problem. Give the retargeter the pose per
+    frame and let it find whatever whole-body configuration puts the wrist
+    there with the feet where they are.
+    """
+    jn = r.kinematics.joint_names
+    q0 = walk_end_state(jn)
+    ks = r.kinematics.compute_kinematics(JointState.from_position(q0, joint_names=jn))
+    frames_all = list(ks.tool_frames)
+    keep = [frames_all.index(n) for n in cfg.tool_frames]
+    pos0 = ks.tool_poses.position[:, :, keep][0, 0].cpu().numpy()
+    quat0 = ks.tool_poses.quaternion[:, :, keep][0, 0].cpu().numpy()
+
+    wi = cfg.tool_frames.index(WORK[0])
+    wrist = plan_wrist_in_cell(pos0[cfg.tool_frames.index("torso_link")],
+                               quat0[cfg.tool_frames.index("torso_link")])
+    wrist = wrist[::every]
+    n = len(wrist)
+    P = np.tile(pos0, (n, 1, 1))
+    Q = np.tile(quat0, (n, 1, 1))
+    for i, T in enumerate(wrist):
+        P[i, wi] = T[:3, 3]
+        Q[i, wi] = mat_to_quat(T[:3, :3])
+    print(f"[retarget] {n} frames (every {every}th of {len(wrist) * every}), "
+          f"wrist travels {np.linalg.norm(P[-1, wi] - P[0, wi]) * 1000:.0f} mm")
+
+    seq = SequenceGoalToolPose(
+        tool_frames=cfg.tool_frames,
+        position=torch.tensor(P, dtype=torch.float32,
+                              device="cuda").unsqueeze(1).unsqueeze(3),
+        quaternion=torch.tensor(Q, dtype=torch.float32,
+                                device="cuda").unsqueeze(1).unsqueeze(3))
+    res = r.solve_sequence(seq)
+    sol = res.joint_state.position[0].cpu().numpy()      # (n, 35)
+    ks2 = r.kinematics.compute_kinematics(JointState.from_position(
+        torch.tensor(sol, dtype=torch.float32, device="cuda"), joint_names=jn))
+    got = ks2.tool_poses.position[:, 0, keep].cpu().numpy()
+    werr = np.linalg.norm(got[:, wi] - P[:, wi], axis=1) * 1000.0
+    feet = [cfg.tool_frames.index(n) for n in
+            ("left_ankle_roll_link", "right_ankle_roll_link")]
+    ferr = np.linalg.norm(got[:, feet] - P[:, feet], axis=2).max(axis=1) * 1000.0
+    print(f"[retarget] wrist error mean {werr.mean():.1f} mm, max {werr.max():.1f} mm")
+    # Where in the reach it goes wrong. The plan's own phases are approach,
+    # close and lift; a wrist the body cannot follow during the lift means the
+    # robot can grasp from here and not stand it up.
+    _q = np.linspace(0, len(werr) - 1, 5).astype(int)
+    for _a, _b in zip(_q[:-1], _q[1:]):
+        print(f"[retarget]   frames {_a:3d}-{_b:3d} ({_a/len(werr)*100:3.0f}-"
+              f"{_b/len(werr)*100:3.0f}%): wrist {werr[_a:_b].mean():5.1f} mm "
+              f"mean, {werr[_a:_b].max():5.1f} max")
+    print(f"[retarget] feet moved  mean {ferr.mean():.1f} mm, max {ferr.max():.1f} mm")
+    np.save("results/retarget_reach.npy", sol)
+    print(f"[retarget] wrote results/retarget_reach.npy {sol.shape}")
+    return sol
+
+
 def main():
     r, cfg = build()
     jn = r.kinematics.joint_names
@@ -169,6 +240,8 @@ def main():
           f"mean {d[body].mean()*1000:.1f} mrad")
     worst = body[int(np.argmax(d[body]))]
     print(f"[check] worst joint  {jn[worst]} {d[worst]*1000:.1f} mrad")
+    if "--reach" in sys.argv:
+        solve_reach(r, cfg)
 
 
 if __name__ == "__main__":

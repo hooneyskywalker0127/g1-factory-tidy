@@ -18,7 +18,13 @@ from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics, UsdShade
 # end2end/e2e_grasp_demo.py: --object_mu default 10.0, --finger_mu default 3.0.
 # PhysX's own default is 0.5, and a grasp generated for mu 10 slips straight
 # out at 0.5 -- which is what every replay here was showing.
-OBJECT_MU = 10.0
+# OBJECT_MU env: GraspGenX validates with 10.0 on the object, but there the
+# finger effort limit is 1000 Nm-equivalent (g1_right_arm.yaml finger_effort
+# limit) and the fingers drag anything. With the real 1.4 Nm the same mu glues
+# a 0.2 kg cylinder to the floor (20 N of friction) and the thumb stalls on
+# contact without closing (measured: thumb_1 at 0.69 of 0.72 open on every
+# candidate). A floor and a tool are not mu 10.
+OBJECT_MU = float(os.environ.get("OBJECT_MU", "10.0"))
 FINGER_MU = 3.0
 
 # torso_link sits at a fixed offset from the pelvis: the waist joints are at 0
@@ -75,6 +81,14 @@ def spawn_target(stage, mesh_path, T_torso, T_in_torso):
     # the hand holds it. Same treatment map/props.py gives the cartons.
     UsdPhysics.RigidBodyAPI.Apply(prim)
     UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(0.2)
+    # Continuous collision detection on the target: pressed into the floor by
+    # a hand whose body is placed rather than simulated, a 0.2 kg tin went
+    # through the floor in one 1 ms step (box at close -0.146 .. -0.281 on a
+    # third of the candidates, and two "held" verdicts that were the tin
+    # being flung back up from below the floor). CCD is what PhysX has for
+    # exactly this; the scene enables it too (SimulationCfg physx.enable_ccd).
+    from pxr import PhysxSchema
+    PhysxSchema.PhysxRigidBodyAPI.Apply(prim).CreateEnableCCDAttr(True)
     UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
     UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(
         "convexHull")
@@ -162,6 +176,26 @@ def spawn_support(stage, name, mesh_path, T_torso, T_in_torso):
     print(f"[scene] support '{name}' origin {np.round(T[:3, 3], 3)} top z {top:.3f}")
 
 
+def floor_slab(stage, z_top=0.0, thickness=0.5, half=6.0):
+    """A thick static box just under the floor.
+
+    The cell's floor is a mesh collider, one triangle thick: a 0.2 kg tin
+    pressed on it by the hand went through in one step (box at close -0.146
+    .. -0.281 on a third of the candidates, and "held" verdicts that were the
+    tin flung back up from below), and continuous collision detection did
+    not stop it -- it is a slow push, not a fast one. A box has an inside.
+    """
+    from pxr import UsdGeom as _UG, UsdPhysics as _UP, Gf as _Gf
+    prim = _UG.Cube.Define(stage, "/World/FloorSlab")
+    prim.CreateSizeAttr(1.0)
+    xf = _UG.Xformable(prim.GetPrim())
+    xf.AddTranslateOp().Set(_Gf.Vec3d(0.0, 0.0, z_top - thickness / 2.0))
+    xf.AddScaleOp().Set(_Gf.Vec3d(2 * half, 2 * half, thickness))
+    prim.CreatePurposeAttr(_UG.Tokens.guide)                      # never rendered
+    _UP.CollisionAPI.Apply(prim.GetPrim())
+    return prim.GetPrim()
+
+
 def build(stage, app, meta, T_torso):
     """Put the plan's support surfaces and its target into the stage.
 
@@ -178,3 +212,38 @@ def build(stage, app, meta, T_torso):
                  meta["object"]["transform_in_torso"])
     for _ in range(3):
         app.update()
+
+
+def keep_only_hand_collisions(stage, robot_path="/World/G1", keep=("right_hand", "right_wrist"),
+                              cell_paths=("/World/Cell", "/World/GraspTarget", "/World/Props", "/World/Plan")):
+    """Let nothing of the robot but the right hand collide with the cell.
+
+    The body is written into place every substep (walk, kneel and reach are
+    references replayed kinematically), and a kneel puts the knees and feet a
+    few millimetres into the floor. PhysX answers those penetrations with
+    contact impulses through the whole articulation, and the only joints free
+    to take them are the simulated fingers: measured on a kneeling reach, the
+    right fingers sat at their limits (index_0 at 0, thumb_1 at 1.01) with
+    reported velocities of -2.5..-7.7 rad/s before the close had begun, and
+    no drive at 1.4 Nm moved them. The robot's USD is instanceable, so its
+    colliders cannot be edited one by one; PhysX collision groups filter by
+    path instead: group "body" (the robot minus the hand) never collides
+    with group "cell" (floor, props, the target). The hand is left out of
+    "body" and collides with everything. Returns the link paths kept.
+    """
+    from pxr import Usd, UsdPhysics
+    root = stage.GetPrimAtPath(robot_path)
+    kept = [str(c.GetPath()) for c in root.GetChildren() if any(k in c.GetName() for k in keep)]
+    body = UsdPhysics.CollisionGroup.Define(stage, "/World/ColGroupBody")
+    cell = UsdPhysics.CollisionGroup.Define(stage, "/World/ColGroupCell")
+    bc = body.GetCollidersCollectionAPI()
+    bc.CreateIncludesRel().AddTarget(robot_path)
+    for k in kept:
+        bc.CreateExcludesRel().AddTarget(k)
+    cc = cell.GetCollidersCollectionAPI()
+    for c in cell_paths:
+        if stage.GetPrimAtPath(c):
+            cc.CreateIncludesRel().AddTarget(c)
+    body.CreateFilteredGroupsRel().AddTarget(cell.GetPath())
+    cell.CreateFilteredGroupsRel().AddTarget(body.GetPath())
+    return kept
