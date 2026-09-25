@@ -23,6 +23,13 @@ FPS = 30
 # the same values grasp/run_wbc_pick.sh read off the plan's last frame.
 HAND_OPEN = [0, 0, 0, 0, 0, 0, 0, 0.4, 0.0, 0.4, 0.0, 0.0, 0.7243, 0.0]
 HAND_CLOSED = [0, 0, 0, 0, 0, 0, 0, 1.5708, 1.7453, 1.5708, 1.7453, 0.0, -1.0472, -1.5]
+# THUMB0: the right thumb's abduction, 0 in GraspGenX's description (copied from
+# the unitree_g1 family). With 0 the thumb hangs 5.4 cm (+4 cm of flesh) under
+# the palm and every palm-down pinch on a floor-level handle jammed it; swung
+# sideways it can oppose the index from beside the object instead of from
+# underneath (a person's key pinch on a stick on the floor).
+if os.environ.get("THUMB0"):
+    HAND_OPEN[11] = HAND_CLOSED[11] = float(os.environ["THUMB0"])
 
 
 def mujoco_names():
@@ -89,7 +96,19 @@ def main():
     ramp = 20
     for k in range(ramp):
         a = (k + 1) / ramp
-        hands[close_at + k] = (1 - a) * np.array(HAND_OPEN) + a * np.array(HAND_CLOSED)
+        if os.environ.get("CLOSE_ORDER", "together") == "thumb_first":
+            # the close that held the hammer's handle (results/fable6/handle
+            # #54): the thumb first over the first half of the ramp, the
+            # fingers over the second -- the thumb closing after the fingers
+            # jammed on every palm-down grasp (DIAGNOSIS.md, 02:40)
+            th = np.array([0] * 11 + [1, 1, 1], bool)
+            a_t = min(1.0, (k + 1) / (ramp // 2)); a_f = min(1.0, max(0.0, (k + 1 - ramp // 2) / (ramp // 2)))
+            h = np.array(HAND_OPEN, np.float32)
+            h[th] = (1 - a_t) * np.array(HAND_OPEN)[th] + a_t * np.array(HAND_CLOSED)[th]
+            h[~th] = (1 - a_f) * np.array(HAND_OPEN)[~th] + a_f * np.array(HAND_CLOSED)[~th]
+            hands[close_at + k] = h
+        else:
+            hands[close_at + k] = (1 - a) * np.array(HAND_OPEN) + a * np.array(HAND_CLOSED)
     hands[close_at + ramp:] = HAND_CLOSED
     hp = os.path.join("results", "motion", f"{name}_hands.npy")
     np.save(hp, hands)

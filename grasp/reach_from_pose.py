@@ -110,8 +110,12 @@ def grasps_in_cell(grasps_json, cap_dir, base_z=0.98):
     pfc = np.asarray(meta["plan_from_cell"])
     B = np.eye(4)
     B[2, 3] = base_z
-    palms = np.array([np.linalg.inv(pfc) @ np.linalg.inv(B) @ np.asarray(g) @ T
-                      for g in d["grasps"]])
+    if d.get("frame") == "cell" or "--cell-frame" in sys.argv:
+        # already palm poses in the cell (grasp/dexonomy_grasps.py)
+        palms = np.array([np.asarray(g) @ T for g in d["grasps"]])
+    else:
+        palms = np.array([np.linalg.inv(pfc) @ np.linalg.inv(B) @ np.asarray(g) @ T
+                          for g in d["grasps"]])
     # GRASP_ROLL_DEG: turn every palm about its own approach axis (+y). On a
     # lying 3.7 cm flashlight the palm came down right, 5 cm above it, with
     # the fingers running ALONG the cylinder and the thumb pushing its side
@@ -168,34 +172,6 @@ def main():
     print(f"[reach] clip ends: pelvis z {root[2]:.3f}, torso pitch {math.degrees(pitch):+.1f} deg, "
           f"wrist at {np.round(pos0[wi], 3)}")
 
-    if place is not None:
-        T0 = np.eye(4)
-        T0[:3, 3] = pos0[wi]
-        T0[:3, :3] = quat_to_mat(quat0[wi])
-        Tp = T0.copy()
-        Tp[:3, 3] = place
-        n_go, n_hold = 90, 45
-        targets = []
-        for i in range(n_go):
-            a = (i + 1) / n_go
-            M = T0.copy()
-            M[:3, 3] = T0[:3, 3] + (Tp[:3, 3] - T0[:3, 3]) * a
-            targets.append(M)
-        targets += [Tp.copy() for _ in range(n_hold)]
-        sol, err = solve(targets, from_here=True)
-        print(f"[reach] place: {len(targets)} frames to {np.round(place, 3)}, wrist error "
-              f"mean {err.mean()*1000:.1f} mm, max {err.max()*1000:.1f} mm, at the crate "
-              f"{err[n_go:].mean()*1000:.1f} mm; pelvis z {sol[:, jn.index('base_j_z')].min():.3f}"
-              f"..{sol[:, jn.index('base_j_z')].max():.3f}")
-        np.savez(out, q=sol, joint_names=np.array(jn), err=err, close_from=-1,
-                 lift_from=-1, open_from=n_go, grasp=Tp, best=-1)
-        print(f"[reach] wrote {out}")
-        return
-
-    wrists, conf = grasps_in_cell(grasps_json, cap)
-    print(f"[reach] {len(wrists)} grasps, wrist targets z "
-          f"{wrists[:, 2, 3].min():.3f}..{wrists[:, 2, 3].max():.3f}")
-
     def solve(targets, from_here=False):
         """targets: list of 4x4 wrist poses -> solved joint frames (T, 35), errors."""
         T = len(targets)
@@ -235,6 +211,35 @@ def main():
             else ks2.tool_poses.position.view(T, -1, 3)[:, pick[wi]].cpu().numpy()
         err = np.linalg.norm(got - pos[:, wi], axis=1)
         return sol, err
+
+    if place is not None:
+        T0 = np.eye(4)
+        T0[:3, 3] = pos0[wi]
+        T0[:3, :3] = quat_to_mat(quat0[wi])
+        Tp = T0.copy()
+        Tp[:3, 3] = place
+        n_go, n_hold = 90, 45
+        targets = []
+        for i in range(n_go):
+            a = (i + 1) / n_go
+            M = T0.copy()
+            M[:3, 3] = T0[:3, 3] + (Tp[:3, 3] - T0[:3, 3]) * a
+            targets.append(M)
+        targets += [Tp.copy() for _ in range(n_hold)]
+        sol, err = solve(targets, from_here=True)
+        print(f"[reach] place: {len(targets)} frames to {np.round(place, 3)}, wrist error "
+              f"mean {err.mean()*1000:.1f} mm, max {err.max()*1000:.1f} mm, at the crate "
+              f"{err[n_go:].mean()*1000:.1f} mm; pelvis z {sol[:, jn.index('base_j_z')].min():.3f}"
+              f"..{sol[:, jn.index('base_j_z')].max():.3f}")
+        np.savez(out, q=sol, joint_names=np.array(jn), err=err, close_from=-1,
+                 lift_from=-1, open_from=n_go, grasp=Tp, best=-1)
+        print(f"[reach] wrote {out}")
+        return
+
+    wrists, conf = grasps_in_cell(grasps_json, cap)
+    print(f"[reach] {len(wrists)} grasps, wrist targets z "
+          f"{wrists[:, 2, 3].min():.3f}..{wrists[:, 2, 3].max():.3f}")
+
 
     # --all-out FILE: a short kneel -> grasp -> lift sequence for every
     # candidate, streamed from the kneel pose, for a physics test of each
@@ -322,9 +327,19 @@ def main():
                     wrists[k][2, 3] += deficit
                     print(f"[reach] grasp #{k:2d}: open fingertip {tz.min():+.3f} -> raised "
                           f"{deficit*1000:.0f} mm (level approach)")
+        # DESCEND (default 1): a grasp whose approach axis is level comes in
+        # from 10 cm straight above instead of 10 cm back along the palm --
+        # back along the palm is through the object when the object lies on
+        # the floor (measured: the hammer was kicked 21 cm and stood on its
+        # head before the fingers closed, results/fable6/handle/snap_54_*).
+        # Coming down from above is how a person takes a thing off the floor.
+        descend = os.environ.get("DESCEND", "1") == "1"
         for k, Tg in enumerate(wrists):
             pre = Tg.copy()
-            pre[:3, 3] = Tg[:3, 3] - 0.10 * Tg[:3, 1]
+            if descend and Tg[2, 1] > -0.5:
+                pre[:3, 3] = Tg[:3, 3] + np.array([0.0, 0.0, 0.10])
+            else:
+                pre[:3, 3] = Tg[:3, 3] - 0.10 * Tg[:3, 1]
             up = Tg.copy()
             up[:3, 3] = Tg[:3, 3] + np.array([0.0, 0.0, 0.15])
             targets = []

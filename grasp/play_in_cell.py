@@ -674,6 +674,15 @@ if walk is not None:
                   float(walk["pos"][i][2]), float(q[3]), float(q[0]),
                   float(q[1]), float(q[2]), 0, 0, 0, 0, 0, 0]],
                 dtype=torch.float32, device=sim.device)
+            # PD_BODY (default 1, as in test_grasps_in_isaac.py): the joints
+            # run on their PD drives and the root is placed once per frame,
+            # so the render replays exactly what the tester verified. Written
+            # every substep, the body gave the fingers garbage velocities and
+            # a hand that sat a few mm away from where the PD-driven arm had
+            # held the clamp (render: the clamp never moved; tester: +79 mm).
+            _pd_body = os.environ.get("PD_BODY", "1") == "1"
+            if _pd_body:
+                robot.write_root_state_to_sim(_root)
             for _ss in range(max(1, round((1.0 / FPS) / sim.get_physics_dt()))):
                 # write_joint_state_to_sim with a subset pushes the whole joint
                 # buffer to PhysX (articulation.py:616, 646): refreshed once a
@@ -683,9 +692,10 @@ if walk is not None:
                 robot.set_joint_position_target(tgt_q)
                 if _vmode:
                     robot.set_joint_velocity_target(_vel if _squeezing else torch.zeros_like(_vel), joint_ids=_vel_ids)
-                robot.write_root_state_to_sim(_root)
-                robot.write_joint_state_to_sim(tgt_q[:, _body_ids], zero[:, _body_ids],
-                                               joint_ids=_body_ids)
+                if not _pd_body:
+                    robot.write_root_state_to_sim(_root)
+                    robot.write_joint_state_to_sim(tgt_q[:, _body_ids], zero[:, _body_ids],
+                                                   joint_ids=_body_ids)
                 robot.write_data_to_sim()
                 sim.step()
             robot.update(sim.get_physics_dt())

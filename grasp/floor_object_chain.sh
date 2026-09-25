@@ -4,11 +4,14 @@
 # RUN is results/<RUN>/ holding scene.json (object mesh + desk) and scene.npy; MESH is the
 # lying mesh in that folder; OBJ names the videos. Videos go to 영상보관/09/<date>/<RUN>/.
 RUN=${RUN:-fable14}; QUERY=${QUERY:-"paint can"}; MESH=${MESH:-painttin_flat.obj}; OBJ=${OBJ:-painttin}
+# PART="handle" OTHERS="hammer head": grasp the part a person takes, found by language inside the object
+# (grasp/find_part.py); GRASP_ON is the label GraspGenX is pointed at. DATE picks the video folder.
+PART=${PART:-}; OTHERS=${OTHERS:-head}; DATE=${DATE:-260926}; GRASP_ON=obj_lang
 # the object at the right hand -> walk + kneel (capped hold) -> look again ->
 # grasps (both planners) -> whole-body reach for every candidate -> physics test.
 set -uo pipefail
 R=/home/sehoon/Documents/GitHub/g1-factory-tidy; F=$R/results/$RUN; GGX=/home/sehoon/Projects/GraspGenX
-export CLOSE_MODE=velocity CLOSE_KD=8 TIDY_NO_FLOOR_CARTON=1 TIDY_CRATE_ON_DESK="-1.530,-0.946,0.764,0" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True OMP_NUM_THREADS=1
+export CLOSE_MODE=position CLOSE_ORDER=thumb_first TIDY_NO_FLOOR_CARTON=1 TIDY_CRATE_ON_DESK="-1.530,-0.946,0.764,0" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True OMP_NUM_THREADS=1
 Q=$QUERY
 source ~/miniconda3/etc/profile.d/conda.sh; cd $R
 say() { echo "[$(date +%H:%M:%S)] $*"; }
@@ -52,10 +55,15 @@ conda activate graspgenx
 python grasp/find_by_text.py $F/near "$Q" --on floor --scale 1 2>&1 | grep -a "^\[text\]\|^FOUND\|^NOT\|Traceback" > $F/near/text.txt
 say "near look: $(grep -a '^FOUND\|^NOT' $F/near/text.txt | tail -1)"
 grep -aq "^FOUND" $F/near/text.txt || { say "STOP: lost at the kneel"; exit 1; }
+if [ -n "$PART" ]; then
+  python grasp/find_part.py $F/near "$PART" --of obj_lang --others "$OTHERS" 2>&1 | grep -a "^\[part\]\|^FOUND\|^NOT\|Traceback" > $F/near/part.txt
+  say "part '$PART': $(grep -a '^FOUND\|^NOT' $F/near/part.txt | tail -1 | cut -c1-80)"
+  grep -aq "^FOUND" $F/near/part.txt && GRASP_ON=obj_part || say "part not found; grasping the whole object"
+fi
 # 6. grasps, both planners
 cd $GGX
 for pl in graspmoe diffusion; do mkdir -p $F/run_$pl
-  PYOPENGL_PLATFORM=egl PYGLET_HEADLESS=true python end2end/e2e_grasp_demo.py --robot_config end2end/robots/g1_right_arm.yaml --env_config end2end/envs/g1_reach_test.yaml --mesh_file $F/$MESH --capture_dir $F/near --capture_object obj_lang --task pick_and_lift --playback_mode kinematic --no-viser --num_grasps 400 --topk 120 --grasp_threshold 0.5 --planner $pl --max_plan_attempts 1 --seed 0 --export-grasps $F/grasps_$pl.json > $F/run_$pl/run.log 2>&1
+  PYOPENGL_PLATFORM=egl PYGLET_HEADLESS=true python end2end/e2e_grasp_demo.py --robot_config end2end/robots/g1_right_arm.yaml --env_config end2end/envs/g1_reach_test.yaml --mesh_file $F/$MESH --capture_dir $F/near --capture_object $GRASP_ON --task pick_and_lift --playback_mode kinematic --no-viser --num_grasps 400 --topk 120 --grasp_threshold 0.5 --planner $pl --max_plan_attempts 1 --seed 0 --export-grasps $F/grasps_$pl.json > $F/run_$pl/run.log 2>&1
   cd $R; say "$pl: $(grep -aE 'GraspGen returned' $F/run_$pl/run.log | sed 's/.*INFO - //' | tail -1)"; cd $GGX
 done
 cd $R
@@ -87,7 +95,7 @@ PY
 python grasp/build_reach_reference.py results/motion/${RUN}k.pkl $F/reach_pick.npz ${RUN}p 2>&1 | grep "\[ref\]" | while read -r l; do say "$l"; done
 python grasp/play_in_cell.py $F/scene.npy --walk results/motion/${RUN}p.pkl --walk-only --clip-arms --hands results/motion/${RUN}p_hands.npy --no-settle --cam-eye -1.8 1.0 1.0 --video $F/pick.mp4 > $F/pick.log 2>&1
 grep -a "\[eval\]" $F/pick.log | while read -r l; do say "render: $l"; done
-D="/home/sehoon/Desktop/참고/영상보관/g1-factory-tidy/09/260924/$RUN"; mkdir -p $D/evidence
+D="/home/sehoon/Desktop/참고/영상보관/g1-factory-tidy/09/$DATE/$OBJ"; mkdir -p $D/evidence
 cp $F/pick.mp4 $D/${OBJ}_pick.mp4; cp $F/pick_head.mp4 $D/${OBJ}_pick_head.mp4; cp $F/pick_wrist.mp4 $D/${OBJ}_pick_wrist.mp4
-cp $F/near/obj_lang_overlay.png $D/evidence/near_found.png; cp $F/look_3/obj_lang_overlay.png $D/evidence/look_3_found.png 2>/dev/null; cp $F/test_grasps.txt $D/evidence/ 
+cp $F/near/obj_lang_overlay.png $D/evidence/near_found.png; cp $F/near/obj_part_overlay.png $D/evidence/part_found.png 2>/dev/null; cp $F/look_3/obj_lang_overlay.png $D/evidence/look_3_found.png 2>/dev/null; cp $F/test_grasps.txt $D/evidence/ 
 say "RENDER DONE -> $D"
