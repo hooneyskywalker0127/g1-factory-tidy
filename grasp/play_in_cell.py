@@ -457,6 +457,8 @@ if "object" in meta:
 # at. The default looks from the south-west, which is the right side of the
 # desk for a pick from the desk; for a box on the floor north-east of the
 # desk it puts the desk and the crate between the camera and the robot.
+if "--look-at" in sys.argv:   # what the room camera watches, e.g. the crate's seen centre
+    tgt = np.array([float(sys.argv[sys.argv.index("--look-at") + k]) for k in (1, 2, 3)])
 _ce = (np.array([float(sys.argv[sys.argv.index("--cam-eye") + k]) for k in (1, 2, 3)])
        if "--cam-eye" in sys.argv else np.array([-1.65, -2.05, 1.05]))
 eye = tgt + _ce

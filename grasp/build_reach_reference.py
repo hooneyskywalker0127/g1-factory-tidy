@@ -28,6 +28,11 @@ HAND_CLOSED = [0, 0, 0, 0, 0, 0, 0, 1.5708, 1.7453, 1.5708, 1.7453, 0.0, -1.0472
 # the palm and every palm-down pinch on a floor-level handle jammed it; swung
 # sideways it can oppose the index from beside the object instead of from
 # underneath (a person's key pinch on a stick on the floor).
+if os.environ.get("HOOK"):
+    # the hook grip: index and middle curl behind the crate's slot bar, both
+    # hands, thumbs stay open outside the wall
+    HAND_OPEN = [0.4, 0.0, 0.4, 0.0, 0.0, 0.7243, 0.0] + HAND_OPEN[7:]
+    HAND_CLOSED = [1.5708, 1.7453, 1.5708, 1.7453, 0.0, 0.7243, 0.0, 1.5708, 1.7453, 1.5708, 1.7453, 0.0, 0.7243, 0.0]
 if os.environ.get("THUMB0"):
     HAND_OPEN[11] = HAND_CLOSED[11] = float(os.environ["THUMB0"])
 

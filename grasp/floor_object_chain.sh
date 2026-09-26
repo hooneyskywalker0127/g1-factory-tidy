@@ -11,7 +11,7 @@ PART=${PART:-}; OTHERS=${OTHERS:-head}; DATE=${DATE:-260926}; GRASP_ON=obj_lang
 # grasps (both planners) -> whole-body reach for every candidate -> physics test.
 set -uo pipefail
 R=/home/sehoon/Documents/GitHub/g1-factory-tidy; F=$R/results/$RUN; GGX=/home/sehoon/Projects/GraspGenX
-export CLOSE_MODE=position CLOSE_ORDER=thumb_first TIDY_NO_FLOOR_CARTON=1 TIDY_CRATE_ON_DESK="-1.530,-0.946,0.764,0" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True OMP_NUM_THREADS=1
+export CLOSE_MODE=position CLOSE_ORDER=thumb_first TIP_FLESH=0.03 FLOOR_CLEAR=0 OBJECT_MASS=${OBJECT_MASS:-0.5} TIDY_NO_FLOOR_CARTON=1 TIDY_CRATE_ON_DESK="-1.530,-0.946,0.764,0" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True OMP_NUM_THREADS=1
 Q=$QUERY
 source ~/miniconda3/etc/profile.d/conda.sh; cd $R
 say() { echo "[$(date +%H:%M:%S)] $*"; }
@@ -76,7 +76,8 @@ PY
 # 7. whole-body reach for every candidate, then physics
 BODY_W=0.1 RETARGET_CFG=unitree_g1_29dof_retarget_floor.yml python grasp/reach_from_pose.py results/motion/${RUN}k.pkl $F/grasps_all.json $F/near --all-out $F/reach_all.npz 2>&1 | grep -a "clip ends\|wrote\|Traceback" | while read -r l; do say "$l"; done
 conda activate env_isaaclab
-python grasp/test_grasps_in_isaac.py $F/scene.npy results/motion/${RUN}k.pkl $F/reach_all.npz --top 40 --slow 2>&1 | grep -a "\[test\]\|Traceback" | cut -c1-140 > $F/test_grasps.txt
+ORDER=""; if [ "$GRASP_ON" = obj_part ]; then conda activate graspgenx; python grasp/rank_handle.py $F/near $F/reach_all.npz --out $F/order.txt 2>&1 | grep -a "\[rank\]" | head -1 | while read -r l; do say "$l"; done; conda activate env_isaaclab; ORDER="--order $F/order.txt"; fi
+python grasp/test_grasps_in_isaac.py $F/scene.npy results/motion/${RUN}k.pkl $F/reach_all.npz --top 40 --slow $ORDER 2>&1 | grep -a "\[test\]\|Traceback" | cut -c1-140 > $F/test_grasps.txt
 grep -a "HELD\|grasps held" $F/test_grasps.txt | while read -r l; do say "$l"; done
 say "CHAIN DONE"
 # --- render the attempt, held or not, so it can be looked at

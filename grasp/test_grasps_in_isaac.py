@@ -234,6 +234,8 @@ for k in order:
     for _ in range(15):
         put(kneel_root, kneel_dof, HAND_OPEN)
     z_ref = float(obj_centre()[2])                 # where it rests before this candidate's reach
+    if os.environ.get("TEST_VERBOSE"):
+        print(f"[test]    object after the reset to the kneel: {np.round(obj_centre(), 3)} (placed at {np.round(box0[0, :3].cpu().numpy(), 3)})")
     for i in range(n_go):
         put(roots[i], dofs[i], HAND_OPEN)
     # Where the open fingers are at the grasp pose, before closing: a tip

@@ -243,7 +243,77 @@ def main():
         errs = []
         for t, st in enumerate(steps):
             errs.append(max(float(np.linalg.norm(got[t, pick[k]].cpu().numpy() - pos[t, k])) for k in st))
+        # per hand, at the last frame that is not a lift: which wrist misses
+        t = len(steps) - 1
+        gq = ks2.tool_poses.quaternion
+        gq = gq[:, 0] if gq.dim() == 4 else gq.view(T, -1, 4)
+        from scipy.spatial.transform import Rotation as _R
+        for k in steps[t]:
+            d = got[t, pick[k]].cpu().numpy() - pos[t, k]
+            qg = gq[t, pick[k]].cpu().numpy(); qt = qua[t, k]
+            ang = np.degrees((_R.from_quat([qg[1], qg[2], qg[3], qg[0]]).inv() * _R.from_quat([qt[1], qt[2], qt[3], qt[0]])).magnitude())
+            print(f"[reach]   {cfg.tool_frames[k]}: last-frame error {np.linalg.norm(d)*1000:5.1f} mm  (dx {d[0]*1000:+.0f} dy {d[1]*1000:+.0f} dz {d[2]*1000:+.0f}), orientation off {ang:5.1f} deg")
         return sol, np.array(errs)
+
+    # --crate-hook CRATE.json: two fingers through each hand slot, curled up
+    # behind the bar under the rim, and lift -- form closure, the grip the
+    # earlier crate work measured to hold where a wall clamp slipped after
+    # 94 mm (humanoid-swarm-sim/common/crate_grip_top.py). Palm frame: fingers
+    # (+x) point into the slot along the crate's length, they curl toward +y
+    # = up, z = x cross y. The palm stands 7 cm outside the end wall so the
+    # last 5 cm of finger are inside; the thumb stays open outside.
+    if "--crate-hook" in sys.argv:
+        cj = json.load(open(sys.argv[sys.argv.index("--crate-hook") + 1]))
+        c = np.array(cj["centre"][:2])
+        li = list(cfg.tool_frames).index("left_wrist_yaw_link"); ri = list(cfg.tool_frames).index("right_wrist_yaw_link")
+        P = np.eye(4); P[:3, 3] = -WRIST_TO_PALM
+        outside = float(os.environ.get("HOOK_OUTSIDE", "0.07")); pre = 0.08; lift = float(os.environ.get("CRATE_LIFT", "0.25"))
+        finger_up = 0.016                                     # the fingers sit +1.6 cm along y from the palm centre
+        hands = {}
+        # HOOK_RIM=1: over the end wall's top edge instead of through the
+        # 23 mm slot -- the two wrists land 21 mm off the slots from any kneel
+        # tried (0.15..0.25 m back, torso weight 0.1..0.03), and a finger is
+        # 20 mm thick. The rim is a line, so 2 cm of error does not matter:
+        # the fingers pass 2 cm above it pointing in, then curl DOWN over the
+        # edge, and the wall sits in the crook of the fingers for the lift.
+        rim = os.environ.get("HOOK_RIM") == "1"
+        for k, name in ((li, "left"), (ri, "right")):
+            slot = np.array(cj["slots"][name]); inward = c - slot[:2]; u = np.array([inward[0], inward[1], 0.0]); u /= np.linalg.norm(u)
+            x = u; y = np.array([0.0, 0.0, -1.0 if rim else 1.0]); z = np.cross(x, y)
+            T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x, y, z
+            zc = (cj["top"] + float(os.environ.get("HOOK_RIM_ABOVE", "0.05")) + finger_up) if rim else (slot[2] - finger_up)
+            T[:3, 3] = [slot[0], slot[1], zc]; T[:3, 3] -= outside * u
+            hands[k] = (T @ P, u)
+        n_over, n_down, n_in, n_hold, n_lift = 45, 30, 30, 30, 45
+        over_z = cj["top"] + 0.12
+        steps = []
+        for i in range(n_over + n_down + n_in + n_hold + n_lift):
+            st = {}
+            for k, (G, u) in hands.items():
+                T0 = np.eye(4); T0[:3, 3] = pos0[k]; T0[:3, :3] = quat_to_mat(quat0[k])
+                pre_p = G.copy(); pre_p[:3, 3] -= pre * u
+                over = pre_p.copy(); over[2, 3] = over_z
+                if i < n_over:
+                    a = (i + 1) / n_over; M = over.copy(); M[:3, 3] = T0[:3, 3] + (over[:3, 3] - T0[:3, 3]) * a
+                    if a < 0.34: M[:3, :3] = T0[:3, :3]
+                elif i < n_over + n_down:
+                    a = (i + 1 - n_over) / n_down; M = pre_p.copy(); M[:3, 3] = over[:3, 3] + (pre_p[:3, 3] - over[:3, 3]) * a
+                elif i < n_over + n_down + n_in:
+                    a = (i + 1 - n_over - n_down) / n_in; M = G.copy(); M[:3, 3] -= pre * (1 - a) * u
+                elif i < n_over + n_down + n_in + n_hold:
+                    M = G.copy()
+                else:
+                    a = (i + 1 - n_over - n_down - n_in - n_hold) / n_lift; M = G.copy(); M[2, 3] += lift * a
+                st[k] = M
+            steps.append(st)
+        sol, err = solve_multi(steps)
+        n_go = n_over + n_down + n_in
+        print(f"[reach] crate hook: {len(steps)} frames, wrist error mean {err.mean()*1000:.1f} mm, max {err.max()*1000:.1f} mm; "
+              f"at the slots {err[n_go-5:n_go].mean()*1000:.1f} mm; pelvis z {sol[:, jn.index('base_j_z')].min():.3f}..{sol[:, jn.index('base_j_z')].max():.3f}")
+        np.savez(sys.argv[sys.argv.index("--out") + 1], q=sol[None], err=err[None], joint_names=np.array(jn), n_go=n_go,
+                 n_lift=n_lift, grasps=np.eye(4)[None], conf=np.array([1.0]), close_from=n_go, lift_from=n_go + n_hold)
+        print(f"[reach] wrote {sys.argv[sys.argv.index('--out') + 1]}")
+        return
 
     if "--crate" in sys.argv:
         cj = json.load(open(sys.argv[sys.argv.index("--crate") + 1]))
@@ -257,8 +327,12 @@ def main():
             # side (+y) toward the crate, z = x cross y. Fingers pointing down put
             # 12 cm of finger through the floor from a palm at 9 cm (measured:
             # tips at -2.8 cm, the crate flung 90 cm before the palms arrived).
+            # The flat of the Dex3 palm faces along the palm frame's z (the
+            # fingers are split across z, they curl toward +y): with +y toward
+            # the crate the palms faced the floor (snapshot). So z points into
+            # the crate and y = z cross x.
             x = np.array([ax[0], ax[1], 0.0]); x /= np.linalg.norm(x)
-            y = inward / np.linalg.norm(inward); z = np.cross(x, y)
+            z = inward / np.linalg.norm(inward); y = np.cross(z, x)
             T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x, y, z; T[:3, 3] = [face[0], face[1], h]
             return T @ P                                    # wrist target for this palm
         faces = {li: (np.array(cj["grasp_faces"]["left"]), -side if (np.cross(ax, side)[2] > 0) else side),
