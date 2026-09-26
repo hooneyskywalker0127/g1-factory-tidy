@@ -238,6 +238,9 @@ for k in order:
         print(f"[test]    object after the reset to the kneel: {np.round(obj_centre(), 3)} (placed at {np.round(box0[0, :3].cpu().numpy(), 3)})")
     for i in range(n_go):
         put(roots[i], dofs[i], HAND_OPEN)
+        if os.environ.get("TEST_VERBOSE") and i % 15 == 14:
+            _o = obj_centre(); _b = robot.find_bodies(["right_hand_palm_link"])[0][0]; _l = robot.find_bodies(["left_hand_palm_link"])[0][0]
+            print(f"[test]    approach frame {i:3d}: object {np.round(_o, 3)}  right palm {np.round(robot.data.body_pos_w[0, _b].cpu().numpy(), 2)}  left palm {np.round(robot.data.body_pos_w[0, _l].cpu().numpy(), 2)}")
     # Where the open fingers are at the grasp pose, before closing: a tip
     # below the floor means the hand is already fighting the floor and the
     # close will launch the object rather than hold it (measured: the clamp
