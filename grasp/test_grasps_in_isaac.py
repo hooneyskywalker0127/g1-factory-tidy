@@ -49,6 +49,8 @@ for _ in range(3):
     app.update()
 spawn_props(stage, app)
 cfg = G1_29DOF_CFG.replace(prim_path="/World/G1")
+cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
+    contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
 cfg.spawn = cfg.spawn.replace(articulation_props=sim_utils.ArticulationRootPropertiesCfg(
     enabled_self_collisions=False, solver_position_iteration_count=12,
     solver_velocity_iteration_count=4, fix_root_link=False))
@@ -69,18 +71,19 @@ robot = Articulation(cfg)
 if os.environ.get("BODY_COLLISION", "0") == "0":
     _kept = keep_only_hand_collisions(stage)
     print(f"[test] body does not collide with the cell; hand links kept: {len(_kept)} ({_kept[:2]}...)")
-_fm = sim_utils.RigidBodyMaterialCfg(static_friction=FINGER_MU, dynamic_friction=FINGER_MU, restitution=0.0)
+_fm = sim_utils.RigidBodyMaterialCfg(static_friction=FINGER_MU, friction_combine_mode="max", dynamic_friction=FINGER_MU, restitution=0.0)
 _fm.func("/World/G1/FingerMaterial", _fm)
 sim_utils.bind_physics_material("/World/G1", "/World/G1/FingerMaterial")
 build_plan_scene(stage, app, meta, torso_pose((-1.30, -0.60, SPAWN_Z), math.radians(-90.0)))
 floor_slab(stage)
-box = RigidObject(RigidObjectCfg(prim_path="/World/GraspTarget", spawn=None))
+box = RigidObject(RigidObjectCfg(prim_path=os.environ.get("TARGET_PRIM", "/World/GraspTarget"), spawn=None))
 # The rigid body's origin is the mesh origin, which for the lying tools sits
 # 16 cm above the bottom of the mesh -- a can knocked over by the fingers
 # moves that origin 10-15 cm down without going anywhere. What is measured
 # below is the mesh centroid, carried with the body's pose.
 import trimesh as _tm  # noqa: E402
-_c_off = torch.tensor(_tm.load(meta["object"]["mesh"], force="mesh").centroid, dtype=torch.float32, device=sim.device)
+_c_off = (torch.zeros(3, device=sim.device) if os.environ.get("TARGET_PRIM")
+          else torch.tensor(_tm.load(meta["object"]["mesh"], force="mesh").centroid, dtype=torch.float32, device=sim.device))
 
 
 def obj_centre():
@@ -140,6 +143,8 @@ n_go, n_lift = int(d["n_go"]), int(d["n_lift"])
 order = np.argsort(d["err"][:, n_go - 1])[:TOP]
 if "--only" in sys.argv:
     order = [int(v) for v in sys.argv[sys.argv.index("--only") + 1].split(",")]
+if "--order" in sys.argv:                              # rank_handle.py's list, first TOP of it
+    order = [int(v) for v in open(sys.argv[sys.argv.index("--order") + 1]).read().strip().split(",")][:TOP]
 substeps = round((1.0 / FPS) / sim.get_physics_dt())
 tgt = robot.data.default_joint_pos.clone()
 zero = torch.zeros_like(tgt)
@@ -307,7 +312,7 @@ for k in order:
     if velocity_mode:
         squeeze(True)
     for i in range(n_ramp + n_settle):
-        a = min(1.0, (i + 1) / n_ramp)
+        a = 0.0 if os.environ.get("NO_CLOSE") else min(1.0, (i + 1) / n_ramp)
         if order == "together":
             at, af = a, a
         else:
@@ -339,9 +344,9 @@ for k in order:
         f = n_go + i / lift_x
         j, a = int(f), f - int(f)
         j1 = min(j + 1, n_go + n_lift - 1)
-        put((1 - a) * roots[j] + a * roots[j1], (1 - a) * dofs[j] + a * dofs[j1], HAND_CLOSED)
+        put((1 - a) * roots[j] + a * roots[j1], (1 - a) * dofs[j] + a * dofs[j1], HAND_OPEN if os.environ.get("NO_CLOSE") else HAND_CLOSED)
     for _ in range(10):
-        put(roots[-1], dofs[-1], HAND_CLOSED)
+        put(roots[-1], dofs[-1], HAND_OPEN if os.environ.get("NO_CLOSE") else HAND_CLOSED)
     snap(f"{int(k)}_lift")
     if velocity_mode:
         _hq = robot.data.joint_pos[0, _rh].cpu().numpy()

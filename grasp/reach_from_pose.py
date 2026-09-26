@@ -41,6 +41,9 @@ def build():
              "left_knee_link", "right_knee_link", "left_shoulder_roll_link",
              "left_elbow_link", "left_wrist_yaw_link", "right_shoulder_roll_link",
              "right_elbow_link"]
+    if os.environ.get("BIMANUAL") == "1":          # a crate between both palms
+        work = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
+        loose.remove("left_wrist_yaw_link")
     crit = {}
     for n in hold + work:
         crit[n] = ToolPoseCriteria.track_position_and_orientation(
@@ -56,7 +59,8 @@ def build():
     w_arm = float(os.environ.get("ARM_W", "0.02"))     # right shoulder, elbow
     for n in loose:
         lw = (w_arm if n.startswith("right_") and "hip" not in n and "knee" not in n
-              else w_left if n.startswith("left_") and ("shoulder" in n or "elbow" in n or "wrist" in n)
+              else (w_arm if os.environ.get("BIMANUAL") == "1" else w_left)
+              if n.startswith("left_") and ("shoulder" in n or "elbow" in n or "wrist" in n)
               else w_body)
         crit[n] = ToolPoseCriteria.track_position_and_orientation(
             xyz=[lw] * 3, rpy=[lw * 0.07] * 3)
@@ -211,6 +215,95 @@ def main():
             else ks2.tool_poses.position.view(T, -1, 3)[:, pick[wi]].cpu().numpy()
         err = np.linalg.norm(got - pos[:, wi], axis=1)
         return sol, err
+
+    # --crate CRATE.json: the lift of a crate seen on the floor (crate_target.py).
+    # Both palms go to the two long faces at half the crate's height, from
+    # 8 cm outside, then 2 cm into the faces (the squeeze the PD arms hold),
+    # then straight up. Palm +y (its flat side, the thumb's side) faces the
+    # crate, fingers (+x) point down; the hands stay open the whole time:
+    # a box is carried between two palms, not gripped (PhysHSI, VisualMimic).
+    def solve_multi(steps):
+        T = len(steps)
+        pos = np.repeat(pos0[None], T, axis=0); qua = np.repeat(quat0[None], T, axis=0)
+        for t, st in enumerate(steps):
+            for k, M in st.items():
+                pos[t, k] = M[:3, 3]; qua[t, k] = mat_to_quat(M[:3, :3])
+        from curobo._src.types.tool_pose import GoalToolPose
+        r.reset(); r._prev_solution = q.clone().view(1, -1)
+        sols = []
+        for t in range(T):
+            g = GoalToolPose(tool_frames=cfg.tool_frames,
+                             position=torch.tensor(pos[t], dtype=torch.float32, device="cuda").reshape(1, 1, len(pick), 1, 3).contiguous(),
+                             quaternion=torch.tensor(qua[t], dtype=torch.float32, device="cuda").reshape(1, 1, len(pick), 1, 4).contiguous())
+            sols.append(r.solve_frame(g).joint_state.position.view(-1).cpu().numpy())
+        sol = np.stack(sols)
+        ks2 = r.kinematics.compute_kinematics(JointState.from_position(torch.tensor(sol, dtype=torch.float32, device="cuda"), joint_names=jn))
+        got = ks2.tool_poses.position
+        got = got[:, 0] if got.dim() == 4 else got.view(T, -1, 3)
+        errs = []
+        for t, st in enumerate(steps):
+            errs.append(max(float(np.linalg.norm(got[t, pick[k]].cpu().numpy() - pos[t, k])) for k in st))
+        return sol, np.array(errs)
+
+    if "--crate" in sys.argv:
+        cj = json.load(open(sys.argv[sys.argv.index("--crate") + 1]))
+        ax = np.array(cj["long_axis"] + [0.0]); side = np.array([-ax[1], ax[0], 0.0])
+        h = float(os.environ.get("CRATE_HAND_Z", "0.55")) * cj["top"]
+        squeeze = float(os.environ.get("CRATE_SQUEEZE", "0.02")); pre = 0.08; lift = float(os.environ.get("CRATE_LIFT", "0.25"))
+        li = list(cfg.tool_frames).index("left_wrist_yaw_link"); ri = list(cfg.tool_frames).index("right_wrist_yaw_link")
+        P = np.eye(4); P[:3, 3] = -WRIST_TO_PALM
+        def palm_pose(face, inward):
+            # palm frame in the cell: fingers (+x) forward along the crate, flat
+            # side (+y) toward the crate, z = x cross y. Fingers pointing down put
+            # 12 cm of finger through the floor from a palm at 9 cm (measured:
+            # tips at -2.8 cm, the crate flung 90 cm before the palms arrived).
+            x = np.array([ax[0], ax[1], 0.0]); x /= np.linalg.norm(x)
+            y = inward / np.linalg.norm(inward); z = np.cross(x, y)
+            T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x, y, z; T[:3, 3] = [face[0], face[1], h]
+            return T @ P                                    # wrist target for this palm
+        faces = {li: (np.array(cj["grasp_faces"]["left"]), -side if (np.cross(ax, side)[2] > 0) else side),
+                 ri: (np.array(cj["grasp_faces"]["right"]), side if (np.cross(ax, side)[2] > 0) else -side)}
+        # inward for each hand points from its face toward the crate centre
+        c = np.array(cj["centre"])
+        for k in faces:
+            f, _ = faces[k]; inward = c[:2] - f[:2]; faces[k] = (f, np.array([inward[0], inward[1], 0.0]))
+        # The hands hang at the hips, inside the crate's width, and a straight
+        # line to the side faces goes through the near end (measured: the
+        # 2 kg crate was shoved 60 cm before the palms arrived). So: up and
+        # over first -- to a point 8 cm outside each face, a hand above the
+        # rim -- then down beside the face, then in, then the squeeze, then up.
+        n_over, n_down, n_in, n_sq, n_lift = 45, 30, 25, 30, 45
+        over_z = cj["top"] + 0.10
+        seq_targets = []
+        for i in range(n_over + n_down + n_in + n_sq + n_lift):
+            step = {}
+            for k, (f, inward) in faces.items():
+                u = inward / np.linalg.norm(inward)
+                goal = palm_pose(f, u)
+                T0 = np.eye(4); T0[:3, 3] = pos0[k]; T0[:3, :3] = quat_to_mat(quat0[k])
+                over = goal.copy(); over[:3, 3] -= pre * u; over[2, 3] = over_z + (goal[2, 3] - h)   # wrist offset kept
+                pre_p = goal.copy(); pre_p[:3, 3] -= pre * u
+                if i < n_over:
+                    a = (i + 1) / n_over; M = over.copy(); M[:3, 3] = T0[:3, 3] + (over[:3, 3] - T0[:3, 3]) * a
+                    if a < 0.34: M[:3, :3] = T0[:3, :3]
+                elif i < n_over + n_down:
+                    a = (i + 1 - n_over) / n_down; M = pre_p.copy(); M[:3, 3] = over[:3, 3] + (pre_p[:3, 3] - over[:3, 3]) * a
+                elif i < n_over + n_down + n_in:
+                    a = (i + 1 - n_over - n_down) / n_in; M = goal.copy(); M[:3, 3] -= pre * (1 - a) * u
+                elif i < n_over + n_down + n_in + n_sq:
+                    a = (i + 1 - n_over - n_down - n_in) / n_sq; M = goal.copy(); M[:3, 3] += squeeze * a * u
+                else:
+                    a = (i + 1 - n_over - n_down - n_in - n_sq) / n_lift; M = goal.copy(); M[:3, 3] += squeeze * u; M[2, 3] += lift * a
+                step[k] = M
+            seq_targets.append(step)
+        sol, err = solve_multi(seq_targets)
+        n_pre, n_go = n_over + n_down, n_over + n_down + n_in + n_sq
+        print(f"[reach] crate: {len(seq_targets)} frames, wrist error mean {err.mean()*1000:.1f} mm, max {err.max()*1000:.1f} mm; "
+              f"pelvis z {sol[:, jn.index('base_j_z')].min():.3f}..{sol[:, jn.index('base_j_z')].max():.3f}")
+        np.savez(sys.argv[sys.argv.index("--out") + 1], q=sol[None], err=err[None], joint_names=np.array(jn), n_go=n_go,
+                 n_lift=n_lift, grasps=np.eye(4)[None], conf=np.array([1.0]), close_from=n_pre + n_in, lift_from=n_go)
+        print(f"[reach] wrote {sys.argv[sys.argv.index('--out') + 1]}")
+        return
 
     if place is not None:
         T0 = np.eye(4)

@@ -110,6 +110,8 @@ def main():
         else:
             hands[close_at + k] = (1 - a) * np.array(HAND_OPEN) + a * np.array(HAND_CLOSED)
     hands[close_at + ramp:] = HAND_CLOSED
+    if os.environ.get("NO_CLOSE"):               # a crate is carried between open palms
+        hands[:] = HAND_OPEN
     hp = os.path.join("results", "motion", f"{name}_hands.npy")
     np.save(hp, hands)
     print(f"[ref] hands close at frame {close_at} ({close_at/FPS:.1f} s), lift from "

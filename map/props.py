@@ -176,6 +176,22 @@ def spawn_props(stage, app, root="/World/Props"):
         lo, hi = _extent(cache, p)
         print(f"[props] DeskCrate on the desk  x {lo[0]:+.2f}..{hi[0]:+.2f}  "
               f"y {lo[1]:+.2f}..{hi[1]:+.2f}  z {lo[2]:.2f}..{hi[2]:.2f}")
+    #   TIDY_FLOOR_CRATE="x,y,rz"      a crate on the floor, a rigid body (CRATE_MASS) so it can be lifted
+    _floor_crate = os.environ.get("TIDY_FLOOR_CRATE")
+    if _floor_crate:
+        fx, fy, frz = (float(v) for v in _floor_crate.split(","))
+        p = _place(stage, f"{root}/FloorCrate", CRATE_USD, (fx, fy), 0.002, frz)
+        app.update()
+        # the crate asset is already a rigid body with colliders (nesting a
+        # second one on the parent made PhysX find two); only its mass is set
+        _asset = stage.GetPrimAtPath(f"{root}/FloorCrate/Asset")
+        _body = next((q for q in Usd.PrimRange(_asset) if q.HasAPI(UsdPhysics.RigidBodyAPI)), _asset)
+        UsdPhysics.MassAPI.Apply(_body).CreateMassAttr(CRATE_MASS)
+        print(f"[props] FloorCrate body prim: {_body.GetPath()}")
+        spawned["FloorCrate"] = p
+        lo, hi = _extent(cache, p)
+        print(f"[props] FloorCrate (rigid, {CRATE_MASS} kg)  x {lo[0]:+.2f}..{hi[0]:+.2f}  "
+              f"y {lo[1]:+.2f}..{hi[1]:+.2f}  z {lo[2]:.2f}..{hi[2]:.2f}")
     for i, (x, y, rz) in enumerate(L.FLOOR_CRATES):
         p = _place(stage, f"{root}/Crate_{i}", CRATE_USD, (x, y), 0.0, rz)
         app.update()

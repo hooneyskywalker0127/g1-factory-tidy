@@ -176,6 +176,9 @@ def main():
     # floor by the rack that 'hammer' won at 0.45 sent the robot walking
     # there.
     min_p = float(_arg("--min-p", "0.6"))
+    # --grow-radius: how far from the words' centre the thing may extend. 0.12 m
+    # suits a box or a tool; a 0.6 m crate needs 0.5 or its far half is cut off.
+    grow_r = float(_arg("--grow-radius", "0.12"))
 
     meta = json.load(open(os.path.join(cap, "meta_data.json")))
     rgb = np.asarray(Image.open(os.path.join(cap, "rgb.png")).convert("RGB"))
@@ -267,7 +270,7 @@ def main():
                 # whose underside then read 0.11 m above the desk and failed
                 # the test. What stands on the surface is the whole grown
                 # region, so that is what the gap is measured on.
-                _g = grow_above(m, xyz, valid, got[1])
+                _g = grow_above(m, xyz, valid, got[1], radius=grow_r)
                 if _g.any():
                     m = _g
                 got = (_floor_gap(m) if _on_floor

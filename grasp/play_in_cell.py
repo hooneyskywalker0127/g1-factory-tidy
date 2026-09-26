@@ -156,6 +156,8 @@ SONIC = "--sonic" in sys.argv   # track the motion with SONIC itself
 # the pick has a fixture. decoupled_wbc's lower-body policy is trained to hold
 # a stance while the arms move; grasp/wbc_balance.py drives it.
 cfg = G1_29DOF_CFG.replace(prim_path="/World/G1")
+cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
+    contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
 cfg.spawn = cfg.spawn.replace(
     articulation_props=sim_utils.ArticulationRootPropertiesCfg(
         enabled_self_collisions=False, solver_position_iteration_count=12,
@@ -429,7 +431,7 @@ floor_slab(stage)
 target_body = None
 if "object" in meta:
     from isaaclab.assets import RigidObject, RigidObjectCfg  # noqa: E402
-    target_body = RigidObject(RigidObjectCfg(prim_path="/World/GraspTarget",
+    target_body = RigidObject(RigidObjectCfg(prim_path=os.environ.get("TARGET_PRIM", "/World/GraspTarget"),
                                              spawn=None))
 
 sim.reset()
