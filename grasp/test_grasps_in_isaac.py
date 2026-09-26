@@ -54,6 +54,14 @@ cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
 cfg.spawn = cfg.spawn.replace(articulation_props=sim_utils.ArticulationRootPropertiesCfg(
     enabled_self_collisions=False, solver_position_iteration_count=12,
     solver_velocity_iteration_count=4, fix_root_link=False))
+# ARM_KP_SCALE: with the body on its PD drives (PD_BODY) the stock arm gains let an
+# outstretched arm sag -- measured on the crate approach, the left palm 10 cm under
+# its reference while the IK was within 24 mm -- and the sagging hand dragged the crate.
+if os.environ.get("ARM_KP_SCALE") and "arms" in cfg.actuators:
+    _k = float(os.environ["ARM_KP_SCALE"])
+    cfg.actuators["arms"] = cfg.actuators["arms"].replace(
+        stiffness={n: v * _k for n, v in cfg.actuators["arms"].stiffness.items()} if isinstance(cfg.actuators["arms"].stiffness, dict) else cfg.actuators["arms"].stiffness * _k,
+        damping={n: v * _k ** 0.5 for n, v in cfg.actuators["arms"].damping.items()} if isinstance(cfg.actuators["arms"].damping, dict) else cfg.actuators["arms"].damping * _k ** 0.5)
 cfg.actuators["hands"] = cfg.actuators["hands"].replace(effort_limit=1.4, velocity_limit=12.0,
     # HAND_DAMPING: the body is written every substep, and PhysX then
     # reports garbage joint velocities on the simulated fingers (-2.5 to

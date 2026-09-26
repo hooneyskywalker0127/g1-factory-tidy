@@ -96,7 +96,8 @@ PY
 python grasp/build_reach_reference.py results/motion/${RUN}k.pkl $F/reach_pick.npz ${RUN}p 2>&1 | grep "\[ref\]" | while read -r l; do say "$l"; done
 python grasp/play_in_cell.py $F/scene.npy --walk results/motion/${RUN}p.pkl --walk-only --clip-arms --hands results/motion/${RUN}p_hands.npy --no-settle --cam-eye -1.8 1.0 1.0 --video $F/pick.mp4 > $F/pick.log 2>&1
 grep -a "\[eval\]" $F/pick.log | while read -r l; do say "render: $l"; done
-D="/home/sehoon/Desktop/참고/영상보관/g1-factory-tidy/09/$DATE/$OBJ"; mkdir -p $D/evidence
+next_v() { local o="$1"; mkdir -p "$o"; local n=1; while [ -d "$o/v$n" ]; do n=$((n+1)); done; echo "$o/v$n"; }
+D=$(next_v "/home/sehoon/Desktop/참고/영상보관/g1-factory-tidy/09/$DATE/$OBJ"); mkdir -p $D/evidence; echo "${NOTE:-$OBJ: $QUERY, part=$PART}" > $D/note.txt
 cp $F/pick.mp4 $D/${OBJ}_pick.mp4; cp $F/pick_head.mp4 $D/${OBJ}_pick_head.mp4; cp $F/pick_wrist.mp4 $D/${OBJ}_pick_wrist.mp4
 cp $F/near/obj_lang_overlay.png $D/evidence/near_found.png; cp $F/near/obj_part_overlay.png $D/evidence/part_found.png 2>/dev/null; cp $F/look_3/obj_lang_overlay.png $D/evidence/look_3_found.png 2>/dev/null; cp $F/test_grasps.txt $D/evidence/ 
 say "RENDER DONE -> $D"

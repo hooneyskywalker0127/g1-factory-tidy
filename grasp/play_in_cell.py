@@ -170,6 +170,14 @@ cfg.spawn = cfg.spawn.replace(
 # ejects it instead of stalling them on contact. The trajectory commands the
 # fingers all the way to their joint limits (end2end/tasks.py ramps to
 # close_vals), so what stops them has to be the actuator, not the command.
+# ARM_KP_SCALE: with the body on its PD drives (PD_BODY) the stock arm gains let an
+# outstretched arm sag -- measured on the crate approach, the left palm 10 cm under
+# its reference while the IK was within 24 mm -- and the sagging hand dragged the crate.
+if os.environ.get("ARM_KP_SCALE") and "arms" in cfg.actuators:
+    _k = float(os.environ["ARM_KP_SCALE"])
+    cfg.actuators["arms"] = cfg.actuators["arms"].replace(
+        stiffness={n: v * _k for n, v in cfg.actuators["arms"].stiffness.items()} if isinstance(cfg.actuators["arms"].stiffness, dict) else cfg.actuators["arms"].stiffness * _k,
+        damping={n: v * _k ** 0.5 for n, v in cfg.actuators["arms"].damping.items()} if isinstance(cfg.actuators["arms"].damping, dict) else cfg.actuators["arms"].damping * _k ** 0.5)
 cfg.actuators["hands"] = cfg.actuators["hands"].replace(
     effort_limit=1.4, velocity_limit=12.0)
 # The legs, when the pelvis is welded: PhysX's own PD, not IsaacLab's

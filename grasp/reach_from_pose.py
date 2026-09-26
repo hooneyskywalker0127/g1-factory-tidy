@@ -243,6 +243,11 @@ def main():
         errs = []
         for t, st in enumerate(steps):
             errs.append(max(float(np.linalg.norm(got[t, pick[k]].cpu().numpy() - pos[t, k])) for k in st))
+        # frames where a hand is far off (the left palm was seen 10 cm low)
+        for k in steps[0]:
+            e = np.array([np.linalg.norm(got[t, pick[k]].cpu().numpy() - pos[t, k]) for t in range(T)])
+            bad = np.where(e > 0.02)[0]
+            print(f"[reach]   {cfg.tool_frames[k]}: {len(bad)} frames over 20 mm" + (f", worst frame {int(e.argmax())} at {e.max()*1000:.0f} mm" if len(bad) else ""))
         # per hand, at the last frame that is not a lift: which wrist misses
         t = len(steps) - 1
         gq = ks2.tool_poses.quaternion
@@ -277,8 +282,28 @@ def main():
         # the fingers pass 2 cm above it pointing in, then curl DOWN over the
         # edge, and the wall sits in the crook of the fingers for the lift.
         rim = os.environ.get("HOOK_RIM") == "1"
+        # HOOK_MODE=pinch: the rim taken between fingers inside and thumb
+        # outside, the way a person lifts a crate by its edge. The hand comes
+        # straight down from above the wall: fingers (+x) point DOWN inside
+        # the crate along the wall, the thumb side (+y) points OUTWARD over the
+        # wall, so nothing sweeps the wall on the way in -- measured, the thumb
+        # hanging 9 cm under a palm that moved inward is what shoved the crate.
+        pinch = os.environ.get("HOOK_MODE") == "pinch"
         for k, name in ((li, "left"), (ri, "right")):
             slot = np.array(cj["slots"][name]); inward = c - slot[:2]; u = np.array([inward[0], inward[1], 0.0]); u /= np.linalg.norm(u)
+            if pinch:
+                # the left Dex3 is the right one mirrored: its thumb sits on the
+                # palm's -y. LEFT_Y_IN=1 turns the left palm's +y toward the crate
+                # so that thumb, too, ends up outside the wall (measured: with
+                # both palms oriented alike the crate lifted on one side only
+                # and fell on its flank).
+                y = (u if (name == "left" and os.environ.get("LEFT_Y_IN", "1") == "1") else -u)
+                x = np.array([0.0, 0.0, -1.0]); z = np.cross(x, y)
+                T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x, y, z
+                T[:3, 3] = [slot[0], slot[1], cj["top"] + float(os.environ.get("PINCH_ABOVE", "0.03"))]
+                T[:3, 3] += (float(os.environ.get("PINCH_IN", "0.01")) + finger_up) * u   # finger pads a hair inside the wall
+                hands[k] = (T @ P, np.array([0.0, 0.0, -1.0]))       # the "approach" is straight down
+                continue
             x = u; y = np.array([0.0, 0.0, -1.0 if rim else 1.0]); z = np.cross(x, y)
             T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x, y, z
             zc = (cj["top"] + float(os.environ.get("HOOK_RIM_ABOVE", "0.05")) + finger_up) if rim else (slot[2] - finger_up)
@@ -292,7 +317,7 @@ def main():
             for k, (G, u) in hands.items():
                 T0 = np.eye(4); T0[:3, 3] = pos0[k]; T0[:3, :3] = quat_to_mat(quat0[k])
                 pre_p = G.copy(); pre_p[:3, 3] -= pre * u
-                over = pre_p.copy(); over[2, 3] = over_z
+                over = pre_p.copy(); over[2, 3] = over_z if not pinch else G[2, 3] + 0.20
                 if i < n_over:
                     a = (i + 1) / n_over; M = over.copy(); M[:3, 3] = T0[:3, 3] + (over[:3, 3] - T0[:3, 3]) * a
                     if a < 0.34: M[:3, :3] = T0[:3, :3]
