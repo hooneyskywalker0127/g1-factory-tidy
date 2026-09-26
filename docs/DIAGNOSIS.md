@@ -420,3 +420,30 @@ paint_tin. `evidence/`에 언어로 찾은 손잡이(분홍), 검증 로그, 손
   거울이라 손바닥 y 방향을 뒤집어 넣었는데(`LEFT_Y_IN`), 그 가정이 틀렸을 수 있어 반대 방향으로
   재검증 중. 양손이 잡히면 → 수평으로 들기 → 일어서서 책상까지 걷기(기존 carry 경로, 양팔 고정)
   → 책상 위 내려놓기(`--place` 양손 버전).
+
+## 손 바꾸기 검토 (2026-09-26 23:50, 세훈님 허용: "삼지 안되면 오지로 해도 돼")
+
+파지 오픈소스가 실제로 지원하는 손:
+- GraspGenX `x_grippers/`: **inspire_hand**(points.json·tsdf·pointnet 표현까지 온보딩된 정식 손),
+  unitree_g1(다른 리비전 Dex3), g1_dex3_right(우리가 만든 것 — 모델용 표현이 더미 0). 즉 Dex3 후보는
+  모델이 손 모양을 모른 채 낸 것이고, Inspire 후보는 모델이 손을 아는 상태에서 낸다.
+- Dexonomy `assets/hand/`: unitree_g1(Dex3), shadow, allegro, leap, mano. Inspire 없음.
+- IsaacLab: `G1_INSPIRE_FTP_CFG` = G1 29자유도 + Inspire 5지 (`g1_29dof_inspire_hand.usd`, 손가락
+  강성 10/감쇠 0.2), NVIDIA 자체 pick-place 태스크가 쓰는 조합. `/home/sehoon/Desktop/참고/할일/26/06/
+  260623/G1/configuration/`에 Inspire 손 usda도 있다.
+
+**결론**: 손을 바꾼다면 **Inspire 5지**가 맞다 — 파지 생성기(GraspGenX)와 시뮬레이터(IsaacLab) 둘 다
+정식 지원. SONIC 추적은 Dex3 43자유도 모델에 묶여 있으므로 픽 구간은 지금처럼 키네마틱 재생.
+
+**포팅 순서(다음 세션)**:
+1. `end2end/robots/g1_inspire_arm.yaml`: g1_right_arm.yaml 복사, `graspgen.gripper_name: inspire_hand`,
+   `grasp_to_tool_transform`은 inspire의 `world_joint`(gripper.urdf)에서, tool_frame은 손목.
+2. 테스터·렌더에 `HAND=inspire`: `G1_INSPIRE_FTP_CFG`, 손 관절 이름(thumb_proximal_yaw/pitch,
+   index/middle/ring/pinky_proximal + 종속 관절), 열림/닫힘 값은 GraspGenX inspire config.json
+   (열림 thumb_yaw 1.308, 나머지 0; 닫힘 pitch 0.6, 손가락 1.47).
+3. `reach_from_pose.py`의 `WRIST_TO_PALM`을 Inspire 장착 오프셋(USD의 wrist_yaw→hand base)으로.
+4. 같은 체인으로 망치 손잡이부터. 5지는 손잡이를 감싸 쥘 수 있고(엄지가 옆에서 대립), 손끝이 바닥에
+   닿아도 나머지 손가락으로 든다.
+
+진행 중(자동): 망치 pin-and-grasp(왼손이 머리 누름) → 크레이트 왼손 반대 방향 → 펜치·드라이버 2종·
+다른 망치 체인. 12분마다 자동 점검.

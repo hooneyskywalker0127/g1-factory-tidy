@@ -176,14 +176,21 @@ def main():
     print(f"[reach] clip ends: pelvis z {root[2]:.3f}, torso pitch {math.degrees(pitch):+.1f} deg, "
           f"wrist at {np.round(pos0[wi], 3)}")
 
-    def solve(targets, from_here=False):
-        """targets: list of 4x4 wrist poses -> solved joint frames (T, 35), errors."""
+    def solve(targets, from_here=False, left_targets=None):
+        """targets: list of 4x4 wrist poses -> solved joint frames (T, 35), errors.
+        left_targets: the same for the left wrist (PIN_JSON: the other hand
+        holds the tool's head down while this one takes the handle)."""
         T = len(targets)
         pos = np.repeat(pos0[None], T, axis=0)
         qua = np.repeat(quat0[None], T, axis=0)
         for k, Tw in enumerate(targets):
             pos[k, wi] = Tw[:3, 3]
             qua[k, wi] = mat_to_quat(Tw[:3, :3])
+        if left_targets is not None:
+            li = list(cfg.tool_frames).index("left_wrist_yaw_link")
+            for k, Tw in enumerate(left_targets):
+                pos[k, li] = Tw[:3, 3]
+                qua[k, li] = mat_to_quat(Tw[:3, :3])
         seq = SequenceGoalToolPose(
             tool_frames=cfg.tool_frames,
             position=torch.tensor(pos, dtype=torch.float32, device="cuda")
@@ -526,6 +533,34 @@ def main():
         # head before the fingers closed, results/fable6/handle/snap_54_*).
         # Coming down from above is how a person takes a thing off the floor.
         descend = os.environ.get("DESCEND", "1") == "1"
+        # PIN_JSON: the left palm, flat (its flat side is the palm frame's z),
+        # comes down on the head's top and presses 1.5 cm into it for the
+        # whole approach and close; it lets go (rises 10 cm) as the right
+        # hand lifts. Needs BIMANUAL=1 so the left wrist is a work frame.
+        pin_seq = None
+        if os.environ.get("PIN_JSON"):
+            pj = json.load(open(os.environ["PIN_JSON"]))
+            pt = np.array(pj["point"]); ax_h = np.array(pj["handle_axis"] + [0.0]); ax_h /= np.linalg.norm(ax_h)
+            zf = np.array([0.0, 0.0, -1.0]); xf = ax_h; yf = np.cross(zf, xf)
+            Tpin = np.eye(4); Tpin[:3, 0], Tpin[:3, 1], Tpin[:3, 2] = xf, yf, zf
+            press = float(os.environ.get("PIN_PRESS", "0.015"))
+            Tpin[:3, 3] = [pt[0], pt[1], pt[2] + 0.02 - press]             # palm 2 cm thick, pressed in
+            Ppin = np.eye(4); Ppin[:3, 3] = -WRIST_TO_PALM
+            Wpin = Tpin @ Ppin
+            li0 = list(cfg.tool_frames).index("left_wrist_yaw_link")
+            TL0 = np.eye(4); TL0[:3, 3] = pos0[li0]; TL0[:3, :3] = quat_to_mat(quat0[li0])
+            up = Wpin.copy(); up[2, 3] += 0.12
+            pin_seq = []
+            for i in range(n_pre):                                         # come down on the head while the right hand goes to its pre-grasp
+                a = (i + 1) / n_pre; M = Wpin.copy(); M[:3, 3] = TL0[:3, 3] + (up[:3, 3] - TL0[:3, 3]) * min(1.0, a * 1.5)
+                if a > 0.67: M[:3, 3] = up[:3, 3] + (Wpin[:3, 3] - up[:3, 3]) * (a - 0.67) / 0.33
+                if a < 0.34: M[:3, :3] = TL0[:3, :3]
+                pin_seq.append(M)
+            pin_seq += [Wpin.copy() for _ in range(n_in)]
+            for i in range(n_lift):                                        # let go as the lift starts
+                a = (i + 1) / n_lift; M = Wpin.copy(); M[:3, 3] = Wpin[:3, 3] + (up[:3, 3] - Wpin[:3, 3]) * min(1.0, a * 3)
+                pin_seq.append(M)
+            print(f"[reach] pin: left palm on the head at {np.round(pt, 3)} (top), pressed {press*1000:.0f} mm")
         for k, Tg in enumerate(wrists):
             pre = Tg.copy()
             if descend and Tg[2, 1] > -0.5:
@@ -550,7 +585,7 @@ def main():
                 M = Tg.copy()
                 M[:3, 3] = Tg[:3, 3] + (up[:3, 3] - Tg[:3, 3]) * a
                 targets.append(M)
-            sol, err = solve(targets, from_here=True)
+            sol, err = solve(targets, from_here=True, left_targets=pin_seq)
             seqs.append(sol)
             errs.append(err)
             print(f"[reach] grasp #{k:2d} conf {conf[k]:.3f}: at grasp {err[n_go-1]*1000:5.1f} mm, "
