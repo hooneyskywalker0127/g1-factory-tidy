@@ -58,7 +58,10 @@ grep -aq "^FOUND" $F/near/text.txt || { say "STOP: lost at the kneel"; exit 1; }
 if [ -n "$PART" ]; then
   python grasp/find_part.py $F/near "$PART" --of obj_lang --others "$OTHERS" 2>&1 | grep -a "^\[part\]\|^FOUND\|^NOT\|Traceback" > $F/near/part.txt
   say "part '$PART': $(grep -a '^FOUND\|^NOT' $F/near/part.txt | tail -1 | cut -c1-80)"
-  grep -aq "^FOUND" $F/near/part.txt && GRASP_ON=obj_part || say "part not found; grasping the whole object"
+  # a part of fewer than 200 px is not enough point cloud for GraspGenX (the screwdriver's
+  # 55 px handle gave it nothing and the chain crashed); then the whole object is used
+  PART_PX=$(grep -a "^FOUND" $F/near/part.txt | awk '{print $3}'); PART_PX=${PART_PX:-0}
+  if [ "$PART_PX" -ge 200 ]; then GRASP_ON=obj_part; else say "part has $PART_PX px (< 200); grasping the whole object"; fi
 fi
 # 6. grasps, both planners
 cd $GGX

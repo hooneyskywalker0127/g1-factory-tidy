@@ -308,7 +308,14 @@ def main():
                 x = np.array([0.0, 0.0, -1.0]); z = np.cross(x, y)
                 T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x, y, z
                 T[:3, 3] = [slot[0], slot[1], cj["top"] + float(os.environ.get("PINCH_ABOVE", "0.03"))]
-                T[:3, 3] += (float(os.environ.get("PINCH_IN", "0.01")) + finger_up) * u   # finger pads a hair inside the wall
+                # the pinch point sits 4.3 cm from the palm centre on the THUMB
+                # side (+y of the right palm). For the mirrored left palm with
+                # its +y turned inward, that point is 4.3 cm further in -- so
+                # the left palm centre goes the same distance OUTSIDE the wall.
+                # (Measured: right hand on its wall and lifting, left hand
+                # 7 cm inside its wall pinching air, results/crate/pinch4_close_A.png.)
+                sgn = -1.0 if (name == "left" and os.environ.get("LEFT_Y_IN", "1") == "1") else 1.0
+                T[:3, 3] += sgn * (float(os.environ.get("PINCH_IN", "0.01")) + finger_up) * u
                 hands[k] = (T @ P, np.array([0.0, 0.0, -1.0]))       # the "approach" is straight down
                 continue
             x = u; y = np.array([0.0, 0.0, -1.0 if rim else 1.0]); z = np.cross(x, y)
