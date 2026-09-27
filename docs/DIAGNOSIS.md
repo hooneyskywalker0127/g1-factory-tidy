@@ -564,3 +564,11 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - Crate insp1 (Inspire two-hand rim pinch, both hands closing/colliding for the first time): LOST, fingers stopped
   at 0.4 rad, crate not lifted; palms exactly where planned (right wrist 3.5 cm inside its wall, thumb 4.8 cm
   outside at rim height). Waiting for the video before changing geometry.
+- 15:25 With the blend (no ringing) #77/#78 LOSE in the tester and the hammer is shoved 9.5 cm between approach
+  frames 29 and 44 -- the last 10 cm of the VERTICAL descent. v7 wrist view: the open fingers' undersides land on
+  the handle next to the head. The 7/40 "held" without the blend were scoops that the ringing arm happened to make.
+  The Inspire floor grasps hold the palm pitched ~50 deg (fingers down-and-away), so a vertical descent drags the
+  fingers across the handle. New: APPROACH_AXIS=x (reach_from_pose.py) comes in along the fingers from 12 cm back,
+  fingertips leading into the gap beside the handle. Re-reach + top-16 test queued (reach40_x.sh -> test_x.txt).
+- Rule for my own shell: the GPU guards match `reach_from_pos[e]|e2e_grasp_dem[o]`; a Bash command of mine that
+  contains those script names literally keeps every guard waiting while it runs.

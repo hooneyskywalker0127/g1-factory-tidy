@@ -596,9 +596,20 @@ def main():
                 a = (i + 1) / n_lift; M = Wpin.copy(); M[:3, 3] = Wpin[:3, 3] + (up[:3, 3] - Wpin[:3, 3]) * min(1.0, a * 3)
                 pin_seq.append(M)
             print(f"[reach] pin: left palm on the head at {np.round(pt, 3)} (top), pressed {press*1000:.0f} mm")
+        # APPROACH_AXIS=x: come in along the FINGERS (the palm frame's +x) from APPROACH_BACK m behind the
+        # grasp. The Inspire grasps on the floor hold the palm pitched ~50 deg with the fingers pointing
+        # down-and-away; a vertical descent (DESCEND) then drags the open fingers' undersides across the
+        # handle in the last 10 cm and shoves the hammer 9.5 cm before the close (5지/hammer/v7, tester
+        # 2026-09-27 15:23). Along the fingers, the fingertips lead into the gap beside the handle.
+        approach_axis = os.environ.get("APPROACH_AXIS", "z" if descend else "y")
+        back = float(os.environ.get("APPROACH_BACK", "0.12"))
         for k, Tg in enumerate(wrists):
             pre = Tg.copy()
-            if descend and Tg[2, 1] > -0.5:
+            if approach_axis == "x":
+                pre[:3, 3] = Tg[:3, 3] - back * Tg[:3, 0]
+                if pre[2, 3] < Tg[2, 3] + 0.03:                       # never start lower than 3 cm above the grasp
+                    pre[2, 3] = Tg[2, 3] + 0.03
+            elif descend and Tg[2, 1] > -0.5:
                 pre[:3, 3] = Tg[:3, 3] + np.array([0.0, 0.0, 0.10])
             else:
                 pre[:3, 3] = Tg[:3, 3] - 0.10 * Tg[:3, 1]

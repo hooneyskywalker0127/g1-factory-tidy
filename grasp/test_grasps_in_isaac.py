@@ -252,6 +252,9 @@ for k in order:
         _a = (_j + 1) / (_nb + 1)
         _r = (1 - _a) * kneel_root + _a * roots[0]; _r[3:7] /= np.linalg.norm(_r[3:7])
         put(_r, (1 - _a) * kneel_dof + _a * dofs[0], HAND_OPEN)
+    if os.environ.get("TEST_VERBOSE") and _nb:
+        _o = obj_centre(); _b = robot.find_bodies([PALM_LINK["right"]])[0][0]
+        print(f"[test]    after the {_nb}-frame seam blend: object {np.round(_o, 3)}  right palm {np.round(robot.data.body_pos_w[0, _b].cpu().numpy(), 2)}")
     z_ref = float(obj_centre()[2])                 # where it rests before this candidate's reach
     if os.environ.get("TEST_VERBOSE"):
         print(f"[test]    object after the reset to the kneel: {np.round(obj_centre(), 3)} (placed at {np.round(box0[0, :3].cpu().numpy(), 3)})")
