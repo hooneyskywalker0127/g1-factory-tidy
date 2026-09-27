@@ -625,3 +625,6 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   played. Fixed in both. v8 stopped; v9 = v5 geometry + slide + full lift.
 - 17:25 Hammer with GRASP_SLIDE=0.03: 3/40 HELD in the tester (#93 +105, #95 +119, #0 +102 mm); #93 rendering
   (5지/hammer/v10); repeatability run on 93/95/0 x2. Crate v9 (full lift): tester lost, render pending.
+- 17:40 Crate v9 = full 25 cm lift: the crate rose 10.7 cm, then the right hand slid up the wall, 17 deg tilt, dropped.
+  The rim pinch holds ~10 cm of lift. v10 = the same pinch with a 12 cm lift (enough floor clearance to carry).
+  Clamp v2 (re-reach, 5 mm margin): tester 1/40 (#58), render LOST.
