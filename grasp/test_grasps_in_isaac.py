@@ -292,7 +292,7 @@ for k in order:
     # at once pushed a standing bottle over with whichever finger touched
     # first (40 of 40 candidates); a hand cages before it squeezes.
     order = os.environ.get("CLOSE_ORDER", "together")
-    thumb = np.array([("thumb" in n and n.startswith(("right", "R_"))) for n in hand_names], bool)      # right thumb joints
+    thumb = np.array([("thumb" in n and (os.environ.get("BOTH_HANDS") == "1" or n.startswith(("right", "R_")))) for n in hand_names], bool)      # right thumb joints (both with BOTH_HANDS)
     # CLOSE_MODE=velocity: the close GraspGenX runs the Dex3 with
     # (end2end/robots/g1_right_arm.yaml gripper_control_mode: velocity,
     # dynamic_playback.py:641-661): stiffness 0, damping only, each joint

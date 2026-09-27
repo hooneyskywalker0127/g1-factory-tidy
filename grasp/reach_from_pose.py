@@ -317,15 +317,31 @@ def main():
                 y = (u if (name == "left" and os.environ.get("LEFT_Y_IN", "1") == "1") else -u)
                 x = np.array([0.0, 0.0, -1.0]); z = np.cross(x, y)
                 T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x, y, z
-                T[:3, 3] = [slot[0], slot[1], cj["top"] + float(os.environ.get("PINCH_ABOVE", "0.03"))]
-                # the pinch point sits 4.3 cm from the palm centre on the THUMB
-                # side (+y of the right palm). For the mirrored left palm with
-                # its +y turned inward, that point is 4.3 cm further in -- so
-                # the left palm centre goes the same distance OUTSIDE the wall.
-                # (Measured: right hand on its wall and lifting, left hand
-                # 7 cm inside its wall pinching air, results/crate/pinch4_close_A.png.)
-                sgn = -1.0 if (name == "left" and os.environ.get("LEFT_Y_IN", "1") == "1") else 1.0
-                T[:3, 3] += sgn * (float(os.environ.get("PINCH_IN", "0.01")) + finger_up) * u
+                insp = os.environ.get("HAND") == "inspire"
+                T[:3, 3] = [slot[0], slot[1], cj["top"] + float(os.environ.get("PINCH_ABOVE", "0.115" if insp else "0.03"))]
+                # PINCH_ALONG: slide the grip along the wall toward the robot, off the hand-slot hole
+                # (the pinch would otherwise close on the 23 mm slot, where there is no wall)
+                if os.environ.get("PINCH_ALONG"):
+                    tw = np.array([cj["stand"]["x"], cj["stand"]["y"]]) - c; tw /= np.linalg.norm(tw)
+                    T[:2, 3] += float(os.environ["PINCH_ALONG"]) * tw
+                if insp:
+                    # measured on the asset (results/inspire_links_in_palm.json, palm = wrist frame minus the
+                    # mount offset): closed, the finger intermediates sit at palm y +0.032 and the thumb distal
+                    # at +0.046, 13.5 cm along the fingers; the left hand is the right mirrored in y only. So the
+                    # wall belongs 4 cm on the thumb side of the palm centre. Right palm: +y = outward, centre
+                    # 4 cm INSIDE the wall. Left palm (+y turned inward, LEFT_Y_IN): its thumb side -y is
+                    # outward, centre 4 cm inside as well. Open, the thumb tip is 9.3 cm on its side -- 5 cm
+                    # outside the wall on the way down; the fingers (y 0) 4 cm inside.
+                    T[:3, 3] += float(os.environ.get("PINCH_IN", "0.04")) * u
+                else:
+                    # the pinch point sits 4.3 cm from the palm centre on the THUMB
+                    # side (+y of the right palm). For the mirrored left palm with
+                    # its +y turned inward, that point is 4.3 cm further in -- so
+                    # the left palm centre goes the same distance OUTSIDE the wall.
+                    # (Measured: right hand on its wall and lifting, left hand
+                    # 7 cm inside its wall pinching air, results/crate/pinch4_close_A.png.)
+                    sgn = -1.0 if (name == "left" and os.environ.get("LEFT_Y_IN", "1") == "1") else 1.0
+                    T[:3, 3] += sgn * (float(os.environ.get("PINCH_IN", "0.01")) + finger_up) * u
                 hands[k] = (T @ P, np.array([0.0, 0.0, -1.0]))       # the "approach" is straight down
                 continue
             x = u; y = np.array([0.0, 0.0, -1.0 if rim else 1.0]); z = np.cross(x, y)

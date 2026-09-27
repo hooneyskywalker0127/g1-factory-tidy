@@ -43,6 +43,12 @@ if os.environ.get("HAND") == "inspire":
     HAND_CLOSED = _open_one + _closed_one
     PALM_LINK = {"left": "left_wrist_yaw_link", "right": "right_wrist_yaw_link"}   # the official asset merges the hand base into the wrist link
     HAND_KEEP = ("right_hand", "right_wrist", "R_")
+    if os.environ.get("BOTH_HANDS") == "1":
+        # a two-hand grip (the crate's rim pinch): the left closes too, and it collides -- every earlier two-hand
+        # crate run kept only the right hand's colliders and closed only the right hand, so the left "pinched air"
+        HAND_CLOSED = _closed_one + _closed_one
+        HAND_KEEP = ("right_hand", "right_wrist", "R_", "left_hand", "left_wrist", "L_")
+BOTH_HANDS = os.environ.get("BOTH_HANDS") == "1"
 # the official IsaacLab G1 + Inspire asset (Nucleus 5.1), downloaded to the repo: 39 MB base with the meshes
 INSPIRE_USD = "/home/sehoon/Documents/GitHub/g1-factory-tidy/assets/g1_inspire/g1_29dof_inspire_hand.usd"
 
@@ -199,7 +205,7 @@ def main():
             # #54): the thumb first over the first half of the ramp, the
             # fingers over the second -- the thumb closing after the fingers
             # jammed on every palm-down grasp (DIAGNOSIS.md, 02:40)
-            th = np.array([("thumb" in n and n.startswith(("right", "R_"))) for n in HAND_NAMES], bool)   # the right thumb, any hand
+            th = np.array([("thumb" in n and (BOTH_HANDS or n.startswith(("right", "R_")))) for n in HAND_NAMES], bool)   # the right thumb (both with BOTH_HANDS), any hand
             a_t = min(1.0, (k + 1) / (ramp // 2)); a_f = min(1.0, max(0.0, (k + 1 - ramp // 2) / (ramp // 2)))
             h = np.array(HAND_OPEN, np.float32)
             h[th] = (1 - a_t) * np.array(HAND_OPEN)[th] + a_t * np.array(HAND_CLOSED)[th]
