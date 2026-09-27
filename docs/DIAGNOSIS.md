@@ -617,3 +617,5 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   LOST, carry render (v9) walked to the crate empty-handed (walk + crate reach fine, 3.3 mm). Crate v7 (stiffness
   100, 4.5 cm inside, slide): tester LOST, render pending. Queued: hammer with GRASP_SLIDE=0.03 (fingertips land 3 cm
   beyond the handle, slide back against it, then close) after the clamp re-reach.
+- 17:16 Crate v7 (stiffness 100, 4.5 cm inside): render 2.6 cm -- worse. Not a squeeze problem. v8 = v5 geometry
+  (best, 9 cm) with the slide and a 12 cm half-speed lift to test whether the crate follows a slow lift.
