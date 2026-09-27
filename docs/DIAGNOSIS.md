@@ -613,3 +613,7 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - 16:52 Crate v6 (3 cm outward slide): render lifts 6.9 cm level, tester lost. v4/v5/v6 renders all lift 7-9 cm and
   slip as the wrists rise 25 cm; v7 = finger stiffness 100, palms 4.5 cm inside. Hammer #65: first tester run HELD
   +193 mm, rerun LOST -- the floor pinch is still a coin flip; 64/96/123 reruns pending.
+- 17:05 Repeatability of the 5/40: #65 and #64 LOST on rerun (the first "held" runs were flukes). #65 render (v8)
+  LOST, carry render (v9) walked to the crate empty-handed (walk + crate reach fine, 3.3 mm). Crate v7 (stiffness
+  100, 4.5 cm inside, slide): tester LOST, render pending. Queued: hammer with GRASP_SLIDE=0.03 (fingertips land 3 cm
+  beyond the handle, slide back against it, then close) after the clamp re-reach.
