@@ -540,3 +540,13 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   fold under contact, but the free-space state now matches). #155/#78 LOST as before. v5 render running.
 - Scratch experiment harness note: a scene-only Isaac script whose RigidObject is read with update(0.0) shows nothing
   moving; always read with update(physics_dt).
+
+## 2026-09-27 14:55 — the fingertips were the grasp: software four-bar (SOFT_MIMIC)
+
+- PhysX mimic joints cannot be made rigid at a 1 kHz step: 200 Hz folds on contact (-0.34), 1000 Hz tracks 0.6-0.7 of
+  the proximal and #77 then LOSES (the "hold" at 25/200 Hz was the hyperextended straight fingers scooping the handle).
+- `soft_mimic()` (build_reach_reference.py): the intermediate/distal joints are in the actuator group and their targets
+  are rewritten every substep from the MEASURED proximal angle x gear (1.0, thumb 1.6/2.4, the asset's own ratios) --
+  the RH56's rigid linkage. Tester #77: intermediates 0.69-0.83 for proximals 0.84-0.93, box +0.031 at close,
+  lift +0.178 m HELD (was +0.109 with floppy tips). Render v5 (200 Hz, no four-bar): LOST, hammer turned 25 deg.
+  Render v6 with the four-bar queued; clamp/drill re-tests queued behind the tool queue (queue_retest.sh).
