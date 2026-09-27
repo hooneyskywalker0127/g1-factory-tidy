@@ -747,6 +747,17 @@ if walk is not None:
                         _out.append(f"{_ln.replace('_link', '').replace('right_hand_', 'R.')} "
                                     f"{np.round(robot.data.body_pos_w[0, _b[0]].cpu().numpy() - _op, 2)}")
                 print(f"[hand] frame {i:5d} rel. to object: " + "  ".join(_out))
+                if _every <= 10:                       # diagnostic: which link is nearest the object's mesh centroid
+                    import trimesh as _tm
+                    if "_c_off" not in globals():
+                        globals()["_c_off"] = np.asarray(_tm.load(meta["object"]["mesh"], force="mesh").centroid, np.float32)
+                    _q = target_body.data.root_quat_w[0].cpu().numpy(); _w, _x, _y, _z = _q
+                    _Rm = np.array([[1 - 2 * (_y * _y + _z * _z), 2 * (_x * _y - _z * _w), 2 * (_x * _z + _y * _w)],
+                                    [2 * (_x * _y + _z * _w), 1 - 2 * (_x * _x + _z * _z), 2 * (_y * _z - _x * _w)],
+                                    [2 * (_x * _z - _y * _w), 2 * (_y * _z + _x * _w), 1 - 2 * (_x * _x + _y * _y)]])
+                    _cen = _op + _Rm @ _c_off
+                    _bp = robot.data.body_pos_w[0].cpu().numpy(); _dd = np.linalg.norm(_bp - _cen, axis=1); _o = np.argsort(_dd)[:3]
+                    print(f"[near] frame {i:5d} centroid {np.round(_cen, 3)} nearest links: " + ", ".join(f"{robot.body_names[j]} {_dd[j]*100:.1f} cm" for j in _o))
                 _rh = [j for j in _hand_ids[len(_hand_ids) // 2:]]
                 print(f"[hand] frame {i:5d} right finger q {np.round(robot.data.joint_pos[0, _rh].cpu().numpy(), 2)} "
                       f"target {np.round(tgt_q[0, _rh].cpu().numpy(), 2)}; wrist joints "

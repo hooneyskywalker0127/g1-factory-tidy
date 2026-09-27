@@ -177,7 +177,10 @@ def main():
     # are a hold at the wrist's current pose, so nothing is lost to the fade;
     # without it the base stepped 37 mm and the shoulder 31 deg in one frame,
     # which is the jolt at 40 s that kicked the box.
-    BLEND = int(os.environ.get("SEAM_BLEND", "0"))   # the solver is velocity-limited now; a joint-space fade swept the hand through the object
+    # SEAM_BLEND (default 15): the reach's first frame is the pre-grasp above the object, 30 deg of shoulder from
+    # the kneel's arm pose; stepped in one frame the stiff arm rang +-10 cm at 3 Hz and swept the hammer
+    # (play_in_cell diag, 2026-09-27). (0 was used while the reach started AT the object.)
+    BLEND = int(os.environ.get("SEAM_BLEND", "15"))
     for i in range(BLEND):
         a = (i + 1) / (BLEND + 1)
         qpos_r[i, 0:3] = (1 - a) * qpos_w[-1, 0:3] + a * qpos_r[i, 0:3]

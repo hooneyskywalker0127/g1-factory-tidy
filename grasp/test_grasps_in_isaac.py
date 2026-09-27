@@ -244,6 +244,14 @@ for k in order:
     box.write_root_state_to_sim(box0)
     for _ in range(15):
         put(kneel_root, kneel_dof, HAND_OPEN)
+    # SEAM_BLEND: ease from the kneel into the reach's first frame instead of stepping the shoulder 30 deg
+    # in one frame -- measured (play_in_cell diag, 2026-09-27), the stiff arm (ARM_KP_SCALE 4) rang +-10 cm
+    # at 3 Hz for a second after that step and swept the hammer before the descent had reached it.
+    _nb = int(os.environ.get("SEAM_BLEND", "15"))
+    for _j in range(_nb):
+        _a = (_j + 1) / (_nb + 1)
+        _r = (1 - _a) * kneel_root + _a * roots[0]; _r[3:7] /= np.linalg.norm(_r[3:7])
+        put(_r, (1 - _a) * kneel_dof + _a * dofs[0], HAND_OPEN)
     z_ref = float(obj_centre()[2])                 # where it rests before this candidate's reach
     if os.environ.get("TEST_VERBOSE"):
         print(f"[test]    object after the reset to the kneel: {np.round(obj_centre(), 3)} (placed at {np.round(box0[0, :3].cpu().numpy(), 3)})")

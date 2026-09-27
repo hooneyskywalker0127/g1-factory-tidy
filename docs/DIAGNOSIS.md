@@ -555,3 +555,12 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   to the head) and tilts the hammer 16 deg before the close -- the tester's hold and the render's loss differ only by
   that chaotic nudge. Next: top-40 with the four-bar (test_all4bar.txt), prefer a held candidate farther from the head,
   and re-verify each held one 3x before rendering.
+- 15:10 Approach diagnostic (play_in_cell OBJ_EVERY=2 + nearest-link print, no video): after the seam the right
+  thumb's distance to the hammer went 14.7 -> 32.8 -> 10.7 -> 26.0 -> 7.7 cm within 20 frames -- the arm RINGS at
+  ~3 Hz, +-10 cm, for a second after the reference steps the shoulder 30 deg in one frame (kneel pose -> reach's
+  pre-grasp), and the swinging hand is what hit the hammer at approach frame ~30. SEAM_BLEND=15 (default now in
+  build_reach_reference.py and a 15-frame kneel->q[0] lerp in the tester): the distance now falls monotonically
+  27 -> 9 cm and the hammer is untouched until the fingers arrive. v7 render running.
+- Crate insp1 (Inspire two-hand rim pinch, both hands closing/colliding for the first time): LOST, fingers stopped
+  at 0.4 rad, crate not lifted; palms exactly where planned (right wrist 3.5 cm inside its wall, thumb 4.8 cm
+  outside at rim height). Waiting for the video before changing geometry.
