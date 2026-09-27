@@ -455,11 +455,14 @@ if target_body is not None:
 
 # the plan's joint list is the Dex3 arm+hand; with another hand (HAND=inspire) the hand
 # entries do not exist -- they are only needed when the plan drives the arm (not --clip-arms)
-missing = [n for n in names if not robot.find_joints([n])[0]]
+missing = [n for n in names if n not in robot.joint_names]       # find_joints raises on a missing name
 names = [n for n in names if n not in missing]
 ids = [robot.find_joints([n])[0][0] for n in names]
+if missing and not CLIP_ARMS:
+    print(f"[play] joints missing on the Isaac G1: {missing}")
+    raise SystemExit("the plan drives joints this hand does not have")
 if missing:
-    raise SystemExit(f"joints missing on the Isaac G1: {missing}")
+    print(f"[play] plan joints not on this hand, ignored (--clip-arms): {len(missing)}")
 
 # Frame the reach: far enough back to see the robot, the object it goes for,
 # and the rack behind them. Aim at the object when the plan carries one.
