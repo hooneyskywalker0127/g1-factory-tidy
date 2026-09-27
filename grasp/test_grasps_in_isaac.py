@@ -291,6 +291,16 @@ for k in order:
               f"tips {({k: np.round(v, 3).tolist() for k, v in _tips.items()})}")
     snap(f"{int(k)}_grasp")
     _bp0 = obj_centre()
+    if os.environ.get("BOTH_HANDS") == "1":                     # where each hand sits before the close, object-relative
+        _o0 = obj_centre()
+        for _side, _lns in (("right", ("R_index_proximal", "R_index_intermediate", "R_pinky_intermediate", "R_thumb_distal", PALM_LINK["right"])),
+                            ("left", ("L_index_proximal", "L_index_intermediate", "L_pinky_intermediate", "L_thumb_distal", PALM_LINK["left"]))):
+            _row = []
+            for _ln in _lns:
+                _b = robot.find_bodies([_ln])[0]
+                if _b:
+                    _row.append(f"{_ln.replace('R_', '').replace('L_', '')} {np.round(robot.data.body_pos_w[0, _b[0]].cpu().numpy() - _o0, 3)}")
+            print(f"[test]    at grasp, {_side} hand object-relative: " + "  ".join(_row))
     print(f"[test]    at grasp: palm z {_tips['palm'][2]:+.3f}, lowest fingertip z {_tip_min:+.3f}, "
           f"palm - object {np.round(_tips['palm'] - _bp0, 3)}")
     # Close and lift the way the desk pick that held did: the fingers get
