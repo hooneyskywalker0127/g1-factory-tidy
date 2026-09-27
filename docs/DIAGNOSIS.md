@@ -585,3 +585,8 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - Fixed in reach_from_pose.py (INSPIRE_OLD_MAP=1 restores the old behaviour). Re-reach + top-40 test + render
   queued for hammer, clamp, drill, pliers (queue_rereach.sh); the tester-only clamp/drill retest queue cancelled.
   hammer2's chain (next in the tool queue) picks the fix up automatically; flat_screwdriver rendered with the old map.
+- 16:05 With the corrected frame the GraspGen approach axis is straight down and the fingers/thumb side point 45 deg
+  down (a wrap from above), but the open fingertips then sit below the floor, and TIP_FLESH=0.03 raised every grasp
+  until the pinch point was ~0.15 m up (handle at 0.03). Only 25/156 stayed "on the axis". The hammer handle is
+  2-3 cm off the floor near the head, so the fingertips must be allowed down to the floor: re-reach queue restarted
+  with TIP_FLESH=0.005 (rereach_render.sh). (A pkill on the script's name killed my own shell once more: exit 144.)
