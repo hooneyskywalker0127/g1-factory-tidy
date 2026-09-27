@@ -623,3 +623,5 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   throughout), the hands simply rose only 8-9 cm: the crate solution holds 30 frames at the grasp (lift_from = n_go
   + 30) and the replay (crate script + tester) started its 4x-slowed lift at n_go, so only 15 of 45 lift frames
   played. Fixed in both. v8 stopped; v9 = v5 geometry + slide + full lift.
+- 17:25 Hammer with GRASP_SLIDE=0.03: 3/40 HELD in the tester (#93 +105, #95 +119, #0 +102 mm); #93 rendering
+  (5지/hammer/v10); repeatability run on 93/95/0 x2. Crate v9 (full lift): tester lost, render pending.
