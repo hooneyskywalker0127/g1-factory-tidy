@@ -356,7 +356,7 @@ if os.environ.get("BODY_COLLISION", "0") == "0" and "--hands" in sys.argv:
 # Finger pad friction, from GraspGenX's own --finger_mu default of 3.0. Left
 # alone the stage runs on PhysX's 0.5, and a grasp generated under mu 3 on the
 # pads slips the moment the fingers touch the box.
-_fm = sim_utils.RigidBodyMaterialCfg(static_friction=FINGER_MU,
+_fm = sim_utils.RigidBodyMaterialCfg(static_friction=FINGER_MU, friction_combine_mode="max",   # as the tester
                                      dynamic_friction=FINGER_MU,
                                      restitution=0.0)
 _fm.func("/World/G1/FingerMaterial", _fm)

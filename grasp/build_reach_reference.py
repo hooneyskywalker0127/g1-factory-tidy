@@ -96,8 +96,10 @@ def robot_cfg(base_cfg, sim_utils, ImplicitActuatorCfg):
         # which the PhysX mimic joint at any frequency the 1 kHz step tolerates is not (200 Hz: folds to -0.34 on
         # contact; 1000 Hz: 0.6-0.7 of the proximal).
         expr += [".*_intermediate_joint", ".*_thumb_distal_joint"]
+    # HAND_KP: finger drive stiffness (NVIDIA's 10 for the pick-place task); the 2 kg crate's rim pinch slipped at 10
+    kp = float(os.environ.get("HAND_KP", "10"))
     cfg.actuators["hands"] = ImplicitActuatorCfg(joint_names_expr=expr,
-                                                 effort_limit=30.0, velocity_limit=10.0, stiffness=10.0, damping=0.2, armature=0.001)
+                                                 effort_limit=30.0, velocity_limit=10.0, stiffness=kp, damping=0.2 * (kp / 10.0) ** 0.5, armature=0.001)
     return cfg
 
 
