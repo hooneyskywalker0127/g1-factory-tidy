@@ -357,7 +357,7 @@ def main():
                     # 7 cm inside its wall pinching air, results/crate/pinch4_close_A.png.)
                     sgn = -1.0 if (name == "left" and os.environ.get("LEFT_Y_IN", "1") == "1") else 1.0
                     T[:3, 3] += sgn * (float(os.environ.get("PINCH_IN", "0.01")) + finger_up) * u
-                hands[k] = (T @ P, np.array([0.0, 0.0, -1.0]))       # the "approach" is straight down
+                hands[k] = (T @ P, np.array([0.0, 0.0, -1.0]), u)    # the "approach" is straight down; u = inward
                 continue
             x = u; y = np.array([0.0, 0.0, -1.0 if rim else 1.0]); z = np.cross(x, y)
             if name == "left" and os.environ.get("HAND") == "inspire":
@@ -367,31 +367,38 @@ def main():
                 finger_up = 0.0                         # the Inspire fingers lie in the palm plane (y 0)
             zc = (cj["top"] + float(os.environ.get("HOOK_RIM_ABOVE", "0.05")) + finger_up) if rim else (slot[2] - finger_up)
             T[:3, 3] = [slot[0], slot[1], zc]; T[:3, 3] -= outside * u
-            hands[k] = (T @ P, u)
-        n_over, n_down, n_in, n_hold, n_lift = 45, 30, 30, 30, 45
+            hands[k] = (T @ P, u, u)
+        # PINCH_SLIDE (pinch only): come down PINCH_SLIDE m further inside the wall, then slide outward to the
+        # grasp so the fingers meet the inner face before the thumb closes -- the plain descent decided by
+        # chance whether the fingers landed inside the wall (v1: lift 4 cm) or on the rim top (v4 tester: pried open)
+        slide = float(os.environ.get("PINCH_SLIDE", "0")) if pinch else 0.0
+        n_over, n_down, n_in, n_out, n_hold, n_lift = 45, 30, 30, (20 if slide else 0), 30, 45
         over_z = cj["top"] + 0.12
         steps = []
-        for i in range(n_over + n_down + n_in + n_hold + n_lift):
+        for i in range(n_over + n_down + n_in + n_out + n_hold + n_lift):
             st = {}
-            for k, (G, u) in hands.items():
+            for k, (G, u, uin) in hands.items():
                 T0 = np.eye(4); T0[:3, 3] = pos0[k]; T0[:3, :3] = quat_to_mat(quat0[k])
-                pre_p = G.copy(); pre_p[:3, 3] -= pre * u
-                over = pre_p.copy(); over[2, 3] = over_z if not pinch else G[2, 3] + 0.20
+                Gd = G.copy(); Gd[:3, 3] += slide * uin                       # the descent's target: deeper inside
+                pre_p = Gd.copy(); pre_p[:3, 3] -= pre * u
+                over = pre_p.copy(); over[2, 3] = over_z if not pinch else Gd[2, 3] + 0.20
                 if i < n_over:
                     a = (i + 1) / n_over; M = over.copy(); M[:3, 3] = T0[:3, 3] + (over[:3, 3] - T0[:3, 3]) * a
                     if a < 0.34: M[:3, :3] = T0[:3, :3]
                 elif i < n_over + n_down:
                     a = (i + 1 - n_over) / n_down; M = pre_p.copy(); M[:3, 3] = over[:3, 3] + (pre_p[:3, 3] - over[:3, 3]) * a
                 elif i < n_over + n_down + n_in:
-                    a = (i + 1 - n_over - n_down) / n_in; M = G.copy(); M[:3, 3] -= pre * (1 - a) * u
-                elif i < n_over + n_down + n_in + n_hold:
+                    a = (i + 1 - n_over - n_down) / n_in; M = Gd.copy(); M[:3, 3] -= pre * (1 - a) * u
+                elif i < n_over + n_down + n_in + n_out:
+                    a = (i + 1 - n_over - n_down - n_in) / n_out; M = G.copy(); M[:3, 3] = Gd[:3, 3] + (G[:3, 3] - Gd[:3, 3]) * a
+                elif i < n_over + n_down + n_in + n_out + n_hold:
                     M = G.copy()
                 else:
-                    a = (i + 1 - n_over - n_down - n_in - n_hold) / n_lift; M = G.copy(); M[2, 3] += lift * a
+                    a = (i + 1 - n_over - n_down - n_in - n_out - n_hold) / n_lift; M = G.copy(); M[2, 3] += lift * a
                 st[k] = M
             steps.append(st)
         sol, err = solve_multi(steps)
-        n_go = n_over + n_down + n_in
+        n_go = n_over + n_down + n_in + n_out
         print(f"[reach] crate hook: {len(steps)} frames, wrist error mean {err.mean()*1000:.1f} mm, max {err.max()*1000:.1f} mm; "
               f"at the slots {err[n_go-5:n_go].mean()*1000:.1f} mm; pelvis z {sol[:, jn.index('base_j_z')].min():.3f}..{sol[:, jn.index('base_j_z')].max():.3f}")
         np.savez(sys.argv[sys.argv.index("--out") + 1], q=sol[None], err=err[None], joint_names=np.array(jn), n_go=n_go,
