@@ -610,3 +610,6 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   (5지/hammer/v8); repeatability run on 65/64/96/123 in parallel; the carry-to-crate chain (place65.sh) queued on
   the same reference.
 - Crate v5 (1 cm higher): render lifts 9 cm level, tester lost -- same split as v4. v6 adds a 3 cm outward slide.
+- 16:52 Crate v6 (3 cm outward slide): render lifts 6.9 cm level, tester lost. v4/v5/v6 renders all lift 7-9 cm and
+  slip as the wrists rise 25 cm; v7 = finger stiffness 100, palms 4.5 cm inside. Hammer #65: first tester run HELD
+  +193 mm, rerun LOST -- the floor pinch is still a coin flip; 64/96/123 reruns pending.
