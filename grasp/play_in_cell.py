@@ -88,6 +88,8 @@ from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics  # noqa: E402
 
 import cell_layout as L  # noqa: E402
 from plan_scene import FINGER_MU, OBJECT_MU  # noqa: E402
+from build_reach_reference import HAND_NAMES, PALM_LINK, HAND_KEEP, robot_cfg  # noqa: E402
+from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 from plan_scene import (  # noqa: E402
     build as build_plan_scene, torso_pose)
 from props import spawn_props  # noqa: E402
@@ -155,7 +157,7 @@ SONIC = "--sonic" in sys.argv   # track the motion with SONIC itself
 # between the walk and the pick read as a teleport -- the walk has a body and
 # the pick has a fixture. decoupled_wbc's lower-body policy is trained to hold
 # a stance while the arms move; grasp/wbc_balance.py drives it.
-cfg = G1_29DOF_CFG.replace(prim_path="/World/G1")
+cfg = robot_cfg(G1_29DOF_CFG.replace(prim_path="/World/G1"), sim_utils, ImplicitActuatorCfg)
 cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
     contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
 cfg.spawn = cfg.spawn.replace(
@@ -178,7 +180,8 @@ if os.environ.get("ARM_KP_SCALE") and "arms" in cfg.actuators:
     cfg.actuators["arms"] = cfg.actuators["arms"].replace(
         stiffness={n: v * _k for n, v in cfg.actuators["arms"].stiffness.items()} if isinstance(cfg.actuators["arms"].stiffness, dict) else cfg.actuators["arms"].stiffness * _k,
         damping={n: v * _k ** 0.5 for n, v in cfg.actuators["arms"].damping.items()} if isinstance(cfg.actuators["arms"].damping, dict) else cfg.actuators["arms"].damping * _k ** 0.5)
-cfg.actuators["hands"] = cfg.actuators["hands"].replace(
+if os.environ.get("HAND") == "inspire": pass
+else: cfg.actuators["hands"] = cfg.actuators["hands"].replace(
     effort_limit=1.4, velocity_limit=12.0)
 # The legs, when the pelvis is welded: PhysX's own PD, not IsaacLab's
 # DC-motor model.
@@ -347,7 +350,7 @@ else:
 robot = Articulation(cfg)
 if os.environ.get("BODY_COLLISION", "0") == "0" and "--hands" in sys.argv:
     from plan_scene import keep_only_hand_collisions
-    print(f"[walk] body does not collide with the cell; hand links kept: {len(keep_only_hand_collisions(stage))}")
+    print(f"[walk] body does not collide with the cell; hand links kept: {len(keep_only_hand_collisions(stage, keep=HAND_KEEP))}")
 
 # Finger pad friction, from GraspGenX's own --finger_mu default of 3.0. Left
 # alone the stage runs on PhysX's 0.5, and a grasp generated under mu 3 on the
@@ -616,9 +619,7 @@ if walk is not None:
     _vmode = False
     if "--hands" in sys.argv:
         _hands = np.load(sys.argv[sys.argv.index("--hands") + 1])
-        _hand_names = [f"{s}_hand_{j}_joint" for s in ("left", "right")
-                       for j in ("index_0", "index_1", "middle_0", "middle_1",
-                                 "thumb_0", "thumb_1", "thumb_2")]
+        _hand_names = list(HAND_NAMES)
         _hand_ids = [robot.find_joints([n])[0][0] for n in _hand_names]
         print(f"[walk] fingers from {os.path.basename(sys.argv[sys.argv.index('--hands') + 1])}: "
               f"{_hands.shape}")
@@ -630,11 +631,11 @@ if walk is not None:
         # "snaps the fingers to the closed angles and they bat the object
         # away" (their comment; measured here 0/154, 0/40).
         _vmode = os.environ.get("CLOSE_MODE", "position") == "velocity"
-        _open_r = _hands[0, 7:].copy()
-        _closed_r = _hands[int(np.argmax(np.abs(_hands[:, 7:] - _open_r).sum(1))), 7:]
-        _vel_ids = [j for j, n in zip(_hand_ids[7:], _hand_names[7:]) if "thumb_0" not in n]
+        _open_r = _hands[0, len(_hand_names) // 2:].copy()
+        _closed_r = _hands[int(np.argmax(np.abs(_hands[:, len(_hand_names) // 2:] - _open_r).sum(1))), len(_hand_names) // 2:]
+        _vel_ids = [j for j, n in zip(_hand_ids[len(_hand_names) // 2:], _hand_names[len(_hand_names) // 2:]) if "thumb_0" not in n]
         _vel = torch.tensor([[float(os.environ.get("CLOSE_VEL", "0.25")) * float(np.sign(c - o))
-                              for (j, n), c, o in zip(zip(_hand_ids[7:], _hand_names[7:]), _closed_r, _open_r)
+                              for (j, n), c, o in zip(zip(_hand_ids[len(_hand_names) // 2:], _hand_names[len(_hand_names) // 2:]), _closed_r, _open_r)
                               if "thumb_0" not in n]], dtype=torch.float32, device=sim.device)
         _stiff0 = robot.data.joint_stiffness[:, _vel_ids].clone()
         _damp0 = robot.data.joint_damping[:, _vel_ids].clone()
@@ -673,7 +674,7 @@ if walk is not None:
                                            joint_ids=_body_ids)
             robot.set_joint_position_target(tgt_q)
             if _vmode:
-                _want = bool(np.abs(_hands[min(i, len(_hands) - 1), 7:] - _open_r).max() > 1e-6)
+                _want = bool(np.abs(_hands[min(i, len(_hands) - 1), len(_hand_names) // 2:] - _open_r).max() > 1e-6)
                 if _want != _squeezing:
                     _squeezing = _want
                     print(f"[walk] frame {i}: fingers {'squeeze (velocity)' if _want else 'release (position)'}")
@@ -718,14 +719,14 @@ if walk is not None:
                 print(f"[obj ] frame {i:5d} pos {np.round(_op, 4)}  moved "
                       f"{np.linalg.norm(_op - obj_start):.4f} m")
                 _out = []
-                for _ln in ("right_hand_palm_link", "right_hand_index_1_link", "right_hand_thumb_2_link",
+                for _ln in (PALM_LINK["right"],
                             "left_ankle_roll_link", "right_ankle_roll_link", "left_knee_link", "right_knee_link"):
                     _b = robot.find_bodies([_ln])[0]
                     if _b:
                         _out.append(f"{_ln.replace('_link', '').replace('right_hand_', 'R.')} "
                                     f"{np.round(robot.data.body_pos_w[0, _b[0]].cpu().numpy() - _op, 2)}")
                 print(f"[hand] frame {i:5d} rel. to object: " + "  ".join(_out))
-                _rh = [j for j in _hand_ids[7:]]
+                _rh = [j for j in _hand_ids[len(_hand_ids) // 2:]]
                 print(f"[hand] frame {i:5d} right finger q {np.round(robot.data.joint_pos[0, _rh].cpu().numpy(), 2)} "
                       f"target {np.round(tgt_q[0, _rh].cpu().numpy(), 2)}; wrist joints "
                       f"{np.round([robot.data.joint_pos[0, robot.find_joints([n])[0][0]].item() for n in ('right_wrist_roll_joint', 'right_wrist_pitch_joint', 'right_wrist_yaw_joint')], 2)}")

@@ -38,7 +38,8 @@ d = np.load(npz); W = d["grasps"]; n = int(d["n_go"]); err = d["err"][:, n - 1]
 P2 = np.eye(4); P2[:3, 3] = [0.0415, -0.003, 0.0]
 rows = []
 for k in range(len(W)):
-    pinch = ((W[k] @ P2) @ np.array([0.07, 0.043, 0, 1]))[:3]
+    pc = [0.15, 0.06, 0] if os.environ.get('HAND') == 'inspire' else [0.07, 0.043, 0]
+    pinch = ((W[k] @ P2) @ np.array(pc + [1]))[:3]
     tp = (pinch[:2] - c[:2]) @ ax; frac = (tp - t0) / max(t1 - t0, 1e-6)
     off = np.linalg.norm((pinch[:2] - c[:2]) - tp * ax)
     rows.append((k, off, frac, err[k]))

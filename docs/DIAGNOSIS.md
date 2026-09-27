@@ -476,3 +476,17 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 2. 손 교체(Inspire 5지): 위 "손 바꾸기 검토"의 포팅 4단계. GraspGenX가 정식으로 아는 손이라 후보의
    질이 다르고, 5지는 손잡이를 감싸 쥘 수 있다.
 3. 그 뒤 같은 체인으로 망치·클램프·드릴·펜치·드라이버 재시도(260928/<부품>/v1).
+
+## 5지(Inspire) 전환 (2026-09-27 10:00~, 영상 `260927/5지/<부품>/vN/`)
+
+- Nucleus의 `g1_29dof_inspire_hand.usd`는 다운로드가 멈춰서, 로컬 Isaac G1 에셋
+  (`Desktop/참고/할일/26/06/260623/G1/g1.usda`, 변형 right_hand/left_hand=Inspire, Physics=PhysX)을 쓴다.
+  손 관절 12개/손(proximal 4 + thumb yaw/pitch + intermediate 4 + thumb intermediate/distal), 손 마운트는
+  Dex3와 같은 손목+(0.0415, −0.003, 0). 손가락은 손 베이스 +x로 뻗고 엄지는 +y/+z 쪽.
+- GraspGenX `inspire_hand` 설명의 hand_base 프레임은 손가락이 −y, 검지가 −z라서 IsaacLab 프레임과
+  고정 회전(x_i=−y_g, y_i=−x_g, z_i=−z_g)으로 잇는다(`reach_from_pose.py`, HAND=inspire). GraspGen 손끝
+  [0,0,0.15]는 IsaacLab 프레임에서 (0.15, 0.06, 0) — 5지 파워 그립의 중심.
+- 로봇 yaml `end2end/robots/g1_inspire_arm.yaml`(gripper_name inspire_hand, grasp_to_tool은 world_joint에서).
+- 열림/닫힘: GraspGenX config(엄지 yaw 1.308 고정, pitch 0→0.5, 손가락 0→1.47), 종속 관절은 근위 관절을
+  따라간다. 손가락 드라이브는 NVIDIA G1_INSPIRE_FTP_CFG의 강성 10/감쇠 0.2/토크 30.
+- 테스터·렌더·순위·체인 전부 `HAND=inspire` 분기. 첫 실행: 망치 손잡이(`5지/hammer/v1`).

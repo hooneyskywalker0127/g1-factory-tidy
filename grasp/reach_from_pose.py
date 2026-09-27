@@ -132,6 +132,16 @@ def grasps_in_cell(grasps_json, cap_dir, base_z=0.98):
         Ry[:3, :3] = np.array([[math.cos(roll), 0, math.sin(roll)], [0, 1, 0], [-math.sin(roll), 0, math.cos(roll)]])
         palms = np.array([p @ Ry for p in palms])
         print(f"[reach] every palm rolled {math.degrees(roll):.0f} deg about its approach axis")
+    # HAND=inspire: GraspGenX's inspire_hand description has its hand_base
+    # frame with the fingers along -y and the index at -z; IsaacLab's G1
+    # Inspire (R_hand_base_link) has the fingers along +x and the index at +z.
+    # Measured on both (index proximal: GraspGenX (0.0003, -0.1365, -0.0323),
+    # IsaacLab (0.1365, -0.0003, 0.0322)). x_i = -y_g, y_i = -x_g, z_i = -z_g.
+    # The mount is the same as the Dex3's: hand_base = wrist + (0.0415, -0.003, 0).
+    if os.environ.get("HAND") == "inspire":
+        M = np.eye(4); M[:3, :3] = np.array([[0, -1, 0], [-1, 0, 0], [0, 0, -1]], float).T
+        palms = np.array([p_ @ M for p_ in palms])
+        print("[reach] Inspire hand: GraspGenX hand_base turned into IsaacLab's R_hand_base frame")
     # the retarget config's tool frame is the wrist: back off along the palm
     # frame by the fixed palm offset
     P = np.eye(4)
@@ -477,6 +487,8 @@ def main():
         tj = os.path.join(os.path.dirname(cap.rstrip("/")), "dex3_tips_in_palm.json")
         if not os.path.exists(tj):
             tj = "/home/sehoon/Documents/GitHub/g1-factory-tidy/results/fable3/dex3_tips_in_palm.json"
+        if os.environ.get("HAND") == "inspire":
+            tj = "/home/sehoon/Documents/GitHub/g1-factory-tidy/results/fable3/inspire_tips_in_palm.json"
         floor_z = float(os.environ.get("SUPPORT_Z", "0.0"))
         # FLOOR_CLEAR: how far above the support the lowest open fingertip
         # must be. 5 mm left the tips at -3 mm after the IK error, pressed

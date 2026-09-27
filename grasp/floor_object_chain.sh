@@ -29,7 +29,7 @@ done
 [ -n "$FOUND" ] || { say "STOP: not found"; exit 1; }
 # 2. far grasps + must-walk check
 cd $GGX; mkdir -p $F/run_far
-PYOPENGL_PLATFORM=egl PYGLET_HEADLESS=true python end2end/e2e_grasp_demo.py --robot_config end2end/robots/g1_right_arm.yaml --env_config end2end/envs/g1_reach_test.yaml --mesh_file $F/$MESH --capture_dir $FOUND --capture_object obj_lang --task pick_and_lift --playback_mode kinematic --no-viser --num_grasps 200 --topk 80 --grasp_threshold 0.7 --planner graspmoe --moe_outlier_threshold 0.03 --max_plan_attempts 1 --seed 0 --export-grasps $F/far_grasps.json > $F/run_far/run.log 2>&1
+PYOPENGL_PLATFORM=egl PYGLET_HEADLESS=true python end2end/e2e_grasp_demo.py --robot_config end2end/robots/${ROBOT_YAML:-g1_right_arm.yaml} --env_config end2end/envs/g1_reach_test.yaml --mesh_file $F/$MESH --capture_dir $FOUND --capture_object obj_lang --task pick_and_lift --playback_mode kinematic --no-viser --num_grasps 200 --topk 80 --grasp_threshold 0.7 --planner graspmoe --moe_outlier_threshold 0.03 --max_plan_attempts 1 --seed 0 --export-grasps $F/far_grasps.json > $F/run_far/run.log 2>&1
 cd $R; say "far grasps: $(python3 -c "import json;print(len(json.load(open('$F/far_grasps.json'))['grasps']))" 2>/dev/null || echo none)"
 python grasp/where_to_stand.py $F/far_grasps.json $FOUND $F/stand_standing.json --from 1.40 0.70 $FOUND_YAW 2>&1 | grep -a "from where it is now\|has to walk\|nothing is reachable" | while read -r l; do say "$l"; done
 # 3. stand: object 0.30 m ahead and 0.18 m to the right of the body, facing the object's direction
@@ -66,7 +66,7 @@ fi
 # 6. grasps, both planners
 cd $GGX
 for pl in graspmoe diffusion; do mkdir -p $F/run_$pl
-  PYOPENGL_PLATFORM=egl PYGLET_HEADLESS=true python end2end/e2e_grasp_demo.py --robot_config end2end/robots/g1_right_arm.yaml --env_config end2end/envs/g1_reach_test.yaml --mesh_file $F/$MESH --capture_dir $F/near --capture_object $GRASP_ON --task pick_and_lift --playback_mode kinematic --no-viser --num_grasps 400 --topk 120 --grasp_threshold 0.5 --planner $pl --max_plan_attempts 1 --seed 0 --export-grasps $F/grasps_$pl.json > $F/run_$pl/run.log 2>&1
+  PYOPENGL_PLATFORM=egl PYGLET_HEADLESS=true python end2end/e2e_grasp_demo.py --robot_config end2end/robots/${ROBOT_YAML:-g1_right_arm.yaml} --env_config end2end/envs/g1_reach_test.yaml --mesh_file $F/$MESH --capture_dir $F/near --capture_object $GRASP_ON --task pick_and_lift --playback_mode kinematic --no-viser --num_grasps 400 --topk 120 --grasp_threshold 0.5 --planner $pl --max_plan_attempts 1 --seed 0 --export-grasps $F/grasps_$pl.json > $F/run_$pl/run.log 2>&1
   cd $R; say "$pl: $(grep -aE 'GraspGen returned' $F/run_$pl/run.log | sed 's/.*INFO - //' | tail -1)"; cd $GGX
 done
 cd $R
@@ -100,7 +100,7 @@ python grasp/build_reach_reference.py results/motion/${RUN}k.pkl $F/reach_pick.n
 python grasp/play_in_cell.py $F/scene.npy --walk results/motion/${RUN}p.pkl --walk-only --clip-arms --hands results/motion/${RUN}p_hands.npy --no-settle --cam-eye -1.8 1.0 1.0 --video $F/pick.mp4 > $F/pick.log 2>&1
 grep -a "\[eval\]" $F/pick.log | while read -r l; do say "render: $l"; done
 next_v() { local o="$1"; mkdir -p "$o"; local n=1; while [ -d "$o/v$n" ]; do n=$((n+1)); done; echo "$o/v$n"; }
-D=$(next_v "/home/sehoon/Desktop/참고/영상보관/g1-factory-tidy/09/$DATE/$OBJ"); mkdir -p $D/evidence; echo "${NOTE:-$OBJ: $QUERY, part=$PART}" > $D/note.txt
+D=$(next_v "/home/sehoon/Desktop/참고/영상보관/g1-factory-tidy/09/$DATE/${HAND_DIR:-}$OBJ"); mkdir -p $D/evidence; echo "${NOTE:-$OBJ: $QUERY, part=$PART}" > $D/note.txt
 cp $F/pick.mp4 $D/${OBJ}_pick.mp4; cp $F/pick_head.mp4 $D/${OBJ}_pick_head.mp4; cp $F/pick_wrist.mp4 $D/${OBJ}_pick_wrist.mp4
 cp $F/near/obj_lang_overlay.png $D/evidence/near_found.png; cp $F/near/obj_part_overlay.png $D/evidence/part_found.png 2>/dev/null; cp $F/look_3/obj_lang_overlay.png $D/evidence/look_3_found.png 2>/dev/null; cp $F/test_grasps.txt $D/evidence/ 
 say "RENDER DONE -> $D"

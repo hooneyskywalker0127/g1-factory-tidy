@@ -23,6 +23,39 @@ FPS = 30
 # the same values grasp/run_wbc_pick.sh read off the plan's last frame.
 HAND_OPEN = [0, 0, 0, 0, 0, 0, 0, 0.4, 0.0, 0.4, 0.0, 0.0, 0.7243, 0.0]
 HAND_CLOSED = [0, 0, 0, 0, 0, 0, 0, 1.5708, 1.7453, 1.5708, 1.7453, 0.0, -1.0472, -1.5]
+HAND_NAMES = [f"{s}_hand_{j}_joint" for s in ("left", "right")
+              for j in ("index_0", "index_1", "middle_0", "middle_1", "thumb_0", "thumb_1", "thumb_2")]
+PALM_LINK = {"left": "left_hand_palm_link", "right": "right_hand_palm_link"}
+HAND_KEEP = ("right_hand", "right_wrist")
+if os.environ.get("HAND") == "inspire":
+    # IsaacLab's G1 + Inspire (local Isaac asset, variants right_hand/left_hand = Inspire): 12 joints a
+    # hand. Open/closed from GraspGenX's inspire_hand config (thumb yaw 1.308 held, pitch 0 -> 0.5 at
+    # this model's limit, fingers 0 -> 1.47); the intermediate joints follow their proximal (the real
+    # hand couples them), the thumb's intermediate/distal follow its pitch. Only the right hand closes.
+    _fingers = ("index", "middle", "ring", "pinky")
+    HAND_NAMES = ([f"L_{f}_proximal_joint" for f in _fingers] + ["L_thumb_proximal_yaw_joint", "L_thumb_proximal_pitch_joint"]
+                  + [f"L_{f}_intermediate_joint" for f in _fingers] + ["L_thumb_intermediate_joint", "L_thumb_distal_joint"]
+                  + [f"R_{f}_proximal_joint" for f in _fingers] + ["R_thumb_proximal_yaw_joint", "R_thumb_proximal_pitch_joint"]
+                  + [f"R_{f}_intermediate_joint" for f in _fingers] + ["R_thumb_intermediate_joint", "R_thumb_distal_joint"])
+    _open_one = [0, 0, 0, 0, 1.308, 0, 0, 0, 0, 0, 0, 0]
+    _closed_one = [1.47, 1.47, 1.47, 1.47, 1.308, 0.5, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2]
+    HAND_OPEN = _open_one + _open_one
+    HAND_CLOSED = _open_one + _closed_one
+    PALM_LINK = {"left": "L_hand_base_link", "right": "R_hand_base_link"}
+    HAND_KEEP = ("right_hand", "right_wrist", "R_")
+INSPIRE_USD = "/home/sehoon/Desktop/참고/할일/26/06/260623/G1/g1.usda"
+
+
+def robot_cfg(base_cfg, sim_utils, ImplicitActuatorCfg):
+    """The articulation for the chosen hand: the stock Dex3 config, or the local Isaac G1 asset with
+    both hands switched to Inspire and NVIDIA's own soft finger drives (unitree.py G1_INSPIRE_FTP_CFG)."""
+    if os.environ.get("HAND") != "inspire":
+        return base_cfg
+    cfg = base_cfg.copy()
+    cfg.spawn = cfg.spawn.replace(usd_path=INSPIRE_USD, variants={"right_hand": "Inspire", "left_hand": "Inspire", "Physics": "PhysX"})
+    cfg.actuators["hands"] = ImplicitActuatorCfg(joint_names_expr=[".*(index|middle|thumb|ring|pinky).*"],
+                                                 effort_limit=30.0, velocity_limit=10.0, stiffness=10.0, damping=0.2, armature=0.001)
+    return cfg
 # THUMB0: the right thumb's abduction, 0 in GraspGenX's description (copied from
 # the unitree_g1 family). With 0 the thumb hangs 5.4 cm (+4 cm of flesh) under
 # the palm and every palm-down pinch on a floor-level handle jammed it; swung
