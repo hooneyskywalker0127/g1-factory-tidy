@@ -676,8 +676,14 @@ if walk is not None:
             # one millisecond step a kinematic replay gets away with -- at one
             # step per frame the hand closed 1.4 s of PD in a 1403-frame clip
             # and the box never moved.
-            robot.write_joint_state_to_sim(tgt_q[:, _body_ids], zero[:, _body_ids],
-                                           joint_ids=_body_ids)
+            # PD_BODY (below): no joint is written, the way the tester replays a
+            # held grasp (test_grasps_in_isaac.py put(): "no joint is written, the
+            # root is placed once per frame"). Written once a frame here, the arm
+            # was snapped onto the plan instead of PD-tracking it, and the #77
+            # hammer grasp that held in the tester flipped the hammer in the render.
+            if os.environ.get("PD_BODY", "1") != "1":
+                robot.write_joint_state_to_sim(tgt_q[:, _body_ids], zero[:, _body_ids],
+                                               joint_ids=_body_ids)
             robot.set_joint_position_target(tgt_q)
             if _vmode:
                 _want = bool(np.abs(_hands[min(i, len(_hands) - 1), len(_hand_names) // 2:] - _open_r).max() > 1e-6)

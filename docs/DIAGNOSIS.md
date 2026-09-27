@@ -506,3 +506,19 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - (12:33) 5지 렌더가 멈춘 원인: play_in_cell이 플랜의 Dex3 손 관절 이름을 조회하다 예외 → Isaac이 종료되지 않고 좀비로 남음(34분). 없는 관절은 건너뛰도록 수정 후 렌더·운반·공구 큐 재실행.
 - (13:25) 렌더가 첫 프레임 전에 조용히 끝난 원인: 플랜의 Dex3 손 관절이 Inspire에 없어 `SystemExit`(Isaac은 종료 후 좀비로 남아 '멈춤'처럼 보임). --clip-arms일 때는 무시하도록 수정, 렌더→운반→공구 재실행.
 - (13:30) 5지 렌더 실패 원인 3: 참조 빌더의 엄지-먼저 마스크가 Dex3 14관절 고정 → 24관절 Inspire에서 IndexError, 손 스케줄 파일이 안 만들어짐. HAND_NAMES 기반으로 수정.
+
+## 2026-09-27 13:50 — Inspire #77: tester HELD, render LOST; the difference was the replay, not the grasp
+
+- The render (5지/hammer/v2, v3) finally produced mp4s, but the hammer was flipped at the close instead of lifted
+  (`[eval] dz -0.26`: the mesh origin sits 13 cm above the centroid, so a flipped hammer reads as -0.26).
+- Checked what differs from the tester run that held (+109 mm):
+  - the plan is identical: `fable40p.pkl` frame 433..583 equals `reach_all.npz` q[77][n_go-1] (joints, base xyz, base rpy, 0.0 error);
+    the render's wrist joints at the hold `[-0.31 0.73 -0.66]` equal the tester's #77 line.
+  - OBJECT_MASS is not implemented anywhere (plan_scene fixes 0.2 kg); the chain's export is a no-op. Same in both.
+  - the close ramp: tester `--slow` 30 frames, reference builder 20 frames; the low-gain fingers take ~100 frames either way.
+  - **the replay differs**: the tester's PD_BODY path writes the root once a frame and never writes a joint
+    (`put()`), the render's PD_BODY path still wrote all body joints once a frame (`write_joint_state_to_sim(tgt_q[:, _body_ids])`),
+    snapping the arm onto the plan instead of letting the PD track it, which is exactly the "garbage velocities / contact kicks"
+    mode DIAGNOSIS already blamed once. Fixed: under PD_BODY=1 the render writes no joints (play_in_cell.py, the `_hands` block).
+- Also: the render's hammer rolled 1.6 cm / 2.9 cm during frames 0-100 while the tester's settle moved 0 m, 0 deg — watch this on v4.
+- v4 render queued (insp77_v4.sh); clamp/drill/pliers/screwdriver/hammer2 Inspire chains running behind it.
