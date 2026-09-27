@@ -498,3 +498,7 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   4파일, base 39 MB)를 `assets/g1_inspire/`에 받았다. 관절 이름·오프셋은 로컬 에셋과 동일. Sensor 변형은
   원격 참조로 멈추므로 "None". `fix_root_link=False`로는 관절 생성이 실패(root_joint 불일치 + 종속 관절
   mimic 오류) → `FIX_ROOT=1`로 검증 중.
+- (11:27 점검) 좀비 Isaac 프로세스 3개(RAM 15 GB)를 PID로 정리. 공식 Inspire 에셋에는 R_hand_base_link 바디가 없어(이름 다름) 테스터가 죽음 → 바디 이름 확인 후 수정.
+- (11:45) 5지 #77: 근위 관절은 1.1 rad까지 닫혔지만 중간·말단(mimic) 관절을 같이 구동하니 −0.34 한계로 튀어 손끝이 바깥으로 벌어짐 → 근위+엄지 yaw/pitch만 구동하도록 수정, 재검증.
+- (11:48) **5지 #77 HELD: 들기 후 +109 mm** (망치 0.5 kg, 손잡이 35% 지점, 근위 관절만 구동). #155 LOST.
+  3회 재검증 + 영상(`5지/hammer/v2`) 진행 중.

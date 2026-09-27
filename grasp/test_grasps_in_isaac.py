@@ -346,10 +346,11 @@ for k in order:
         _bp = box.data.root_pos_w[0].cpu().numpy()
         _hq = robot.data.joint_pos[0, hand_ids[7:]].cpu().numpy()
         _tips = {}
-        for _ln in (PALM_LINK["right"], "right_hand_index_1_link", "right_hand_middle_1_link", "right_hand_thumb_2_link"):
+        for _ln in ((PALM_LINK["right"], "right_hand_index_1_link", "right_hand_middle_1_link", "right_hand_thumb_2_link") if os.environ.get("HAND") != "inspire"
+                    else (PALM_LINK["right"], "R_index_intermediate", "R_pinky_intermediate", "R_thumb_distal")):
             _b = robot.find_bodies([_ln])[0]
             if _b:
-                _tips[_ln.replace("right_hand_", "")] = robot.data.body_pos_w[0, _b[0]].cpu().numpy() - _bp
+                _tips[_ln.replace("right_hand_", "").replace("R_", "")] = robot.data.body_pos_w[0, _b[0]].cpu().numpy() - _bp
         print(f"[test]    right fingers at close (index0 index1 middle0 middle1 thumb0 thumb1 thumb2): "
               f"{np.round(_hq, 2)} of closed {np.round(HAND_CLOSED[len(HAND_CLOSED) // 2:], 2)}")
         print("[test]    box-relative: " + "  ".join(f"{k} {np.round(v, 3)}" for k, v in _tips.items()))

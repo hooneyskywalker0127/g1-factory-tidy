@@ -41,7 +41,7 @@ if os.environ.get("HAND") == "inspire":
     _closed_one = [1.47, 1.47, 1.47, 1.47, 1.308, 0.5, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2]
     HAND_OPEN = _open_one + _open_one
     HAND_CLOSED = _open_one + _closed_one
-    PALM_LINK = {"left": "L_hand_base_link", "right": "R_hand_base_link"}
+    PALM_LINK = {"left": "left_wrist_yaw_link", "right": "right_wrist_yaw_link"}   # the official asset merges the hand base into the wrist link
     HAND_KEEP = ("right_hand", "right_wrist", "R_")
 # the official IsaacLab G1 + Inspire asset (Nucleus 5.1), downloaded to the repo: 39 MB base with the meshes
 INSPIRE_USD = "/home/sehoon/Documents/GitHub/g1-factory-tidy/assets/g1_inspire/g1_29dof_inspire_hand.usd"
@@ -54,7 +54,10 @@ def robot_cfg(base_cfg, sim_utils, ImplicitActuatorCfg):
         return base_cfg
     cfg = base_cfg.copy()
     cfg.spawn = cfg.spawn.replace(usd_path=INSPIRE_USD, variants={"Physics": "PhysX", "Sensor": "None", "Robot": "Robot"})
-    cfg.actuators["hands"] = ImplicitActuatorCfg(joint_names_expr=[".*(index|middle|thumb|ring|pinky).*"],
+    # only the proximal joints and the thumb's yaw/pitch are driven; the intermediate and distal joints
+    # are PhysX mimic joints in this asset (measured: driven as well, they ran to their -0.34 limit while
+    # the proximals closed to 1.1, so the fingertips flared out instead of curling round the handle)
+    cfg.actuators["hands"] = ImplicitActuatorCfg(joint_names_expr=[".*_proximal_joint", ".*_thumb_proximal_(yaw|pitch)_joint"],
                                                  effort_limit=30.0, velocity_limit=10.0, stiffness=10.0, damping=0.2, armature=0.001)
     return cfg
 # THUMB0: the right thumb's abduction, 0 in GraspGenX's description (copied from
