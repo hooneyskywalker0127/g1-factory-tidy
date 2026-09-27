@@ -628,3 +628,8 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - 17:40 Crate v9 = full 25 cm lift: the crate rose 10.7 cm, then the right hand slid up the wall, 17 deg tilt, dropped.
   The rim pinch holds ~10 cm of lift. v10 = the same pinch with a 12 cm lift (enough floor clearance to carry).
   Clamp v2 (re-reach, 5 mm margin): tester 1/40 (#58), render LOST.
+- 17:45 #93 (slide) render LOST; its tester rerun also LOST (first run held). Sleep hypothesis: the render's object
+  has slept 13 s before contact, the tester's is awake -> OBJECT_NO_SLEEP=1 (plan_scene, sleep threshold 0) and a
+  SETTLE_IDLE=300 tester run to check the converse. The first no-sleep render died at start: GPU buffer creation
+  failed with 14.6 of 16.3 GB in use (six Isaac processes) -- re-queued behind the crate renders. Crate carry chain
+  dry run: walk + two-hand place solved and the 936-frame reference built; render pending.

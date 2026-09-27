@@ -89,6 +89,12 @@ def spawn_target(stage, mesh_path, T_torso, T_in_torso):
     # exactly this; the scene enables it too (SimulationCfg physx.enable_ccd).
     from pxr import PhysxSchema
     PhysxSchema.PhysxRigidBodyAPI.Apply(prim).CreateEnableCCDAttr(True)
+    if os.environ.get("OBJECT_NO_SLEEP", "1") == "1":
+        # a body at rest for a few seconds goes to sleep in PhysX; the render's object has rested 13 s when the
+        # hand arrives, the tester's was teleported 1 s before -- the one remaining difference between the two
+        # (2026-09-27 17:40). Real objects do not sleep: keep it awake.
+        PhysxSchema.PhysxRigidBodyAPI(prim).CreateSleepThresholdAttr(0.0)
+        PhysxSchema.PhysxRigidBodyAPI(prim).CreateStabilizationThresholdAttr(0.0)
     UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
     UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(
         "convexHull")
