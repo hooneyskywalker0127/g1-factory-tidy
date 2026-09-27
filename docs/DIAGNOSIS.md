@@ -550,3 +550,8 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   the RH56's rigid linkage. Tester #77: intermediates 0.69-0.83 for proximals 0.84-0.93, box +0.031 at close,
   lift +0.178 m HELD (was +0.109 with floppy tips). Render v5 (200 Hz, no four-bar): LOST, hammer turned 25 deg.
   Render v6 with the four-bar queued; clamp/drill re-tests queued behind the tool queue (queue_retest.sh).
+- 15:05 v6 (four-bar) render: the fingers wrapped the handle and lifted it 2.5 cm, then it slipped during the lift.
+  Wrist view at 13.4 s: the OPEN THUMB lands on the hammer head during the descent (#77 grips the handle right next
+  to the head) and tilts the hammer 16 deg before the close -- the tester's hold and the render's loss differ only by
+  that chaotic nudge. Next: top-40 with the four-bar (test_all4bar.txt), prefer a held candidate farther from the head,
+  and re-verify each held one 3x before rendering.
