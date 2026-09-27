@@ -34,7 +34,7 @@ from scipy.spatial.transform import Rotation as R  # noqa: E402
 
 from plan_scene import FINGER_MU, build as build_plan_scene, torso_pose, keep_only_hand_collisions, floor_slab  # noqa: E402
 from props import spawn_props  # noqa: E402
-from build_reach_reference import HAND_OPEN, HAND_CLOSED, HAND_NAMES, PALM_LINK, HAND_KEEP, mujoco_names, robot_cfg, stiffen_mimic  # noqa: E402
+from build_reach_reference import HAND_OPEN, HAND_CLOSED, HAND_NAMES, PALM_LINK, HAND_KEEP, mujoco_names, robot_cfg, stiffen_mimic, soft_mimic  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 
 meta = json.load(open(os.path.splitext(SCENE)[0] + ".json"))
@@ -205,6 +205,7 @@ def put(root7, dof29, hands14):
         robot.write_root_state_to_sim(rs)
         for _ in range(substeps):
             robot.update(sim.get_physics_dt())
+            soft_mimic(robot, tgt)
             robot.set_joint_position_target(tgt)
             if SQUEEZING[0]:
                 robot.set_joint_velocity_target(SQUEEZING[1], joint_ids=SQUEEZING[2])
@@ -223,6 +224,7 @@ def put(root7, dof29, hands14):
         # buffer held at the last update() -- once per frame, they moved at
         # 1/33 of the drive (0.0075 rad/s for 0.25). Refresh the buffer first.
         robot.update(sim.get_physics_dt())
+        soft_mimic(robot, tgt)
         robot.set_joint_position_target(tgt)
         if SQUEEZING[0]:
             robot.set_joint_velocity_target(SQUEEZING[1], joint_ids=SQUEEZING[2])

@@ -83,9 +83,39 @@ def robot_cfg(base_cfg, sim_utils, ImplicitActuatorCfg):
     # only the proximal joints and the thumb's yaw/pitch are driven; the intermediate and distal joints
     # are PhysX mimic joints in this asset (measured: driven as well, they ran to their -0.34 limit while
     # the proximals closed to 1.1, so the fingertips flared out instead of curling round the handle)
-    cfg.actuators["hands"] = ImplicitActuatorCfg(joint_names_expr=[".*_proximal_joint", ".*_thumb_proximal_(yaw|pitch)_joint"],
+    expr = [".*_proximal_joint", ".*_thumb_proximal_(yaw|pitch)_joint"]
+    if SOFT_MIMIC:
+        # SOFT_MIMIC (default on): the intermediate/distal joints are driven too, at a target that soft_mimic()
+        # rewrites every substep from the MEASURED proximal angle with the asset's gear ratios -- a rigid four-bar,
+        # which the PhysX mimic joint at any frequency the 1 kHz step tolerates is not (200 Hz: folds to -0.34 on
+        # contact; 1000 Hz: 0.6-0.7 of the proximal).
+        expr += [".*_intermediate_joint", ".*_thumb_distal_joint"]
+    cfg.actuators["hands"] = ImplicitActuatorCfg(joint_names_expr=expr,
                                                  effort_limit=30.0, velocity_limit=10.0, stiffness=10.0, damping=0.2, armature=0.001)
     return cfg
+
+
+SOFT_MIMIC = os.environ.get("HAND") == "inspire" and os.environ.get("SOFT_MIMIC", "1") == "1"
+# (mimic joint, its reference, gearing) as the official asset authors them (physxMimicJoint:rotZ, gearing negated)
+_MIMIC = [(f"{s}_{f}_intermediate_joint", f"{s}_{f}_proximal_joint", 1.0) for s in ("L", "R") for f in ("index", "middle", "ring", "pinky")]
+_MIMIC += [(f"{s}_thumb_intermediate_joint", f"{s}_thumb_proximal_pitch_joint", 1.6) for s in ("L", "R")]
+_MIMIC += [(f"{s}_thumb_distal_joint", f"{s}_thumb_proximal_pitch_joint", 2.4) for s in ("L", "R")]
+_mimic_ids = None
+
+
+def soft_mimic(robot, tgt):
+    """Rewrite the intermediate/distal targets in tgt (1, n_joints) from the measured proximal angles. Call after
+    robot.update() and before set_joint_position_target(), every substep. No-op unless SOFT_MIMIC."""
+    global _mimic_ids
+    if not SOFT_MIMIC:
+        return tgt
+    if _mimic_ids is None:
+        _mimic_ids = [(robot.find_joints([a])[0][0], robot.find_joints([b])[0][0], r) for a, b, r in _MIMIC]
+        print(f"[hand] software four-bar on {len(_mimic_ids)} inspire joints (SOFT_MIMIC)")
+    q = robot.data.joint_pos[0]
+    for a, b, r in _mimic_ids:
+        tgt[0, a] = r * float(q[b])
+    return tgt
 # THUMB0: the right thumb's abduction, 0 in GraspGenX's description (copied from
 # the unitree_g1 family). With 0 the thumb hangs 5.4 cm (+4 cm of flesh) under
 # the palm and every palm-down pinch on a floor-level handle jammed it; swung

@@ -88,7 +88,7 @@ from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics  # noqa: E402
 
 import cell_layout as L  # noqa: E402
 from plan_scene import FINGER_MU, OBJECT_MU  # noqa: E402
-from build_reach_reference import HAND_NAMES, PALM_LINK, HAND_KEEP, robot_cfg, stiffen_mimic  # noqa: E402
+from build_reach_reference import HAND_NAMES, PALM_LINK, HAND_KEEP, robot_cfg, stiffen_mimic, soft_mimic  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 from plan_scene import (  # noqa: E402
     build as build_plan_scene, torso_pose)
@@ -721,6 +721,7 @@ if walk is not None:
                 # frame, it reset the simulated fingers every substep and they
                 # moved at 1/33 of their drive. Refresh it first.
                 robot.update(sim.get_physics_dt())
+                soft_mimic(robot, tgt_q)
                 robot.set_joint_position_target(tgt_q)
                 if _vmode:
                     robot.set_joint_velocity_target(_vel if _squeezing else torch.zeros_like(_vel), joint_ids=_vel_ids)
