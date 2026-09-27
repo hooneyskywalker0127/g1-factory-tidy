@@ -605,3 +605,8 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   up and the open fingertips sat 10 cm above the floor (test: 0/40, tips z +0.107). Reverted (INSPIRE_DOUBLE_MAP=1
   reproduces it). What stands from this afternoon: PD_BODY must not write joints, SOFT_MIMIC four-bar, SEAM_BLEND,
   the descent lands the fingers on the handle -> fingertip margin 5 mm instead of 3 cm (re-reach queue restarted).
+- 16:40 Hammer, correct frame, TIP_FLESH 0.005 (fingertips down to the floor beside the handle), four-bar, seam
+  blend: 5/40 HELD in the tester -- #65 (+193 mm), #64 (+138), #96 (+142), #123 (+133), #95 (+79). #65 rendering
+  (5지/hammer/v8); repeatability run on 65/64/96/123 in parallel; the carry-to-crate chain (place65.sh) queued on
+  the same reference.
+- Crate v5 (1 cm higher): render lifts 9 cm level, tester lost -- same split as v4. v6 adds a 3 cm outward slide.
