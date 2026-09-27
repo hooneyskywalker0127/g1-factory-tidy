@@ -458,7 +458,7 @@ if target_body is not None:
 missing = [n for n in names if n not in robot.joint_names]       # find_joints raises on a missing name
 names = [n for n in names if n not in missing]
 ids = [robot.find_joints([n])[0][0] for n in names]
-if missing and not CLIP_ARMS:
+if missing and "--clip-arms" not in sys.argv:
     print(f"[play] joints missing on the Isaac G1: {missing}")
     raise SystemExit("the plan drives joints this hand does not have")
 if missing:

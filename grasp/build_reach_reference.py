@@ -143,7 +143,7 @@ def main():
             # #54): the thumb first over the first half of the ramp, the
             # fingers over the second -- the thumb closing after the fingers
             # jammed on every palm-down grasp (DIAGNOSIS.md, 02:40)
-            th = np.array([0] * 11 + [1, 1, 1], bool)
+            th = np.array([("thumb" in n and n.startswith(("right", "R_"))) for n in HAND_NAMES], bool)   # the right thumb, any hand
             a_t = min(1.0, (k + 1) / (ramp // 2)); a_f = min(1.0, max(0.0, (k + 1 - ramp // 2) / (ramp // 2)))
             h = np.array(HAND_OPEN, np.float32)
             h[th] = (1 - a_t) * np.array(HAND_OPEN)[th] + a_t * np.array(HAND_CLOSED)[th]
