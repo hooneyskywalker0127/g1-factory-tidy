@@ -595,3 +595,13 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   colliding). The tester of the same plan lost it (right fingers pried back), and the crate follows only 8 of the
   25 cm the wrists rise -- marginal. v5 = 1 cm higher. Next after a repeatable lift: stand + carry to the desk
   (two-arm carry) and set down.
+
+## 2026-09-27 16:30 — CORRECTION of the 15:50 "root cause": the frame was right all along
+
+- `grasps_in_cell()` multiplies every exported grasp by the JSON's `grasp_to_tool_transform`, and for
+  g1_inspire_arm.yaml that transform IS the gripper URDF's world_joint. So the palms handed to the Inspire branch
+  were already hand_base poses and the single axis swap M was correct. My 15:50 check compared "G@M" with
+  "G@Twj@M" on the raw GraspGen points and forgot the loader's factor. With the double transform the palms faced
+  up and the open fingertips sat 10 cm above the floor (test: 0/40, tips z +0.107). Reverted (INSPIRE_DOUBLE_MAP=1
+  reproduces it). What stands from this afternoon: PD_BODY must not write joints, SOFT_MIMIC four-bar, SEAM_BLEND,
+  the descent lands the fingers on the handle -> fingertip margin 5 mm instead of 3 cm (re-reach queue restarted).

@@ -148,10 +148,15 @@ def grasps_in_cell(grasps_json, cap_dir, base_z=0.98):
         # and the measured finger links, 2026-09-27 15:50) -- the two "holds" were scoops by luck.
         from scipy.spatial.transform import Rotation as _Rw
         Twj = np.eye(4); Twj[:3, :3] = _Rw.from_euler("xyz", [1.570796, 2.356194, 0.0]).as_matrix(); Twj[:3, 3] = [0.065, -0.01, 0.0]
-        if os.environ.get("INSPIRE_OLD_MAP") != "1":
+        # 2026-09-27 16:30 CORRECTION: grasps_in_cell() already applies the JSON's grasp_to_tool_transform,
+        # which IS this world_joint (g1_inspire_arm.yaml), so the palms here are hand_base poses and only M
+        # belongs. Applying Twj again (15:50-16:25) turned the palms face-up with the fingertips 10 cm off the
+        # floor; the 15:50 note above was wrong about the pipeline, not about the frames. INSPIRE_DOUBLE_MAP=1
+        # reproduces the mistake.
+        if os.environ.get("INSPIRE_DOUBLE_MAP") == "1":
             M = Twj @ M
         palms = np.array([p_ @ M for p_ in palms])
-        print("[reach] Inspire hand: GraspGen gripper frame -> hand_base (world_joint) -> IsaacLab palm frame")
+        print("[reach] Inspire hand: hand_base (grasp_to_tool applied by the loader) -> IsaacLab palm frame")
     # the retarget config's tool frame is the wrist: back off along the palm
     # frame by the fixed palm offset
     P = np.eye(4)
