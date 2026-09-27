@@ -453,8 +453,11 @@ if target_body is not None:
     obj_start = target_body.data.root_pos_w[0].cpu().numpy()
     print(f"[obj ] start {np.round(obj_start,4)}")
 
-ids = [robot.find_joints([n])[0][0] for n in names]
+# the plan's joint list is the Dex3 arm+hand; with another hand (HAND=inspire) the hand
+# entries do not exist -- they are only needed when the plan drives the arm (not --clip-arms)
 missing = [n for n in names if not robot.find_joints([n])[0]]
+names = [n for n in names if n not in missing]
+ids = [robot.find_joints([n])[0][0] for n in names]
 if missing:
     raise SystemExit(f"joints missing on the Isaac G1: {missing}")
 
