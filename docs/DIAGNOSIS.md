@@ -590,3 +590,8 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   until the pinch point was ~0.15 m up (handle at 0.03). Only 25/156 stayed "on the axis". The hammer handle is
   2-3 cm off the floor near the head, so the fingertips must be allowed down to the floor: re-reach queue restarted
   with TIP_FLESH=0.005 (rereach_render.sh). (A pkill on the script's name killed my own shell once more: exit 144.)
+- 16:20 CRATE v4 (5지/crate/v4): the render lifts the 2 kg crate 8 cm, level, with both Inspire hands pinching the
+  long walls' rims (thumb outside 2 cm under the top, four fingers inside; finger stiffness 40, both hands closing and
+  colliding). The tester of the same plan lost it (right fingers pried back), and the crate follows only 8 of the
+  25 cm the wrists rise -- marginal. v5 = 1 cm higher. Next after a repeatable lift: stand + carry to the desk
+  (two-arm carry) and set down.
