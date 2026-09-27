@@ -34,7 +34,7 @@ from scipy.spatial.transform import Rotation as R  # noqa: E402
 
 from plan_scene import FINGER_MU, build as build_plan_scene, torso_pose, keep_only_hand_collisions, floor_slab  # noqa: E402
 from props import spawn_props  # noqa: E402
-from build_reach_reference import HAND_OPEN, HAND_CLOSED, HAND_NAMES, PALM_LINK, HAND_KEEP, mujoco_names, robot_cfg  # noqa: E402
+from build_reach_reference import HAND_OPEN, HAND_CLOSED, HAND_NAMES, PALM_LINK, HAND_KEEP, mujoco_names, robot_cfg, stiffen_mimic  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 
 meta = json.load(open(os.path.splitext(SCENE)[0] + ".json"))
@@ -77,6 +77,7 @@ p0, q0 = np.asarray(clip["root_trans_offset"])[0], np.asarray(clip["root_rot"])[
 cfg.init_state = cfg.init_state.replace(pos=tuple(float(v) for v in p0),
                                         rot=(float(q0[3]), float(q0[0]), float(q0[1]), float(q0[2])))
 robot = Articulation(cfg)
+stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_reference.py)
 if os.environ.get("BODY_COLLISION", "0") == "0":
     _kept = keep_only_hand_collisions(stage, keep=HAND_KEEP)
     print(f"[test] body does not collide with the cell; hand links kept: {len(_kept)} ({_kept[:2]}...)")

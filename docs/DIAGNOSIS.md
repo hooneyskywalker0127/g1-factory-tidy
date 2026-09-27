@@ -522,3 +522,21 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
     mode DIAGNOSIS already blamed once. Fixed: under PD_BODY=1 the render writes no joints (play_in_cell.py, the `_hands` block).
 - Also: the render's hammer rolled 1.6 cm / 2.9 cm during frames 0-100 while the tester's settle moved 0 m, 0 deg — watch this on v4.
 - v4 render queued (insp77_v4.sh); clamp/drill/pliers/screwdriver/hammer2 Inspire chains running behind it.
+
+## 2026-09-27 14:30 — why the tester held #77 and the render did not: the passive fingertips
+
+- Object pose: identical in both after all. The tester's "settle: moved 0" was a stale read (`box.update(0.0)` does not
+  refresh; `update(dt)` does), the hammer tips 8.7 deg from its placed pose in both runs (placed on the head's edge with
+  the centroid outside the support) and lands at the same centroid (-0.294, 0.095, 0.028). Render eval numbers are the
+  mesh ORIGIN (13 cm above the centroid), which is why a flipped hammer reads dz -0.26.
+- Palm path: tester grasp palm (-0.223, 0.031, 0.215), render frame 500 (-0.218, 0.027, 0.206). Same to 1 cm.
+- Difference: the Inspire asset couples intermediate/distal joints to the proximals with PhysX MIMIC joints at
+  25 Hz / damping 0.005. Free in the air they track (finger_mimic_test.py); under contact they fold to the -0.34
+  limit (every close: proximal 1.47, intermediate -0.34). After 12 s of walking with swinging arms the render's
+  fingertips sat CURLED (+0.3..0.46, thumb +0.74) at the approach, the tester's hung straight (-0.1..-0.3):
+  shorter fingers, no nudge on the handle, no hold.
+- Fix: `stiffen_mimic()` (build_reach_reference.py) sets naturalFrequency 200 Hz / dampingRatio 1.0 on the spawned
+  prims, called after Articulation(cfg) in the tester and the render. Tester with it: #77 HELD +0.132 (fingertips still
+  fold under contact, but the free-space state now matches). #155/#78 LOST as before. v5 render running.
+- Scratch experiment harness note: a scene-only Isaac script whose RigidObject is read with update(0.0) shows nothing
+  moving; always read with update(physics_dt).

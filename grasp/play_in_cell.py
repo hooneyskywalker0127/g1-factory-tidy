@@ -88,7 +88,7 @@ from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics  # noqa: E402
 
 import cell_layout as L  # noqa: E402
 from plan_scene import FINGER_MU, OBJECT_MU  # noqa: E402
-from build_reach_reference import HAND_NAMES, PALM_LINK, HAND_KEEP, robot_cfg  # noqa: E402
+from build_reach_reference import HAND_NAMES, PALM_LINK, HAND_KEEP, robot_cfg, stiffen_mimic  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 from plan_scene import (  # noqa: E402
     build as build_plan_scene, torso_pose)
@@ -348,6 +348,7 @@ else:
         pos=STAND,
         rot=(math.cos(_y / 2.0), 0.0, 0.0, math.sin(_y / 2.0)))
 robot = Articulation(cfg)
+stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_reference.py)
 if os.environ.get("BODY_COLLISION", "0") == "0" and "--hands" in sys.argv:
     from plan_scene import keep_only_hand_collisions
     print(f"[walk] body does not collide with the cell; hand links kept: {len(keep_only_hand_collisions(stage, keep=HAND_KEEP))}")
@@ -649,7 +650,13 @@ if walk is not None:
         if _vmode:
             print(f"[walk] velocity-mode close: kd {os.environ.get('CLOSE_KD', '8.0')}, "
                   f"{_vel[0].cpu().numpy()} rad/s")
-    for i in range(len(walk["dof"])):
+    for _i in range(int(os.environ.get("DIAG_IDLE_FRAMES", "0"))):        # diagnostic: step with no writes at all, watch the object
+        for _ss in range(max(1, round((1.0 / FPS) / sim.get_physics_dt()))):
+            sim.step()
+        if target_body is not None:
+            target_body.update(sim.get_physics_dt())
+            print(f"[obj ] idle {_i} pos {np.round(target_body.data.root_pos_w[0].cpu().numpy(), 4)}  vel {np.round(target_body.data.root_lin_vel_w[0].cpu().numpy(), 3)}")
+    for i in range(min(len(walk["dof"]), int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
         for k, jid in enumerate(walk_ids):
             tgt_q[0, jid] = float(walk["dof"][i, k])
         if not CLIP_ARMS:
@@ -706,7 +713,7 @@ if walk is not None:
             # a hand that sat a few mm away from where the PD-driven arm had
             # held the clamp (render: the clamp never moved; tester: +79 mm).
             _pd_body = os.environ.get("PD_BODY", "1") == "1"
-            if _pd_body:
+            if _pd_body and os.environ.get("SKIP_ROOT_WRITE") != "1":   # SKIP_ROOT_WRITE: diagnostic only
                 robot.write_root_state_to_sim(_root)
             for _ss in range(max(1, round((1.0 / FPS) / sim.get_physics_dt()))):
                 # write_joint_state_to_sim with a subset pushes the whole joint
@@ -729,7 +736,8 @@ if walk is not None:
                 target_body.update(sim.get_physics_dt())
                 _op = target_body.data.root_pos_w[0].cpu().numpy()
                 print(f"[obj ] frame {i:5d} pos {np.round(_op, 4)}  moved "
-                      f"{np.linalg.norm(_op - obj_start):.4f} m")
+                      f"{np.linalg.norm(_op - obj_start):.4f} m  vel {np.round(target_body.data.root_lin_vel_w[0].cpu().numpy(), 3)}"
+                      f"  quat {np.round(target_body.data.root_quat_w[0].cpu().numpy(), 3)}")
                 _out = []
                 for _ln in (PALM_LINK["right"],
                             "left_ankle_roll_link", "right_ankle_roll_link", "left_knee_link", "right_knee_link"):

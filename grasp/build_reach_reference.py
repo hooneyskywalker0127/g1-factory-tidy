@@ -47,6 +47,32 @@ if os.environ.get("HAND") == "inspire":
 INSPIRE_USD = "/home/sehoon/Documents/GitHub/g1-factory-tidy/assets/g1_inspire/g1_29dof_inspire_hand.usd"
 
 
+def stiffen_mimic(stage, root="/World/G1"):
+    """HAND=inspire: the official asset couples each intermediate/distal joint to its proximal with a PhysX mimic
+    joint (gearing -1 / -1.6 / -2.4) at naturalFrequency 25 Hz, dampingRatio 0.005 -- a spring so soft that the first
+    contact folds the passive segment back to its -0.34 limit (measured in every tester/render close: proximal 1.47,
+    intermediate -0.34, so only the proximal segment ever curled round the handle). Free in the air the coupling
+    tracks (finger_mimic_test: 0.26/0.35, 0.51/0.60). The real RH56 four-bar is rigid: stiffen the coupling here,
+    after Articulation(cfg) and before sim.reset(). MIMIC_FREQ / MIMIC_DAMPING override; MIMIC_FREQ=0 leaves it."""
+    if os.environ.get("HAND") != "inspire":
+        return 0
+    freq = float(os.environ.get("MIMIC_FREQ", "200"))
+    if freq <= 0:
+        return 0
+    ratio = float(os.environ.get("MIMIC_DAMPING", "1.0"))
+    from pxr import Usd  # noqa: E402  (only inside Isaac)
+    n = 0
+    for prim in Usd.PrimRange(stage.GetPrimAtPath(root)):
+        for a in prim.GetAttributes():
+            nm = a.GetName()
+            if nm.startswith("physxMimicJoint:") and nm.endswith(":naturalFrequency"):
+                a.Set(freq); n += 1
+            elif nm.startswith("physxMimicJoint:") and nm.endswith(":dampingRatio"):
+                a.Set(ratio)
+    print(f"[hand] inspire mimic joints stiffened: {n} at {freq:.0f} Hz, damping ratio {ratio}")
+    return n
+
+
 def robot_cfg(base_cfg, sim_utils, ImplicitActuatorCfg):
     """The articulation for the chosen hand: the stock Dex3 config, or the local Isaac G1 asset with
     both hands switched to Inspire and NVIDIA's own soft finger drives (unitree.py G1_INSPIRE_FTP_CFG)."""
