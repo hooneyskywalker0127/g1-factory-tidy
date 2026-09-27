@@ -470,6 +470,40 @@ def main():
         print(f"[reach] wrote {sys.argv[sys.argv.index('--out') + 1]}")
         return
 
+    # --crate-place X Y Z: a two-hand set-down. Both wrists keep the poses the carry leaves them in and move by
+    # one common vector until their MIDPOINT is at (X, Y, Z) (Z = the wrist height that puts the crate's bottom
+    # PLACE_CLEAR above the desk top: the wrists ride 0.35 m above the crate bottom in the rim pinch), then both
+    # descend PLACE_DOWN, then the fingers open (the schedule does the opening from open_from). Needs BIMANUAL=1.
+    if "--crate-place" in sys.argv:
+        _i = sys.argv.index("--crate-place"); X, Y, Z = [float(sys.argv[_i + k]) for k in (1, 2, 3)]
+        li = list(cfg.tool_frames).index("left_wrist_yaw_link"); ri = list(cfg.tool_frames).index("right_wrist_yaw_link")
+        T0 = {}
+        for k in (li, ri):
+            M = np.eye(4); M[:3, 3] = pos0[k]; M[:3, :3] = quat_to_mat(quat0[k]); T0[k] = M
+        mid = (T0[li][:3, 3] + T0[ri][:3, 3]) / 2.0
+        delta = np.array([X, Y, Z]) - mid
+        down = float(os.environ.get("PLACE_DOWN", "0.05"))
+        n_go, n_down, n_hold = 90, 30, 45
+        steps = []
+        for i in range(n_go + n_down + n_hold):
+            st = {}
+            for k in (li, ri):
+                M = T0[k].copy()
+                if i < n_go:
+                    M[:3, 3] = T0[k][:3, 3] + delta * (i + 1) / n_go
+                elif i < n_go + n_down:
+                    M[:3, 3] = T0[k][:3, 3] + delta; M[2, 3] -= down * (i + 1 - n_go) / n_down
+                else:
+                    M[:3, 3] = T0[k][:3, 3] + delta; M[2, 3] -= down
+                st[k] = M
+            steps.append(st)
+        sol, err = solve_multi(steps)
+        print(f"[reach] crate place: {len(steps)} frames, wrists' midpoint {np.round(mid, 3)} -> {np.round([X, Y, Z], 3)} then down {down:.2f}; "
+              f"wrist error mean {err.mean()*1000:.1f} mm, max {err.max()*1000:.1f} mm; pelvis z {sol[:, jn.index('base_j_z')].min():.3f}..{sol[:, jn.index('base_j_z')].max():.3f}")
+        np.savez(out, q=sol, joint_names=np.array(jn), err=err, close_from=-1, lift_from=-1, open_from=n_go + n_down, grasp=np.eye(4), best=-1)
+        print(f"[reach] wrote {out}")
+        return
+
     if place is not None:
         T0 = np.eye(4)
         T0[:3, 3] = pos0[wi]

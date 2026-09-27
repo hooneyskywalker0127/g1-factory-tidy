@@ -57,6 +57,8 @@ def main():
     pick_pkl, pick_hands, walk2_pkl, place_npz, name = sys.argv[1:6]
     names = mujoco_names()
     arm = [7 + names.index(n) for n in RIGHT_ARM]
+    if os.environ.get("BOTH_ARMS") == "1":               # a two-hand carry (the crate): the left arm stays too
+        arm += [7 + names.index(n.replace("right_", "left_")) for n in RIGHT_ARM]
     pick = clip_qpos(pick_pkl)
     hands_pick = np.load(pick_hands)
     walk2 = clip_qpos(walk2_pkl)
