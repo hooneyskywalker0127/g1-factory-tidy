@@ -619,3 +619,7 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   beyond the handle, slide back against it, then close) after the clamp re-reach.
 - 17:16 Crate v7 (stiffness 100, 4.5 cm inside): render 2.6 cm -- worse. Not a squeeze problem. v8 = v5 geometry
   (best, 9 cm) with the slide and a 12 cm half-speed lift to test whether the crate follows a slow lift.
+- 17:25 CRATE LIFT BUG: in v4-v7 the crate followed the hands with NO slip (right wrist stayed 0.32 m above the crate
+  throughout), the hands simply rose only 8-9 cm: the crate solution holds 30 frames at the grasp (lift_from = n_go
+  + 30) and the replay (crate script + tester) started its 4x-slowed lift at n_go, so only 15 of 45 lift frames
+  played. Fixed in both. v8 stopped; v9 = v5 geometry + slide + full lift.

@@ -388,10 +388,11 @@ for k in order:
                     _lt[_ln.replace("left_hand_", "").replace("L_", "")] = robot.data.body_pos_w[0, _b[0]].cpu().numpy() - _bp
             print(f"[test]    left fingers at close: {np.round(robot.data.joint_pos[0, _lh].cpu().numpy(), 2)} of closed {np.round(HAND_CLOSED[:len(HAND_CLOSED) // 2], 2)}")
             print("[test]    box-relative (left): " + "  ".join(f"{k} {np.round(v, 3)}" for k, v in _lt.items()))
+    _l0 = int(d["lift_from"]) if "lift_from" in d.files and int(d["lift_from"]) > n_go else n_go   # crate solutions hold 30 frames before the lift
     for i in range(n_lift * lift_x):
-        f = n_go + i / lift_x
+        f = _l0 + i / lift_x
         j, a = int(f), f - int(f)
-        j1 = min(j + 1, n_go + n_lift - 1)
+        j1 = min(j + 1, _l0 + n_lift - 1)
         put((1 - a) * roots[j] + a * roots[j1], (1 - a) * dofs[j] + a * dofs[j1], HAND_OPEN if os.environ.get("NO_CLOSE") else HAND_CLOSED)
     for _ in range(10):
         put(roots[-1], dofs[-1], HAND_OPEN if os.environ.get("NO_CLOSE") else HAND_CLOSED)
