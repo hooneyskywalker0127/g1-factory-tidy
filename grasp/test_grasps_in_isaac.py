@@ -368,6 +368,16 @@ for k in order:
         print(f"[test]    right fingers at close (index0 index1 middle0 middle1 thumb0 thumb1 thumb2): "
               f"{np.round(_hq, 2)} of closed {np.round(HAND_CLOSED[len(HAND_CLOSED) // 2:], 2)}")
         print("[test]    box-relative: " + "  ".join(f"{k} {np.round(v, 3)}" for k, v in _tips.items()))
+        if os.environ.get("BOTH_HANDS") == "1":                 # the left hand too (two-hand grips)
+            _lh = [robot.find_joints([n])[0][0] for n in hand_names[:len(hand_names) // 2]]
+            _lt = {}
+            for _ln in ((PALM_LINK["left"], "L_index_intermediate", "L_pinky_intermediate", "L_thumb_distal") if os.environ.get("HAND") == "inspire"
+                        else (PALM_LINK["left"], "left_hand_index_1_link", "left_hand_middle_1_link", "left_hand_thumb_2_link")):
+                _b = robot.find_bodies([_ln])[0]
+                if _b:
+                    _lt[_ln.replace("left_hand_", "").replace("L_", "")] = robot.data.body_pos_w[0, _b[0]].cpu().numpy() - _bp
+            print(f"[test]    left fingers at close: {np.round(robot.data.joint_pos[0, _lh].cpu().numpy(), 2)} of closed {np.round(HAND_CLOSED[:len(HAND_CLOSED) // 2], 2)}")
+            print("[test]    box-relative (left): " + "  ".join(f"{k} {np.round(v, 3)}" for k, v in _lt.items()))
     for i in range(n_lift * lift_x):
         f = n_go + i / lift_x
         j, a = int(f), f - int(f)

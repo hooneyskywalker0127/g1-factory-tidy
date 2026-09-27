@@ -127,7 +127,13 @@ def soft_mimic(robot, tgt):
 # the palm and every palm-down pinch on a floor-level handle jammed it; swung
 # sideways it can oppose the index from beside the object instead of from
 # underneath (a person's key pinch on a stick on the floor).
-if os.environ.get("HOOK"):
+if os.environ.get("HOOK") and os.environ.get("HAND") == "inspire":
+    # the rim hook with five fingers: the thumb lies flat along the palm (yaw 0) instead of sticking out
+    # sideways, so it hooks over the rim with the fingers instead of hanging under the palm into the wall
+    HAND_OPEN = [v if i % 12 != 4 else 0.0 for i, v in enumerate(HAND_OPEN)]
+    HAND_CLOSED = [v if i % 12 != 4 else 0.0 for i, v in enumerate(_closed_one + _closed_one)]
+    HAND_KEEP = ("right_hand", "right_wrist", "R_", "left_hand", "left_wrist", "L_")
+elif os.environ.get("HOOK"):
     # the hook grip: index and middle curl behind the crate's slot bar, both
     # hands, thumbs stay open outside the wall
     HAND_OPEN = [0.4, 0.0, 0.4, 0.0, 0.0, 0.7243, 0.0] + HAND_OPEN[7:]

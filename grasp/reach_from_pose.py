@@ -140,8 +140,18 @@ def grasps_in_cell(grasps_json, cap_dir, base_z=0.98):
     # The mount is the same as the Dex3's: hand_base = wrist + (0.0415, -0.003, 0).
     if os.environ.get("HAND") == "inspire":
         M = np.eye(4); M[:3, :3] = np.array([[0, -1, 0], [-1, 0, 0], [0, 0, -1]], float).T
+        # The exported grasps are in GraspGen's gripper convention frame (gripper.urdf's `world` link:
+        # fingers along +z, fingertip at z 0.15, config.json), NOT in hand_base_link. hand_base sits at
+        # world_joint xyz (0.065, -0.01, 0) rpy (1.5708, 2.356194, 0) inside that frame. Without this
+        # factor every Inspire grasp was executed with the hand turned ~90 deg (GraspGen's fingertip
+        # landed at Isaac palm (0, 0, -0.15) instead of (0.152, 0.06, 0.01), checked against points.json
+        # and the measured finger links, 2026-09-27 15:50) -- the two "holds" were scoops by luck.
+        from scipy.spatial.transform import Rotation as _Rw
+        Twj = np.eye(4); Twj[:3, :3] = _Rw.from_euler("xyz", [1.570796, 2.356194, 0.0]).as_matrix(); Twj[:3, 3] = [0.065, -0.01, 0.0]
+        if os.environ.get("INSPIRE_OLD_MAP") != "1":
+            M = Twj @ M
         palms = np.array([p_ @ M for p_ in palms])
-        print("[reach] Inspire hand: GraspGenX hand_base turned into IsaacLab's R_hand_base frame")
+        print("[reach] Inspire hand: GraspGen gripper frame -> hand_base (world_joint) -> IsaacLab palm frame")
     # the retarget config's tool frame is the wrist: back off along the palm
     # frame by the fixed palm offset
     P = np.eye(4)
@@ -345,7 +355,11 @@ def main():
                 hands[k] = (T @ P, np.array([0.0, 0.0, -1.0]))       # the "approach" is straight down
                 continue
             x = u; y = np.array([0.0, 0.0, -1.0 if rim else 1.0]); z = np.cross(x, y)
+            if name == "left" and os.environ.get("HAND") == "inspire":
+                y = -y; z = np.cross(x, y)             # the left Inspire curls toward its palm's -y (mirrored in y only)
             T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x, y, z
+            if os.environ.get("HAND") == "inspire":
+                finger_up = 0.0                         # the Inspire fingers lie in the palm plane (y 0)
             zc = (cj["top"] + float(os.environ.get("HOOK_RIM_ABOVE", "0.05")) + finger_up) if rim else (slot[2] - finger_up)
             T[:3, 3] = [slot[0], slot[1], zc]; T[:3, 3] -= outside * u
             hands[k] = (T @ P, u)

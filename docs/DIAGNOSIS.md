@@ -572,3 +572,16 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   fingertips leading into the gap beside the handle. Re-reach + top-16 test queued (reach40_x.sh -> test_x.txt).
 - Rule for my own shell: the GPU guards match `reach_from_pos[e]|e2e_grasp_dem[o]`; a Bash command of mine that
   contains those script names literally keeps every guard waiting while it runs.
+
+## 2026-09-27 15:50 — ROOT CAUSE for the Inspire grasps: the exported grasp frame is not hand_base
+
+- GraspGenX exports `grasps_world` in GraspGen's gripper convention frame = gripper.urdf's `world` link
+  (config.json: fingers along +z, fingertip at (0, 0, 0.15)). hand_base_link sits inside it at world_joint
+  xyz (0.065, -0.01, 0) rpy (1.5708, 2.356194, 0). reach_from_pose.py applied only the hand_base -> Isaac axis
+  swap, so every Inspire grasp was executed with the hand turned by that world_joint rotation. Check: GraspGen's
+  points.json mapped into the Isaac palm frame spans x -0.03..0.05, z -0.16..0.02 (fingers along -z) with the
+  fingertip at (0, 0, -0.15); with world_joint included it spans x 0..0.22, y -0.03..0.12, fingertip at
+  (0.152, 0.06, 0.01) -- the measured Isaac hand. The "holds" (#77, #78, #121, #79) were scoops by a rotated hand.
+- Fixed in reach_from_pose.py (INSPIRE_OLD_MAP=1 restores the old behaviour). Re-reach + top-40 test + render
+  queued for hammer, clamp, drill, pliers (queue_rereach.sh); the tester-only clamp/drill retest queue cancelled.
+  hammer2's chain (next in the tool queue) picks the fix up automatically; flat_screwdriver rendered with the old map.
