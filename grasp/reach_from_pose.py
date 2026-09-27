@@ -516,7 +516,13 @@ def main():
         # and the hand hits the object on the way -- measured, the clamp was
         # swept 31 cm before the fingers closed.
         n_pre, n_in, n_lift = 30, 20, 30
-        n_go = n_pre + n_in
+        # GRASP_SLIDE (m, default 0): the descent lands the fingertips GRASP_SLIDE beyond the handle (palm -y,
+        # away from the thumb), then the hand slides +y until the finger pads sit against the handle, and only
+        # then the close. A descent aimed at the grasp itself lands the pads on the handle's edge and whether it
+        # shoves the hammer away or not is a coin flip (2026-09-27: 5/40 held, 1 of 2 reruns, renders lost).
+        g_slide = float(os.environ.get("GRASP_SLIDE", "0"))
+        n_slide = 15 if g_slide else 0
+        n_go = n_pre + n_in + n_slide
         # The open fingers must not be under the floor at the grasp pose.
         # GraspGenX's scene filter samples the floor too sparsely to see it,
         # and a grasp that put the fingertips 2 cm into the floor pushed the
@@ -629,7 +635,10 @@ def main():
         # 2026-09-27 15:23). Along the fingers, the fingertips lead into the gap beside the handle.
         approach_axis = os.environ.get("APPROACH_AXIS", "z" if descend else "y")
         back = float(os.environ.get("APPROACH_BACK", "0.12"))
-        for k, Tg in enumerate(wrists):
+        for k, Tg0 in enumerate(wrists):
+            Tg = Tg0.copy()
+            if g_slide:
+                Tg[:3, 3] = Tg0[:3, 3] - g_slide * Tg0[:3, 1]          # the descent's target, beyond the handle
             pre = Tg.copy()
             if approach_axis == "x":
                 pre[:3, 3] = Tg[:3, 3] - back * Tg[:3, 0]
@@ -652,10 +661,17 @@ def main():
                 M = Tg.copy()
                 M[:3, 3] = pre[:3, 3] + (Tg[:3, 3] - pre[:3, 3]) * a
                 targets.append(M)
+            for i in range(n_slide):                                   # slide the pads against the handle
+                a = (i + 1) / n_slide
+                M = Tg0.copy()
+                M[:3, 3] = Tg[:3, 3] + (Tg0[:3, 3] - Tg[:3, 3]) * a
+                targets.append(M)
+            up = Tg0.copy()
+            up[:3, 3] = Tg0[:3, 3] + np.array([0.0, 0.0, 0.15])
             for i in range(n_lift):
                 a = (i + 1) / n_lift
-                M = Tg.copy()
-                M[:3, 3] = Tg[:3, 3] + (up[:3, 3] - Tg[:3, 3]) * a
+                M = Tg0.copy()
+                M[:3, 3] = Tg0[:3, 3] + (up[:3, 3] - Tg0[:3, 3]) * a
                 targets.append(M)
             sol, err = solve(targets, from_here=True, left_targets=pin_seq)
             seqs.append(sol)
