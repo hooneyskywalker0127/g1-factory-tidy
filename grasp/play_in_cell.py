@@ -327,7 +327,7 @@ if WALK:
     cfg.spawn = cfg.spawn.replace(
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=False, solver_position_iteration_count=12,
-            solver_velocity_iteration_count=4, fix_root_link=False))
+            solver_velocity_iteration_count=4, fix_root_link=(os.environ.get("FIX_ROOT", "0") == "1")))
     _q0 = walk["quat"][0]
     cfg.init_state = cfg.init_state.replace(
         pos=tuple(float(v) for v in walk["pos"][0]),
@@ -335,7 +335,7 @@ if WALK:
 elif DRIVE is not None:
     cfg = cfg.replace(spawn=cfg.spawn.replace(
         articulation_props=cfg.spawn.articulation_props.replace(
-            fix_root_link=False)))
+            fix_root_link=(os.environ.get("FIX_ROOT", "0") == "1"))))
     _sx, _sy, _syaw = DRIVE["start"]
     cfg.init_state = cfg.init_state.replace(
         pos=(_sx, _sy, STAND[2]),

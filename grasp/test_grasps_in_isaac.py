@@ -54,7 +54,7 @@ cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
     contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
 cfg.spawn = cfg.spawn.replace(articulation_props=sim_utils.ArticulationRootPropertiesCfg(
     enabled_self_collisions=False, solver_position_iteration_count=12,
-    solver_velocity_iteration_count=4, fix_root_link=False))
+    solver_velocity_iteration_count=4, fix_root_link=(os.environ.get("FIX_ROOT", "0") == "1")))
 # ARM_KP_SCALE: with the body on its PD drives (PD_BODY) the stock arm gains let an
 # outstretched arm sag -- measured on the crate approach, the left palm 10 cm under
 # its reference while the IK was within 24 mm -- and the sagging hand dragged the crate.
@@ -247,7 +247,7 @@ for k in order:
     for i in range(n_go):
         put(roots[i], dofs[i], HAND_OPEN)
         if os.environ.get("TEST_VERBOSE") and i % 15 == 14:
-            _o = obj_centre(); _b = robot.find_bodies([PALM_LINK["right"]])[0][0]; _l = robot.find_bodies(["left_hand_palm_link"])[0][0]
+            _o = obj_centre(); _b = robot.find_bodies([PALM_LINK["right"]])[0][0]; _l = robot.find_bodies([PALM_LINK["left"]])[0][0]
             print(f"[test]    approach frame {i:3d}: object {np.round(_o, 3)}  right palm {np.round(robot.data.body_pos_w[0, _b].cpu().numpy(), 2)}  left palm {np.round(robot.data.body_pos_w[0, _l].cpu().numpy(), 2)}")
     # Where the open fingers are at the grasp pose, before closing: a tip
     # below the floor means the hand is already fighting the floor and the
@@ -274,7 +274,7 @@ for k in order:
         _rh = hand_ids[len(hand_ids) // 2:]
         print(f"[test]    right finger q {np.round(robot.data.joint_pos[0, _rh].cpu().numpy(), 2)} target {np.round(tgt[0, _rh].cpu().numpy(), 2)}; "
               f"wrist joints {np.round([robot.data.joint_pos[0, robot.find_joints([n])[0][0]].item() for n in ('right_wrist_roll_joint', 'right_wrist_pitch_joint', 'right_wrist_yaw_joint')], 2)}; "
-              f"index_1 {np.round(_tips['index_1'], 3)} palm {np.round(_tips['palm'], 3)}")
+              f"tips {({k: np.round(v, 3).tolist() for k, v in _tips.items()})}")
     snap(f"{int(k)}_grasp")
     _bp0 = obj_centre()
     print(f"[test]    at grasp: palm z {_tips['palm'][2]:+.3f}, lowest fingertip z {_tip_min:+.3f}, "

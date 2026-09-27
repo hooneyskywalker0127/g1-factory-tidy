@@ -490,3 +490,11 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - 열림/닫힘: GraspGenX config(엄지 yaw 1.308 고정, pitch 0→0.5, 손가락 0→1.47), 종속 관절은 근위 관절을
   따라간다. 손가락 드라이브는 NVIDIA G1_INSPIRE_FTP_CFG의 강성 10/감쇠 0.2/토크 30.
 - 테스터·렌더·순위·체인 전부 `HAND=inspire` 분기. 첫 실행: 망치 손잡이(`5지/hammer/v1`).
+- (10:34 점검) 5지 스냅샷 실행이 Dex3 전용 verbose 출력(index_1 키)에서 죽고 Isaac 프로세스 2개가 좀비로 남음 → PID로 정리, 출력 손 무관하게 수정, 재실행.
+- (10:49 점검) 5지 망치 v1 렌더가 27분째(스냅샷과 GPU 경합, 로그 정지) → PID로 죽이고 스냅샷이 끝난 뒤 단독으로 다시 렌더하도록 큐.
+- (11:00 점검) 5지 #77 스냅샷 테스터가 25분째(들기 단계에서 정지) → PID로 종료; 파지·닫힘 사진 4장은 확보됨. 이어서 v1 렌더가 단독으로 시작.
+- (11:20) 로컬 G1 에셋의 Inspire 손은 스냅샷에서 **보이지 않았다**(시각 메시 미해결). 공식 IsaacLab
+  G1+Inspire USD(`Assets/Isaac/5.1/Isaac/IsaacLab/Robots/Unitree/G1/g1_29dof_inspire_hand.usd` + configuration
+  4파일, base 39 MB)를 `assets/g1_inspire/`에 받았다. 관절 이름·오프셋은 로컬 에셋과 동일. Sensor 변형은
+  원격 참조로 멈추므로 "None". `fix_root_link=False`로는 관절 생성이 실패(root_joint 불일치 + 종속 관절
+  mimic 오류) → `FIX_ROOT=1`로 검증 중.

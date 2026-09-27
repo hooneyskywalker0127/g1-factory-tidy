@@ -43,7 +43,8 @@ if os.environ.get("HAND") == "inspire":
     HAND_CLOSED = _open_one + _closed_one
     PALM_LINK = {"left": "L_hand_base_link", "right": "R_hand_base_link"}
     HAND_KEEP = ("right_hand", "right_wrist", "R_")
-INSPIRE_USD = "/home/sehoon/Desktop/참고/할일/26/06/260623/G1/g1.usda"
+# the official IsaacLab G1 + Inspire asset (Nucleus 5.1), downloaded to the repo: 39 MB base with the meshes
+INSPIRE_USD = "/home/sehoon/Documents/GitHub/g1-factory-tidy/assets/g1_inspire/g1_29dof_inspire_hand.usd"
 
 
 def robot_cfg(base_cfg, sim_utils, ImplicitActuatorCfg):
@@ -52,7 +53,7 @@ def robot_cfg(base_cfg, sim_utils, ImplicitActuatorCfg):
     if os.environ.get("HAND") != "inspire":
         return base_cfg
     cfg = base_cfg.copy()
-    cfg.spawn = cfg.spawn.replace(usd_path=INSPIRE_USD, variants={"right_hand": "Inspire", "left_hand": "Inspire", "Physics": "PhysX"})
+    cfg.spawn = cfg.spawn.replace(usd_path=INSPIRE_USD, variants={"Physics": "PhysX", "Sensor": "None", "Robot": "Robot"})
     cfg.actuators["hands"] = ImplicitActuatorCfg(joint_names_expr=[".*(index|middle|thumb|ring|pinky).*"],
                                                  effort_limit=30.0, velocity_limit=10.0, stiffness=10.0, damping=0.2, armature=0.001)
     return cfg
