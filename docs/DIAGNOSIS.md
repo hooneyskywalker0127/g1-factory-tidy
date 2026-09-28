@@ -665,3 +665,6 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   #138 re-verified 2/2 (rendering -> 260928/hammer/v2); #91, #64 1/2; #104 0/2. DRILL: #63 2/2 (+147/+138 mm,
   rendering -> drill/v2). Screwdriver slide reach: 1/40 (#98), re-verify 0/2. Crate carry with --rise-first 1.5:
   walk 184 frames, place solved (3.1 mm), rendering -> crate/v6. Four Isaac renders at once: 13.4 GB GPU -- watch.
+- 11:25 The Claude session restarted at ~11:21 and killed all four running renders (hammer #138, drill #63, crate
+  carry v6, screwdriver #98) 12-20 min in; references were built, so render_only.sh re-renders them two at a time,
+  with a room-view frame saved into evidence/ for the check rule.
