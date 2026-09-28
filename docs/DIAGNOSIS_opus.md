@@ -106,3 +106,29 @@ v11(해머)·v8(드릴)은 이 한 항목만 100/50 으로 올려 렌더한다. 
 물체가 rise 전 구간 `[-0.282 0.047 0.153]`(바닥 안착 높이) 고정, 손가락 `q - 목표 = -0.000`(접촉력 0),
 손바닥 거리 304 → 560 mm. 이 실행에서는 물체가 손에 들어간 적이 없다(`SETTLE_IDLE=200` + `TEST_RISE_SLOW=2`).
 게인 판정 근거로 쓰지 않는다.
+
+## 18:45 손가락 게인 2000/200/200 은 Robotiq 기본값이었다 (v11 LOST 후)
+
+v11(솔버 100/50, kp2000): LOST, dxy 0.617 m. v10(솔버 12/4, 같은 게인)도 같은 650→700
+구간에서 튀었다 — **접촉 솔버 반복 수는 원인이 아니었다.**
+
+측정(v11 render.log): 오른손 네 근위 관절이 target 1.47 에 대해
+frame 500 q 0.64~0.68 / 600 0.65~0.82 / 650 0.65~1.01 — 캐리 내내 약 0.80 rad 모자란 채 정지.
+kp 2000 × 0.80 rad = 1600 N·m 요구, 즉 effort 200 N·m 에 계속 포화.
+frame 700 물체 속도 [-0.885 0.894 -0.339] m/s (수평 1.26 m/s) = 낙하가 아니라 사출.
+head_700.png: 해머가 손가락에 감기지 않은 채 손바닥 옆으로 밀려나 공중에 있다.
+
+오픈소스 재확인 — 우리가 베껴 온 2000/200/effort200 은 `dynamic_playback.py` 의
+FINGER_KP_DEFAULT, 즉 **Robotiq 기본값**이다. GraspGenX 자신은 비-Robotiq 위치제어
+그리퍼에 다른 숫자를 쓴다:
+
+- `robot_profiles.py:378-381` (Panda): "Position control with the gains from
+  `newton/examples/.../example_robot_panda_hydro.py`: ke=650, kd=100,
+  effort_limit=20, armature=0.5."
+- `robot_profiles.py:120-123`: "Newton's PD is unstable on low-inertia joints
+  without armature; the Newton Panda examples use 0.15–0.5 here."
+
+v11 의 실제 armature 는 **0.001** 이었다(note.txt 의 [hand] squeeze 줄) — 소스가 말하는
+0.15~0.5 범위보다 150~500 배 작다.
+
+다음(v12/v9): kp 650 / kd 100 / effort 20 / armature 0.5, 솔버 100/50 유지.
