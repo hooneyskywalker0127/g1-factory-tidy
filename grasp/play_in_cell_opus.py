@@ -466,9 +466,34 @@ else:
 # it clips the observation at 20 N with the note "contact force in finger tips is under
 # 20N normally". We have never measured this number. A ContactSensor only reports if the
 # body was spawned with contact reporting on. Unset -> the run is byte-for-byte unchanged.
-if os.environ.get("CONTACT_FORCE"):
-    cfg.spawn = cfg.spawn.replace(activate_contact_sensors=True)
+# cfg.spawn.replace(activate_contact_sensors=True) is the documented way and it does not
+# work here: it is the only configuration that fails when nothing else is running.
+# Measured 2026-09-29, five launches: CONTACT_FORCE unset + cameras on succeeds (ae43c0),
+# CONTACT_FORCE=1 + cameras on fails alone (contact43c), with 12 errors
+# "failed to find internal joint object for PhysxMimicJointAPI at /World/G1/joints/*"
+# then "Failed to create articulation at: /World/G1/root_joint" out of sim.reset().
+# IsaacLab 2.3.2 schemas.py:551-554 is why the flag touches anything but the fingertips:
+# inside `if child_prim.HasAPI(UsdPhysics.RigidBodyAPI)` it writes the sleep threshold to
+# `prim`, the path the caller passed, not `child_prim` -- so every rigid body found stamps
+# physxRigidBody:sleepThreshold onto /World/G1, the articulation root Xform. That the write
+# is what breaks the mimic joints is unverified; what is verified is that the flag breaks
+# the run and that we do not need it. A ContactSensor only requires the reporting API on
+# the bodies it reads, so apply it to exactly those and leave the root alone.
 robot = Articulation(cfg)
+# The report API goes on the OBJECT, not on the hand. Measured 2026-09-29, alone on the
+# machine: with it on the 12 /World/G1/R_* bodies the articulation dies in sim.reset()
+# ("failed to find internal joint object for PhysxMimicJointAPI", 12 of them) whether the
+# ContactSensor is built (contact43d) or not (cf_A, CF_SENSOR=0), and the 12 errors name
+# the L_ joints as well, which that pass never touched. Those links are the mimic children.
+# A sensor only needs the API on the bodies it reads, and force_matrix_w is
+# (envs, bodies, filters, 3) -- so one sensor on the object, filtered to each fingertip,
+# gives the same per-finger newtons without putting anything on the articulation.
+if os.environ.get("CONTACT_FORCE"):
+    import re as _re
+    _fpat = _re.compile("^" + os.environ.get("CONTACT_LINKS", "/World/G1/R_.*") + "$")
+    _flinks = sorted(str(_p.GetPath()) for _p in stage.Traverse()
+                     if _fpat.match(str(_p.GetPath())) and _p.HasAPI(UsdPhysics.RigidBodyAPI))
+    print(f"[force] {len(_flinks)} filter links found")
 stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_reference.py)
 
 # --- MIMIC_URDF_RATIO: the thumb's four-bar ratios, from the manufacturer URDF -------
@@ -686,14 +711,20 @@ from plan_scene import dump_physics; dump_physics(stage)
 # per-link force against the one filtered body, the object -- with sensor.body_names
 # giving the B ordering (contact_sensor_data.py:97-105).
 _fsensor = None
-if os.environ.get("CONTACT_FORCE") and target_body is not None:
+# CF_SENSOR=0 keeps the contact-report API on the fingertips but builds no ContactSensor:
+# it splits "the API application broke the articulation" from "the sensor object did".
+if os.environ.get("CONTACT_FORCE") and target_body is not None and os.environ.get("CF_SENSOR", "1") != "0":
     from isaaclab.sensors import ContactSensor, ContactSensorCfg  # noqa: E402
     _tprim = os.environ.get("TARGET_PRIM", "/World/GraspTarget")
+    # applied here, not at robot spawn: the target prim does not exist yet up there
+    # (pxr.Tf.ErrorException "Invalid prim 'null prim'", contact43e).
+    PhysxSchema.PhysxContactReportAPI.Apply(
+        stage.GetPrimAtPath(_tprim)).CreateThresholdAttr().Set(0.0)
     _fsensor = ContactSensor(ContactSensorCfg(
-        prim_path=os.environ.get("CONTACT_LINKS", "/World/G1/R_.*"),
-        filter_prim_paths_expr=[_tprim], history_length=0, update_period=0.0))
-    print(f"[force] contact sensor on {os.environ.get('CONTACT_LINKS', '/World/G1/R_.*')} "
-          f"filtered to {_tprim}")
+        prim_path=_tprim, filter_prim_paths_expr=_flinks,
+        history_length=0, update_period=0.0))
+    print(f"[force] contact sensor on {_tprim} filtered to {len(_flinks)} links: "
+          + ", ".join(n.rsplit("/", 1)[-1] for n in _flinks))
 
 
 def _force_line(i):
@@ -709,13 +740,18 @@ def _force_line(i):
     _fm = _fsensor.data.force_matrix_w
     if _fm is None:
         print(f"[force] frame {i:5d} no filtered contact data"); return
-    _mag = _fm[0, :, 0, :].norm(dim=-1).cpu().numpy()
-    _nm = _fsensor.body_names
+    _mag = _fm[0, 0, :, :].norm(dim=-1).cpu().numpy()
+    _nm = [n.rsplit("/", 1)[-1] for n in _flinks]
+    # Control for the instrument itself: the object rests on /World/FloorSlab, a static
+    # collider that cannot be a filter, so its weight shows up only in the net force.
+    # 0.2 kg (plan_scene.py:83) -> 1.96 N. A net near 0 means the sensor is not reporting
+    # and a row of zeros below would say nothing about whether the fingers touch.
+    _net = float(_fsensor.data.net_forces_w[0, 0].norm())
     _hit = [(n, m) for n, m in zip(_nm, _mag) if m > 0.01]
     _hit.sort(key=lambda t: -t[1])
     _thumb = max([m for n, m in zip(_nm, _mag) if "thumb" in n], default=0.0)
     _other = max([m for n, m in zip(_nm, _mag) if "thumb" not in n], default=0.0)
-    print(f"[force] frame {i:5d} sum {_mag.sum():7.2f} N  max {_mag.max():6.2f} N  "
+    print(f"[force] frame {i:5d} net {_net:6.2f} N  sum {_mag.sum():7.2f} N  max {_mag.max():6.2f} N  "
           f"thumb {_thumb:6.2f} N  best-opposing {_other:6.2f} N  "
           f"dexsuite_good={bool(_thumb > 1.0 and _other > 1.0)}  "
           + ", ".join(f"{n} {m:.2f}" for n, m in _hit[:6]))

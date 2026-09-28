@@ -2457,3 +2457,134 @@ eff 4000 ->  75.5 mrad   (요구 -901 Nm, 클램프 없음 -> 1000 에서 효용
   (그리고 GraspGenX 쪽은 베이스 고정된 팔 단독이다).
 - 손: 우리는 `CLOSE_MODE=position HAND_KP=40`, 오픈소스는 `gripper_control_mode: velocity`,
   `FINGER_KP_DEFAULT 2000`, `FINGER_KD_DEFAULT 200`, `finger_effort_limit 1000`.
+
+## v43 의 판정: 상한을 올려도 파지는 생기지 않는다
+
+`ARM_EFFORT=1000`, 자세는 v42 재사용. 8후보 전부 `+0.000 of 0.35 m` -> LOST.
+렌더도 같다: `[eval] end pos [-0.3263 0.0486 0.1536] dxy 0.0264 m dz -0.0083 m -> LOST`,
+`[obj ] idle 119 pos [-0.2808 0.0402 0.1499] vel [0. -0. 0.]`.
+cuRobo 잔차는 v42 와 동일(4.9~18.8 mm) — 자세를 다시 풀지 않았으니 당연하다.
+**관절에서 벌어준 47 mm 는 파지로 환산되지 않는다.**
+
+플링은 계통적으로 없어지지도 않았다. f255 물체 기준:
+c0 `-0.954` tilt 85.8deg -> `-0.291` tilt 8.1deg (좋아짐), c1 tilt 54.6 -> 8.1 (좋아짐),
+c2~c4 거의 그대로, **c5 tilt 7.8 -> 165.4deg (나빠짐)**. 둘 줄이고 하나 만들었다.
+
+### 내가 v43 에서 틀린 두 가지
+
+1. **"손가락이 멈췄으니 손잡이가 사이에 있다"** — 성립하지 않는다. eff 300 인 v42 에서도
+   후보 1/4/6/7 이 이미 1.09~1.36 에서 멈췄고, **후보 4 는 손가락이 망치보다 249 mm 위에
+   있는 상태로 멈췄다**. 멈춤은 손가락끼리 또는 손바닥에 걸려도 생긴다. `ARM_EFFORT` 가 바꾼 것은
+   *어느 후보가* 멈추느냐이지 멈춤의 유무가 아니다(c0 1.47->1.34, c2 1.47->1.32, c3 ->1.46, c5 ->1.43).
+   후보 하나를 자기 자신과만 비교하고 나머지 일곱을 보지 않은 잘못이다.
+2. **`box-relative` 를 닫는 순간의 값으로 읽은 것** — `test_grasps_in_isaac_opus.py:570` 의
+   `_bp = box.data.root_pos_w[0]` 는 물체의 *현재* 위치이고, 출력 순서상 `after lift (frame 255)`
+   뒤에 찍힌다. v42 의 `[0.669 ...]` 는 들어올리는 동안 망치가 쓸려 나간 뒤의 값이다.
+
+### 닫힌 가설 (원본 숫자로)
+
+| 가설 | 근거 | 판정 |
+|---|---|---|
+| 물체가 너무 가볍다 | 우리 `plan_scene.py:83` MassAttr(0.2) = GraspGenX `DEFAULT_OBJECT_MASS = 0.2` | 차이 없음 |
+| 손가락 마찰이 낮다 | 우리 `plan_scene.py:28 FINGER_MU=3.0` + `combine_mode="max"` = 그쪽 `DEFAULT_FINGER_MU = 3.0` | 차이 없음 |
+| 렌더가 떠 있는 물체를 채점한다 | `hammer_flat.obj` 원점이 메시 바닥보다 160 mm 위. 0.1499 - 0.1229*cos(6.8deg) = 0.027 vs 테스터 0.031 | 닫힘 (684fdf2) |
+
+그래서 출처가 있는 남은 차이는 **솔버 하나**다. GraspGenX `end2end/dynamic_playback.py`:
+`SOLVER_ITERATIONS = 100`, `SOLVER_LS_ITERATIONS = 50`, `SOLVER_IMPRATIO = 1000.0`,
+`COLLIDE_SUBSTEPS = 4`, 주석 그대로 *"With only 10 iterations the constraint solver doesn't
+fully converge and grasps slip during the lift segment."* 우리는 12/4 다.
+정직하게 덧붙일 단서: PhysX 의 `solver_position_iteration_count`/`velocity_iteration_count` 는
+Newton/MuJoCo 의 solver iteration 과 **가장 가까운 대응물이지 같은 양이 아니다**.
+
+### 그 전에 필요한 것은 knob 이 아니라 계기다
+
+손가락이 망치에 닿기는 하는지를 재는 것이 이 실행 어디에도 없다. 멈춤은 위와 같이 애매하고,
+물체 위치는 밀린 *뒤*만 보여준다. `play_in_cell_opus.py:461-468` 이 IsaacLab 자신의
+덱스터러스 과제(`dexsuite_kuka_allegro_env_cfg.py:43-56`, `mdp/rewards.py:50-71`, 임계값 `:111`)를
+따른다: 손끝마다 ContactSensor 를 물체로 필터링하고, **엄지 > 1.0 N 이고 마주보는 손가락 하나 > 1.0 N**
+일 때 파지로 친다(관측은 20 N 에서 클립, "contact force in finger tips is under 20N normally").
+우리 파일의 주석이 말한다: *"We have never measured this number."*
+
+### articulation 실패: 원인 미확인 (앞선 표 2개 철회)
+
+**결론부터: 원인을 모른다.** 내가 앞서 이 절에 쓴 표
+("다른 Isaac 있음/없음 × CONTACT_FORCE 있음/없음")는 **철회한다.**
+`CONTACT_FORCE` 를 **끈** 대조군이 같은 자리에서 똑같이 죽었다
+(`cf_ctrl.log`: `artic=2 mimic=12`). 따라서 `CONTACT_FORCE` 는 변수가 아니다.
+
+측정된 사실만 적는다.
+
+| 시각 | 실행 | mimic 오류 | 결과 |
+|---|---|---|---|
+| 08:21:47 | ae43c0 (v43 렌더) | 0 | 성공, `[eval]` 까지 |
+| 08:22:09 | contact43 (CONTACT_FORCE=1, IsaacLab 헬퍼) | 12 | 실패 |
+| 08:33:09 | cf_A (리포트 API만, CF_SENSOR=0) | 12 | 실패 |
+| 08:39:37 | cf_ctrl (**CONTACT_FORCE 없음**) | 12 | 실패 |
+
+`cf_ctrl` 은 08:21 에 성공한 그 실행과 **실제로 실행되는 코드가 같다.**
+백업본과의 `diff` 가 보여주는 차이는 전부 `if os.environ.get("CONTACT_FORCE")` 안이나
+`_force_line` 본문 안에 있고, 플래그를 끄면 그중 어느 줄도 실행되지 않는다.
+
+폐기한 설명 네 개(전부 내 것이다):
+`--no-video` 탓 / 동시 실행 탓(종료 단계에서 멈춘 pid 포함) /
+IsaacLab 2.3.2 `schemas.py:551-554` 가 자식 대신 루트에 `sleepThreshold` 를 쓰는 버그 /
+`CONTACT_FORCE` 자체. 세 번째는 `contact43d` 가 부정했다 — `R_` 12개 바디에만 API 를
+붙였는데 12건의 mimic 오류에 **내가 건드리지 않은 `L_` 관절이 포함**돼 있었다.
+
+**새로 찾은 단 하나의 구별자.** 실패한 실행에는 성공한 실행에 없는 경고가 먼저 뜬다:
+
+```
+[9,175ms] [Warning] PhysicsUSD: CreateJoint - found a joint with disjointed
+          body transforms ... : /World/G1/root_joint
+[9,175ms] [Error]   Usd Physics: failed to find internal joint object for
+          PhysxMimicJointAPI at /World/G1/joints/L_index_intermediate_joint
+```
+
+12건의 mimic 오류는 이 경고와 **같은 밀리초**에 이어진다. `ae43c0.log` 에는
+`disjointed body` 가 0건, 실패한 세 로그에는 1건씩이다. root_joint 가 먼저 어긋나고
+mimic 관절이 소속 articulation 을 못 찾는 순서로 읽힌다 — 다만 root_joint 가 왜
+어긋나는지는 아직 측정하지 못했다.
+
+루트 프림에 찍힌 속성으로는 설명되지 않는다. `dump_physics` 출력이
+`cf_ctrl` 은 `[phys] /World/G1 [Xform] schemas=[]:` (성공한 `ae43c0` 와 동일),
+`contact43` 만 `sleepThreshold=0.0` 이다. 즉 루트가 깨끗한 실행도 죽는다.
+
+배제한 환경 요인: IsaacLab `source/` 의 `.py` 중 12시간 내 수정된 파일 0개,
+`assets/g1_inspire/g1_29dof_inspire_hand.usd` 는 09-28 11:48 그대로,
+`~/.cache/ov`·`~/.nv/ComputeCache` 는 08:15 이후 변경 0건, GPU 5843/16303 MiB.
+
+**원인을 찾았다: 내가 떨어뜨린 환경변수 `FIX_ROOT=1`.**
+
+먼저 내 파일을 무혐의로 만들었다. ae43c0 를 만든 바로 그 백업 바이트
+(`play_in_cell_opus.py.bak`)를 같은 명령으로 돌렸더니 **똑같이 죽었다**
+(`bak_ab.log`: `mimic=12 disjoint=1`). 파일이 아니면 실행 환경이다.
+
+성공한 렌더를 만든 체인 `ae43_chain.sh:45` 이 그 답을 갖고 있었다:
+
+```
+export FIX_ROOT=1 ARM_KP_SCALE=4 CLOSE_MODE=position PD_BODY=1 HAND_KP=40 \
+       OBJECT_NO_SLEEP=1 SETTLE_IDLE=400 TEST_VERBOSE=1 TRACE_FRAME=195 ARM_EFFORT=1000
+```
+
+`FIX_ROOT` 는 `play_in_cell_opus.py:441` 에서
+`ArticulationRootPropertiesCfg(..., fix_root_link=(os.environ.get("FIX_ROOT","0")=="1"))`
+로 들어간다. 접촉 계측용으로 내가 새로 쓴 여섯 개 스크립트는 env 블록을 짧게 다시
+쓰면서 이 export 를 전부 빠뜨렸다. 즉 `fix_root_link=True` -> `False` 가 됐고,
+그래서 실패한 로그마다 `/World/G1/root_joint` 의 `disjointed body transforms` 경고가
+먼저 뜨고 12건의 mimic 오류가 같은 밀리초에 따라붙는다.
+
+교훈은 진단 기법 쪽이다. 여섯 번 동안 나는 **바뀐 코드**만 비교했고
+**바뀐 env** 는 비교하지 않았다. 성공한 실행의 명령줄과 env 를 먼저 복원해
+나란히 놓았어야 했다. 관련: [[diff-two-runs-that-should-agree]]
+
+검증 중(`contact44`): `contact43c` 와 모든 것이 같고 `FIX_ROOT=1` 만 되돌린 실행.
+예측은 `sim.reset()` 통과 + `[force]` 줄 출현이다.
+
+### 아직 측정하지 못한 것: 손가락이 망치에 닿는가
+
+`play_in_cell_opus.py:461-468` 이 인용하는 dexsuite 기준(엄지 > 1.0 N **및** 마주보는
+손가락 하나 > 1.0 N, 관측 20 N 클립; `dexsuite_kuka_allegro_env_cfg.py:43-56`,
+`mdp/rewards.py:50-71`, 임계값 `:111`)은 여섯 번 시도해 한 번도 얻지 못했다.
+접촉 리포트가 계속 막히면 **접촉 센서가 전혀 필요 없는 대체 계측**으로 간다:
+`robot.data.body_pos_w` 의 손끝 링크 위치와 물체 포즈로 손끝-망치 최소거리를 mm 로 찍는 것.
+닿지도 않는다면 문제는 기하/배치이고 solver 반복수는 틀린 레버다.
