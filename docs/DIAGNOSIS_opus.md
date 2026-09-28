@@ -677,3 +677,57 @@ v20 은 kp 40 을 유지한 채 **kd 만 0.4 → 4.0** (GraspGenX 비율 0.1)으
 `[eval]` 의 `dxy 1.4562 m` 는 또 발에 차인 값이다: f790~f870 물체는 속도 0 으로 정지,
 f880 `right_ankle_pitch_link` 10.9 cm, f900 물체가 `[1.0336 -0.2116 0.2041]`. v18 과 같은
 패턴이 반복됐으므로, 판정은 계속 해제 프레임과 최대 상승으로 읽는다.
+
+## 게인은 v20 에서 맞았다. 이제 문제는 손끝으로 잡는다는 것 (260928 22:35, hammer v20)
+
+v20 = kp 40 / kd 4.0 / effort 30 / armature 0.001. v19 에서 감쇠만 GraspGenX 원본
+비율(`end2end/dynamic_playback.py:70-71` FINGER_KD 200 / FINGER_KP 2000 = 0.1)로 올린 것.
+
+사전에 적어둔 4개 기준 중 3개 통과:
+- 접촉 초기 링잉 사라짐. f520~f590 이 991~1005 N 평탄. v19 는 같은 구간에서
+  30.13 / 1571.78 / 0.29 / 1122.53 N 으로 플랩했다.
+- 2,000 N 초과 스파이크 0회. 전 구간 최대 1,289.58 N. v19 는 5,726 / 6,051 / 24,588 N.
+- 상승 +0.0933 m (z 0.1485 -> 0.2418). GraspGenX `clutter_task.py:64` LIFT_SUCCESS_DZ
+  0.05 의 1.9 배. `dexsuite_good` 은 f510~f690 180 프레임 연속 True.
+
+들어올리는 동안 미끄러지지도 않았다. palm 이 10 프레임당 1.2 cm 오르는 90 프레임 내내
+(물체 z - palm z) 가 -0.031 ~ -0.036 m 로 고정이다. 강체처럼 따라왔다.
+
+그런데 f690 -> f700 한 스텝(0.33 s)에 그냥 떨어졌다. 사출이 아니다. 직전 힘은 695 N,
+스파이크는 없었다. **더 이상 게인 문제가 아니다.**
+
+측정된 원인은 파지 위치다. `[abs ] f690` 에서 object x -0.244, palm x -0.139 —
+손바닥 원점에서 10.5 cm 바깥이다. 손가락 각도가 순서를 그대로 보여준다(target 전부 1.47):
+j3(pinky) 는 f550 에 이미 1.47 로 완전히 닫혀 물체를 한 번도 건드리지 않았고,
+j2(ring) 는 0.99 -> 1.04 -> 1.08 -> 1.22 -> 1.39 -> 1.47 (f550~f680) 로 자루를 놓치며
+닫혔다. j0/j1(index/middle) 만 0.96~1.00 에서 계속 정지 = 접촉 유지.
+엄지 접촉 링크는 R_thumb_intermediate(546.94 N, f640) -> R_thumb_distal(341.06 N, f670)
+로 이동했다. 자루가 말단으로 굴러 나간 것이다. `evidence/head_f690.png` 에 자루가
+말단 지골을 가로지르고 망치 머리가 손 바깥에 매달린 장면이 찍혀 있다.
+
+`[eval] dxy 0.5713 m` 은 v18/v19 와 똑같이 발에 차인 값이다. 물체는 f720~f880 동안
+속도 0 으로 정지해 있다가 f890 에 vel -1.34 m/s 로 날아간다.
+
+### 다음 하나: 손끝 콜라이더 (v21)
+
+GraspGenX `end2end/robot_profiles.py` UR10eInspireHandProfile:
+
+    coacd_link_keywords: Tuple[str, ...] = ("intermediate", "distal")
+    # Only the fingertips need CoACD ... The thumb tip / distal and the
+    # *_intermediate links have the concavity that matters for object contact.
+
+우리 asset `assets/g1_inspire/g1_29dof_inspire_hand.usd` 은 손가락 콜라이더 50 개가
+전부 `physics:approximation = convexHull` 이다. 손가락 안쪽 오목한 굽이가 물리에서
+메워진다. v20 에서 실제로 힘을 받은 링크 6 개(R_thumb_intermediate, R_thumb_distal,
+R_index/middle/ring/pinky_intermediate)가 GraspGenX 가 분해하라고 지정한 바로 그 6 개다.
+원통형 자루가 홈에 앉지 못하고 볼록면 위에 얹혀 말단으로 굴러 나갔다는 측정과 맞는다.
+[[object-collider-was-convex-hull]] 에서 망치 자루 자체가 같은 이유로 물리에 없었던 것과
+같은 계열의 문제다.
+
+기록: `FINGER_COACD` 는 20:58 `results/fable42` 에서 한 번 켜진 적이 있으나 그때 게인은
+kp 650 / kd 100 / effort 200 / armature 0.5 로 사출이 나 졌다(dxy 1.4693). 잡히는 게인
+위에서 콜라이더 효과를 본 적은 아직 없다.
+
+v21 = v20 게인 + `FINGER_COACD=intermediate,distal`. 바뀌는 것은 콜라이더 근사 하나.
+검증: (a) j2(ring) 가 상승 구간에서 1.47 에 닿지 않는다 (b) (물체 z - palm z) 오프셋이
+f700 이후에도 유지된다 (c) f760 에 시작 높이 +0.05 m 이상 (d) 스파이크 0회.
