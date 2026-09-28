@@ -44,10 +44,28 @@ def build():
     if os.environ.get("BIMANUAL") == "1":          # a crate between both palms
         work = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
         loose.remove("left_wrist_yaw_link")
+    # ORI_W: the orientation weight for the WORKING link. The 0.067 below is NVIDIA's,
+    # but read where they use it -- humanoid_retargeting.py:243-248 puts 0.067 on the
+    # pelvis and the ankles, links being retargeted from a human motion clip, where you
+    # follow position and let orientation float. Their runtime builder (same file,
+    # 455-460) uses pw = 100*t_weight/max against rw = 10*r_weight/max: 10:1. cuRobo's
+    # own default for this helper is rpy=[1.0, 1.0, 1.0], equal to position.
+    # Our wrist is not being retargeted, it is being sent to a GRASP pose, and measured
+    # at the close frame (scratchpad/orierr.py, pw38, all eight candidates) the planned
+    # finger axis [1,0,0] comes out [0.97, 0.04, -0.25]: the fingers point 12-18 deg
+    # DOWN into the floor. Over the ~150 mm from wrist to fingertip that is ~36 mm of
+    # drop, and the tester's box-relative trace puts the finger links 24-38 mm below the
+    # object with the hammer never moving once -- the fingers close on air. Nothing in
+    # the pipeline reported this, because err at reach_from_pose.py:248 is
+    # norm(got - pos): position only.
+    w_ori = float(os.environ.get("ORI_W", "0.067"))
     crit = {}
-    for n in hold + work:
+    for n in hold:
         crit[n] = ToolPoseCriteria.track_position_and_orientation(
             xyz=[1.0, 1.0, 1.0], rpy=[0.067, 0.067, 0.067])
+    for n in work:
+        crit[n] = ToolPoseCriteria.track_position_and_orientation(
+            xyz=[1.0, 1.0, 1.0], rpy=[w_ori] * 3)
     # Not one loose weight for everything below the wrist. With the whole
     # body at 0.005 the wrist landed within 9 mm and the body did anything it
     # liked to get there: a leg swung back, the left arm went up, the kneel
@@ -76,6 +94,23 @@ def build():
               else w_body)
         crit[n] = ToolPoseCriteria.track_position_and_orientation(
             xyz=[lw] * 3, rpy=[lw * 0.07] * 3)
+    # WRIST_ONLY: diagnostic. The residual plateaus at 11-22 mm as the hand nears the floor
+    # while it reaches 0.7 mm early in the same trajectory, which is either a cost trade-off
+    # against the body criteria or a genuine reach limit of this kneel. Dropping every
+    # criterion but the wrist separates them: near zero means the weights are the blocker,
+    # a stubborn residual means the grasp pose is outside this kneel's reachable set and the
+    # kneel -- not the weights -- is what has to change. Read-only; never used for a render.
+    # cuRobo validates the criteria dict against every ordered link of the retarget
+    # yml ("not a subset of"), so the body links cannot be dropped -- their weight goes
+    # to ~0 instead. The feet STAY at 1.0: they are where the robot actually stands, and
+    # with them free the whole robot simply translates onto the target and the residual
+    # goes to zero for a reason that tells us nothing.
+    if os.environ.get("WRIST_ONLY") == "1":
+        for n in loose:
+            crit[n] = ToolPoseCriteria.track_position_and_orientation(
+                xyz=[1e-4] * 3, rpy=[1e-5] * 3)
+        print(f"[opus] WRIST_ONLY: {work} at 1.0, feet {hold} at 1.0, "
+              f"{len(loose)} body links at 1e-4")
     cfg = MotionRetargeterCfg.create(robot=os.environ.get("RETARGET_CFG", "unitree_g1_29dof_retarget.yml"),
                                      tool_pose_criteria=crit, num_envs=1,
                                      self_collision_check=True)
