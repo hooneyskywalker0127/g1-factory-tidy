@@ -731,3 +731,40 @@ kp 650 / kd 100 / effort 200 / armature 0.5 로 사출이 나 졌다(dxy 1.4693)
 v21 = v20 게인 + `FINGER_COACD=intermediate,distal`. 바뀌는 것은 콜라이더 근사 하나.
 검증: (a) j2(ring) 가 상승 구간에서 1.47 에 닿지 않는다 (b) (물체 z - palm z) 오프셋이
 f700 이후에도 유지된다 (c) f760 에 시작 높이 +0.05 m 이상 (d) 스파이크 0회.
+
+## 파워 그립 후보는 v19 게인으로 버려졌다 (260928 22:45, v21 렌더 중 조사)
+
+`docs/DIAGNOSIS.md:765-786` 에 페이블이 정리해 둔 대로, NVIDIA 가 배포하는
+`gripper_descriptions/assets/x_grippers/inspire_hand/config.json` 의 sweep volume 은
+손끝에만 달려 있다:
+
+    "fingertip": [0.0, 0.0, 0.15],
+    "sweep_volume": { "offset": [0,0,0.135], "extents": [0.08,0.045,0.04],
+                      "offset2":[0,0,0.118], "extents2":[0.04,0.045,0.035] }
+
+즉 물체가 놓일 자리를 hand_base_link 기준 z 0.10~0.155 m 로 지정한다(너클은 8.5 cm).
+v20 에서 측정한 손바닥-물체 거리 10.5 cm 는 이 사양 안이다. **손끝 파지는 버그가 아니라
+NVIDIA 기술서가 요청한 결과다.** 그래서 v20 의 낙하는 파지 생성 쪽을 봐야 하는 문제다.
+
+페이블이 만든 로컬 변형 `inspire_hand_palm`(같은 URDF, sweep box 를 손바닥면~손끝 전체로:
+open 5x7.7x10 cm @ z 0.10, half-open 4x7.7x7 cm @ z 0.095)로 파워 그립 후보가 이미
+생성돼 디스크에 있다: `results/fable40/grasps_palm.json` (14:58),
+`order_palm.txt` / `reach_palm.npz` (15:15), `test_palm.txt` (15:40, 40 후보).
+
+전부 LOST 다. 그런데 어떤 게인으로 졌는지가 문제다. `palm_chain.sh` 는
+
+    HAND_KP=40 OBJECT_NO_SLEEP=1 RISE_SLOW=2 ...
+
+로 돌았고 `HAND_KD` 를 주지 않았다. 그러면 `build_reach_reference.py:99-102` 의
+`damping = 0.2*(kp/10)**0.5` 가 적용돼 kd = 0.4 — **v19 와 정확히 같은 kp 40 / kd 0.4** 다.
+그 조합은 접촉 초기 0 <-> 1,571.78 N 링잉과 5,726 / 6,051 / 24,588 N 스파이크를
+내는 것으로 v19 에서 측정됐다.
+
+또 40 후보 중 28 개는 `stand-up test: object followed +0.000 m` 다. 미끄러진 게 아니라
+물체를 건드리지도 못했다. 실제로 움직인 것은 12 개뿐이다.
+
+따라서 "파워 그립은 안 된다" 는 결론은 아직 근거가 없다. 검증된 게인
+(kp 40 / kd 4.0, GraspGenX 비율 0.1)으로 다시 돌린 적이 한 번도 없다.
+
+v21(손끝 콜라이더)이 잡지 못하면 v22 는 이것이다: `grasps_palm.json` / `reach_palm.npz`
+를 v20 게인으로 재평가. 관련: [[crate-power-grip-later]].
