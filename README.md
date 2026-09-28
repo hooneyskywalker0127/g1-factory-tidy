@@ -22,6 +22,11 @@ RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점�
 
 ## 파이프라인
 
+![pipeline](docs/pipeline.png)
+
+1 보기(C-RADIO) → 2 이동·자세(GR00T-WholeBodyControl) → 3 파지 후보(GraspGen-X) → 4 전신 도달(cuRobo) →
+5 물리 검증·렌더(Isaac Lab). 운반은 2와 4를 한 번 더 지납니다. 그림은 `scripts/make_pipeline_figure.py`가 그립니다.
+
 세 개의 오픈소스가 순서대로 물립니다. 사람이 주는 것은 문장 하나뿐이고, 어디에 무엇이
 있는지, 어떻게 잡을지, 어떻게 갈지는 이 셋이 정합니다.
 

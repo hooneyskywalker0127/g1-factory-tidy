@@ -14,6 +14,12 @@ by vision and picking it up.
 
 ## Pipeline
 
+![pipeline](docs/pipeline.png)
+
+1 see (C-RADIO) → 2 move & posture (GR00T-WholeBodyControl) → 3 grasp candidates (GraspGen-X) →
+4 whole-body reach (cuRobo) → 5 physics check & render (Isaac Lab); a carry passes 2 and 4 once more.
+The figure is drawn by `scripts/make_pipeline_figure.py`.
+
 Three open-source pieces in series. The only thing a person supplies is "tidy
 up"; what is where, how to hold it, and how to get to it are settled by these.
 
