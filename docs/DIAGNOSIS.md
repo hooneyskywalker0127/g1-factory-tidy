@@ -724,3 +724,9 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   build_place_reference (stretch the stand-up frames 2x) and a finger-stiffness test on the decomposition
   collider (#138, 13 s idle, HAND_KP 20/40). Crate slot hook v8 LOST again (IK 17 mm at the slots from 0.40 m):
   parked; the outside rim pinch stays the crate grip.
+- 12:47 Crate, the principled way (Sehoon: the grasp points must come from the grasp model, probabilistically; the
+  slots win only if they score): GraspGen-X (Inspire) on the whole-crate point cloud (crate.obj exported from the
+  USD, results/crate/look capture), then reach_from_pose --crate-grasps: candidates split left/right of the crate,
+  kept above 60 % of the top, top-4 x top-4 pairs solved for both hands (rise-first, descend, hold, lift), every
+  pair physics-tested, the holding pair rendered (crate_grasps_chain.sh -> 260928/5지/crate/vN). The hand-designed
+  pinch/hook attempts (carry B, rim3, slot3) stay queued behind as fallbacks.
