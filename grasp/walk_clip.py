@@ -229,7 +229,16 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
                     float(recent.max() - recent.min()) <= STEADY_M:
                 break
 
-        if arrived_at is None:
+        # --rise-first S: from a kneel-and-lift context, stand up IN PLACE for S seconds before walking. Left
+        # to itself the planner stands and strides in the same second (measured: pelvis 0.45 -> 0.78 m while
+        # covering 1.1 m in 30 frames), and the crate held between two hands was thrown (260928/5지/crate/v5).
+        rise_s = float(sys.argv[sys.argv.index("--rise-first") + 1]) if "--rise-first" in sys.argv else 0.0
+        rising = ctx0 is not None and arrived_at is None and len(out) / FPS < rise_s
+        if rising:
+            mode = IDLE
+            move = np.array([[1e-6, 0.0, 0.0]], np.float32)
+            face = np.array([[math.cos(math.radians(syaw)), math.sin(math.radians(syaw)), 0.0]], np.float32)
+        elif arrived_at is None:
             mode = WALK
             move = np.array([[to_goal[0], to_goal[1], 0.0]], np.float32) / max(dist, 1e-6)
             # Keep your eyes on the thing you are going to pick up. The planner
@@ -271,7 +280,11 @@ def walk_to(sess, start, goal, seed=0, path=None, look_at=None,
         inp = _inputs(mode, seed, squat_to if mode not in (WALK, IDLE) else -1.0)
         inp["movement_direction"] = move
         inp["facing_direction"] = face
-        if arrived_at is not None and "--hold-target" in sys.argv:
+        if rising:
+            inp["has_specific_target"] = np.array([[1]], np.int64)
+            inp["specific_target_positions"] = np.stack([[sx, sy, STAND_ROOT_Z]] * 4)[None].astype(np.float32)
+            inp["specific_target_headings"] = np.array([[math.radians(syaw)] * 4], np.float32)
+        elif arrived_at is not None and "--hold-target" in sys.argv:
             # Standing still means naming the place, not asking for almost no
             # movement. planner_onnx.md: below 1e-5 the model "falls back to
             # using the facing_direction with a small scaling factor", so a

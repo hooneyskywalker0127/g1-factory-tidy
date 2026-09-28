@@ -657,3 +657,7 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   Hammer #93 awake: flipped at the close again. Screwdriver verify (stiffness 10, awake): 0/40 today (yesterday
   1/40, #99 2/3 an hour ago) -- the floor pinch is at the noise floor. Next: hammer ranked nearer the head
   (HANDLE_AT 0.2) + re-verify; screwdriver with the lateral-slide reach + re-verify.
+- 10:58 Crate carry on the outside grip (260928/crate/v5): lifted 8.7 cm, then dropped in the first second of the
+  walk clip -- the planner stands AND strides at once (pelvis 0.45 -> 0.78 m while covering 1.1 m in 30 frames).
+  walk_clip.py gets --rise-first S: stand up in place (IDLE, target = start) for S s before walking. Drill v1:
+  tester 1/40 (#63), render LOST -> verify_render queued. The v5 room camera sat inside the desk; head/wrist fine.

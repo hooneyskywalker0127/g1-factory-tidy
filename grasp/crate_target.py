@@ -78,11 +78,34 @@ for end_sign in (1.0, -1.0):
 slots = {"left": None, "right": None}
 left_dir = np.array([-face_ax[1], face_ax[0]])       # robot's left when facing +face_ax
 slot_walls = os.environ.get("CRATE_SLOTS", "long")
+# The slot ALONG the wall, seen: in the rim band (60-92 % of the top) of each long wall the points thin out
+# where the hand slot is cut; the widest empty stretch of at least 6 cm along the wall is the slot, its centre
+# the grip point. (Sehoon, 2026-09-28: the slots are the grip, and they have to be perceived, not assumed.)
+# A wall the camera does not see gets the other wall's slot mirrored across the crate (the crate is symmetric).
+seen = {}
+for sgn in (1.0, -1.0):
+    w_ax, w_half, t_ax = (side, half_short, ax) if slot_walls == "long" else (ax, half_long, side)
+    wall_pts = P[np.abs((P[:, :2] - centre) @ w_ax - sgn * w_half) < 0.02]
+    band = wall_pts[(wall_pts[:, 2] > 0.6 * top) & (wall_pts[:, 2] < 0.92 * top)]
+    if len(band) < 60:
+        continue
+    t = np.sort((band[:, :2] - centre) @ t_ax)
+    gaps = np.diff(t); k = int(np.argmax(gaps))
+    if gaps[k] >= 0.06:
+        seen[sgn] = float(0.5 * (t[k] + t[k + 1]))
+        print(f"[crate] slot seen on the {'long' if slot_walls == 'long' else 'end'} wall {sgn:+.0f}: {gaps[k]*100:.0f} cm gap in the rim band, centre {seen[sgn]:+.3f} m along the wall ({len(band)} band points)")
+if seen and len(seen) < 2:
+    other = [s for s in (1.0, -1.0) if s not in seen][0]; seen[other] = -seen[list(seen)[0]]
+    print(f"[crate] the other wall's slot mirrored")
+if not seen:
+    print("[crate] no slot seen in the rim bands; the grip goes to the wall centres")
 for name, sgn in (("left", 1.0), ("right", -1.0)):
     if slot_walls == "long":
-        wall = centre + sgn * side * half_short * (1 if (side @ left_dir) > 0 else -1)
+        s_ = sgn * (1 if (side @ left_dir) > 0 else -1)
+        wall = centre + s_ * side * half_short + ax * seen.get(s_, 0.0)
     else:
-        wall = centre + sgn * ax * half_long * (1 if (ax @ left_dir) > 0 else -1)
+        s_ = sgn * (1 if (ax @ left_dir) > 0 else -1)
+        wall = centre + s_ * ax * half_long + side * seen.get(s_, 0.0)
     slots[name] = [float(wall[0]), float(wall[1]), slot_z]
 # where along the long faces the palms go: CRATE_GRIP_AT=0.5 is the middle, smaller is
 # nearer the robot -- a squatting G1 reaches 0.4 m ahead with both hands, not 0.6
