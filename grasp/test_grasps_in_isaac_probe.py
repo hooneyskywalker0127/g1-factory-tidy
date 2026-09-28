@@ -69,6 +69,22 @@ if os.environ.get("ARM_KP_SCALE") and "arms" in cfg.actuators:
     cfg.actuators["arms"] = cfg.actuators["arms"].replace(
         stiffness={n: v * _k for n, v in cfg.actuators["arms"].stiffness.items()} if isinstance(cfg.actuators["arms"].stiffness, dict) else cfg.actuators["arms"].stiffness * _k,
         damping={n: v * _k ** 0.5 for n, v in cfg.actuators["arms"].damping.items()} if isinstance(cfg.actuators["arms"].damping, dict) else cfg.actuators["arms"].damping * _k ** 0.5)
+# ARM_KD: the only arm-drive value that diverges from the open source. GraspGenX's own dynamic
+# playback runs arm_kp 2000 / arm_kd 100 (end2end/robots/g1_inspire_arm.yaml) = kd/kp 0.05; ours is
+# 20/12000 = 0.0017, 30x less damping per unit stiffness. Against the measured arm inertia
+# (arm+hand 3.54 kg at ~0.3 m -> I ~ 0.3 kg m2) critical damping at kp 12000 is 2*sqrt(kp*I) ~ 120,
+# so kd 20 is zeta ~ 0.17. Absolute override, applied after ARM_KP_SCALE has scaled kd by sqrt(k).
+if os.environ.get("ARM_KD") and "arms" in cfg.actuators:
+    cfg.actuators["arms"] = cfg.actuators["arms"].replace(damping=float(os.environ["ARM_KD"]))
+# ARM_EFFORT: the demand at right_shoulder_roll is kp*err = 12000 x 0.184 = 2208 Nm against a
+# 300 Nm ceiling, and the achieved error barely moved across an 8x kp sweep (149/181/186 mrad at
+# kp 3000/12000/24000) -- so the error is not a stiffness deficit. Raising the ceiling separates
+# the two remaining causes: if the joint reaches its command, the clamp was binding; if it stalls
+# at the same -0.68, something is hard-stopping the arm and no torque will fix it.
+# NOTE the real hardware rating is effort="25" (g1_29dof_rev_1_0.urdf); the stock 300 is already 12x.
+if os.environ.get("ARM_EFFORT") and "arms" in cfg.actuators:
+    cfg.actuators["arms"] = cfg.actuators["arms"].replace(
+        effort_limit=float(os.environ["ARM_EFFORT"]), effort_limit_sim=None)
 if os.environ.get("HAND") != "inspire": cfg.actuators["hands"] = cfg.actuators["hands"].replace(effort_limit=1.4, velocity_limit=12.0,
     # HAND_DAMPING: the body is written every substep, and PhysX then
     # reports garbage joint velocities on the simulated fingers (-2.5 to
@@ -259,6 +275,29 @@ def put(root7, dof29, hands14):
     for k, j in enumerate(hand_ids):
         tgt[0, j] = float(hands14[k])
     rs = torch.tensor([[*root7, 0, 0, 0, 0, 0, 0]], dtype=torch.float32, device=sim.device)
+    if os.environ.get("ROOTDRIFT"):
+        # The root is not welded: it is SET once per frame with zero velocity, then 33 substeps run
+        # with the base free. Damping is not the cause (kd 20/120/600 -> 184.1/179.9/170.8 mrad) and
+        # the load is not at the hand (fingers 0.8 N) nor the legs (80-280 N), yet shoulder_pitch's
+        # incoming joint torque is 303.8 Nm against its own 48.6 Nm drive -- structural, not actuation.
+        # cuRobo solved the arm against root7. Two numbers decide whether the base is the problem:
+        #   drift = how far physics carried the base away from root7 during the last frame's substeps
+        #   jump  = how far root7 itself moved since the previous frame
+        # Millimetres means the base is consistent and the load is elsewhere; centimetres means the
+        # arm is holding a pose relative to a base that is moving under it. Read-only.
+        _k = globals().setdefault("_RD", [0, None])
+        _ap = robot.data.root_pos_w[0].detach().cpu().numpy()
+        _av = robot.data.root_lin_vel_w[0].detach().cpu().numpy()
+        _aw = robot.data.root_ang_vel_w[0].detach().cpu().numpy()
+        _cp = np.asarray(root7[:3], float)
+        if _k[0] % 10 == 0:
+            _jm = 0.0 if _k[1] is None else float(np.linalg.norm(_cp - _k[1])) * 1000
+            print(f"[opus] root f{_k[0]:3d}  drift {np.linalg.norm(_ap - _cp) * 1000:7.2f} mm "
+                  f"(dz {(_ap[2] - _cp[2]) * 1000:+7.2f})  jump {_jm:6.2f} mm  "
+                  f"achieved_vel {np.linalg.norm(_av):6.3f} m/s  omega {np.linalg.norm(_aw):6.3f} rad/s",
+                  flush=True)
+        _k[1] = _cp.copy()
+        _k[0] += 1
     if PD_BODY:
         # The way the one grasp that held was replayed (the desk box, pelvis
         # welded, every joint on its PD drive): no joint is written, the root
@@ -407,16 +446,26 @@ for k in order:
             _bp = obj_centre(); _bq = box.data.root_quat_w[0].cpu().numpy()
             _Rb = R.from_quat(_bq[[1, 2, 3, 0]])
             _t = {}
-            for _ln in [PALM_LINK["right"]] + [n for n in robot.body_names if n.startswith("right_hand_") and n != PALM_LINK["right"]]:
+            for _ln in ((PALM_LINK["right"], "right_hand_index_1_link", "right_hand_middle_1_link", "right_hand_thumb_2_link")
+                        if os.environ.get("HAND") != "inspire"
+                        else (PALM_LINK["right"], "R_index_intermediate", "R_pinky_intermediate", "R_thumb_distal")):
                 _b = robot.find_bodies([_ln])[0]
                 if _b:
-                    _t[_ln.replace("right_hand_", "").replace("_link", "")] = robot.data.body_pos_w[0, _b[0]].cpu().numpy()
+                    _t[_ln.replace("right_hand_", "").replace("_link", "").replace("R_", "")] = robot.data.body_pos_w[0, _b[0]].cpu().numpy()
             print(f"[probe] f{i}: finger q   {np.round(_fq, 3)}")
             print(f"[probe] f{i}: commanded  {np.round(_fc, 3)}   max |d| {np.abs(_fq - _fc).max()*1000:6.1f} mrad"
                   f"   stalled {[k for k in range(len(_fq)) if abs(_fq[k]-_fc[k]) > 0.05]}")
             print(f"[probe] f{i}: object centroid {np.round(_bp, 4)}  tilt {np.degrees(_Rb.magnitude()):.1f} deg")
             print("[probe] f{}: link z  {}".format(i, "  ".join(f"{k} {v[2]:+.3f}" for k, v in _t.items())))
             print("[probe] f{}: link - object {}".format(i, "  ".join(f"{k} {np.round((v-_bp)*1000).astype(int)}" for k, v in _t.items())))
+            # The shoulder that does not follow is the whole miss: 184 mrad at right_shoulder_roll
+            # is ~83 mm at the wrist, and the wrist measured +80 mm in x from its target. Print the
+            # right arm at every traced frame so free-space droop separates from contact reaction.
+            _ac = np.asarray(dofs[i], float)
+            _aa = robot.data.joint_pos[0, body_ids].cpu().numpy()
+            _ai = [j for j, n in enumerate(names) if n.startswith("right_shoulder") or n.startswith("right_elbow") or n.startswith("right_wrist")]
+            print("[probe] f{}: arm  {}".format(i, "  ".join(
+            f"{names[j].replace('right_','').replace('_joint',''):<14s} {(_aa[j]-_ac[j])*1000:+7.1f}" for j in _ai)))
         if os.environ.get("WAIST_HISTORY") and i >= 120 and i % 5 == 0:
             # One snapshot of the waist cannot tell a joint pinned by its effort ceiling from a
             # joint oscillating around its command: stiffness 5000 with damping 5 is zeta ~ 0.02.
@@ -434,7 +483,7 @@ for k in order:
                 f"{n.replace('waist_','').replace('_joint',''):5s} cmd{_c[j]:+.4f} got{_q[j]:+.4f}"
                 f" d{(_q[j]-_c[j])*1000:+7.1f} vel{_v[j]:+7.2f} tau{_t[j]:+7.1f}"
                 for j, n in enumerate(_wn)), flush=True)
-        if os.environ.get("ARM_HISTORY") and i >= 120 and i % 5 == 0:
+        if os.environ.get("ARM_HISTORY") and i >= int(os.environ.get("ARM_FROM", "120")) and i % int(os.environ.get("ARM_STRIDE", "5")) == 0:
             # The waist tracks to 1 mrad and the root is pinned, yet the wrist link lands 17-21 mm
             # high (v37, candidate 3). Over a 0.7 m arm that is ~8 mrad spread across the arm joints
             # -- exactly the residual _jtrace already reports. A steady-state droop is either the
@@ -455,10 +504,156 @@ for k in order:
             if _el is None:
                 try: _el = robot.root_physx_view.get_dof_max_forces().cpu().numpy()[0][_aj]
                 except Exception: _el = np.full(len(_aj), np.nan)
+            if not globals().get("_ARM_GAINS_SHOWN"):
+                globals()["_ARM_GAINS_SHOWN"] = True
+                _ks = robot.data.joint_stiffness[0, _aj].cpu().numpy(); _kd = robot.data.joint_damping[0, _aj].cpu().numpy()
+                # err plateaus at 76 mrad for any ceiling >= 1000 Nm with self-collision OFF: a wall at a
+                # fixed angle that torque cannot pass is a joint limit, and this USD is not IsaacLab's
+                # g1.usd. Print what PhysX actually enforces, next to what the URDF says (-2.2515 .. 1.5882).
+                _pl = robot.data.joint_pos_limits[0, _aj].cpu().numpy()
+                _sl = getattr(robot.data, "soft_joint_pos_limits", None)
+                _sl = _sl[0, _aj].cpu().numpy() if _sl is not None else None
+                for _j, _n in enumerate(_an):
+                    _extra = f"  soft [{_sl[_j][0]:+.4f} {_sl[_j][1]:+.4f}]" if _sl is not None else ""
+                    print(f"[opus] lim  {_n:<28s} hard [{_pl[_j][0]:+.4f} {_pl[_j][1]:+.4f}]{_extra}", flush=True)
+                # NOT _v: that name holds the joint-velocity array this block's caller prints two
+                # lines below, and clobbering it with a tensor is what raised Tensor.__format__.
+                for _attr in ("joint_friction_coeff", "joint_friction", "joint_armature"):
+                    _fv = getattr(robot.data, _attr, None)
+                    if _fv is not None:
+                        _fv = _fv[0, _aj].cpu().numpy()
+                        print(f"[opus] {_attr}  " + "  ".join(
+                            f"{_an[_j].replace('right_','').replace('_joint','')} {_fv[_j]:.5f}"
+                            for _j in range(len(_an))), flush=True)
+                print("[opus] arm drive  " + "   ".join(
+                            f"{n.replace('right_','').replace('_joint','')} kp{_ks[j]:.0f} kd{_kd[j]:.1f} eff{_el[j]:.0f}"
+                            for j, n in enumerate(_an)), flush=True)
             print("[opus] armh f%3d  " % i + "   ".join(
                 f"{n.replace('right_','').replace('_joint',''):14s} cmd{_c[j]:+.4f} got{_q[j]:+.4f}"
                 f" d{(_q[j]-_c[j])*1000:+7.1f} vel{_v[j]:+6.2f} tau{_t[j]:+7.1f}/{_el[j]:.0f}"
                 for j, n in enumerate(_an)), flush=True)
+        if os.environ.get("WRENCH") and i % 10 == 0:
+            # ~900 Nm opposes right_shoulder_roll with self-collision OFF, friction 0, and the
+            # command 1.19 rad inside its limit. The incoming joint force includes external contact
+            # reactions, so walking it down the chain says WHERE the load enters: large at the hand
+            # means the fingers are standing on the floor (the +14 mm "clearance" was a link ORIGIN,
+            # not the collision mesh), large only at the shoulder means it is inertial. Read-only.
+            try:
+                _w = robot.root_physx_view.get_link_incoming_joint_force()[0].cpu().numpy()
+            except Exception as _e:
+                print(f"[opus] wrench unavailable: {_e}", flush=True); _w = None
+            if _w is not None:
+                _bn = list(robot.body_names)
+                # The load does not enter at the fingers (0.5-2 N) and the arm carries 25-34x its own
+                # weight. WRENCH=legs asks whether the legs are the other end of it: the pelvis is
+                # welded by a per-frame root write while the leg drives miss their commanded kneel
+                # (f254: left_ankle_pitch 789 / left_hip_yaw 765 / left_hip_pitch 528 / left_knee
+                # 407 mrad, 29-joint sum 3182 mrad), so that weld-legs-floor loop could load the arm.
+                # Measured answer: it does not. legs 80-280 N, pelvis 0.0, waist/torso 887-889 N.
+                if os.environ.get("WRENCH") == "legs":
+                    _want = [n for n in _bn if any(k in n for k in
+                             ("pelvis", "torso", "waist", "hip", "knee", "ankle"))] + \
+                            ["right_shoulder_roll_link", "right_wrist_yaw_link"]
+                    _want = [n for n in _want if n in _bn]
+                elif os.environ.get("WRENCH") == "hand":
+                    # The earlier arm reading was cut off at "index_proximal F 0.8 T 0.0 th" and its
+                    # filter never included right_hand_palm_link at all, so "the load is not at the
+                    # hand" rested on a line whose end I had not seen. Self-collision is OFF but that
+                    # does not disable collision with the FLOOR, and the error is posture-dependent
+                    # (184 mrad at the low reach, 2.7 mrad in the lift) with the base rigid to 0.00 mm.
+                    # Print every right-hand link with its world z, untruncated.
+                    _want = [n for n in _bn if n.startswith("right_wrist") or n.startswith("right_hand")
+                             or n.startswith("R_")]
+                else:
+                    _want = [n for n in _bn if n.startswith("right_shoulder") or n.startswith("right_elbow")
+                             or n.startswith("right_wrist")] + \
+                            [n for n in _bn if n.startswith("R_") and
+                             any(k in n for k in ("hand_base", "index", "thumb"))]
+                _row = []
+                for _n in _want:
+                    _b = _bn.index(_n)
+                    _f = _w[_b]
+                    _z = float(robot.data.body_pos_w[0, _b, 2])
+                    _row.append(f"{_n.replace('right_','').replace('_link','').replace('R_','')} "
+                                f"F{np.linalg.norm(_f[:3]):6.1f} T{np.linalg.norm(_f[3:6]):6.1f}"
+                                + (f" z{_z:+.4f}" if os.environ.get("WRENCH") == "hand" else ""))
+                if os.environ.get("WRENCH") == "hand":
+                    print(f"[opus] wr f{i:3d}", flush=True)
+                    for _e in _row:
+                        print(f"[opus]      {_e}", flush=True)
+                else:
+                    print(f"[opus] wr f{i:3d}  " + "  ".join(_row), flush=True)
+        if os.environ.get("SEG_GAP") and i % 10 == 0:
+            # Link ORIGINS 300 mm apart say nothing about two 250-400 mm links crossing. The upper
+            # arm and the thigh are capsules; measure segment-to-segment distance. shoulder_roll is
+            # pinned at -300 Nm and cannot adduct past -0.69 while the thigh sits 251 mrad further
+            # out than commanded -- the reaction pair a collision produces. Read-only.
+            def _P(n):
+                _b = robot.find_bodies([n])[0]
+                return robot.data.body_pos_w[0, _b[0]].cpu().numpy() if _b else None
+            def _s2s(p1, q1, p2, q2):
+                _u, _v, _w = q1 - p1, q2 - p2, p1 - p2
+                _a, _bb, _c = _u @ _u, _u @ _v, _v @ _v
+                _d, _e = _u @ _w, _v @ _w
+                _D = _a * _c - _bb * _bb
+                if _D < 1e-9: _sc, _tc = 0.0, (_e / _c if _c > 1e-9 else 0.0)
+                else: _sc, _tc = (_bb * _e - _c * _d) / _D, (_a * _e - _bb * _d) / _D
+                _sc, _tc = min(max(_sc, 0.0), 1.0), min(max(_tc, 0.0), 1.0)
+                return float(np.linalg.norm((p1 + _sc * _u) - (p2 + _tc * _v)))
+            _segs = {"upperarm": ("right_shoulder_roll_link", "right_elbow_link"),
+                     "forearm":  ("right_elbow_link", "right_wrist_roll_link"),
+                     "thigh":    ("right_hip_roll_link", "right_knee_link"),
+                     "shank":    ("right_knee_link", "right_ankle_roll_link")}
+            _pt = {k: (_P(v[0]), _P(v[1])) for k, v in _segs.items()}
+            _out = []
+            for _x in ("upperarm", "forearm"):
+                for _y in ("thigh", "shank"):
+                    if all(z is not None for z in _pt[_x] + _pt[_y]):
+                        _out.append(f"{_x}-{_y} {_s2s(*_pt[_x], *_pt[_y])*1000:5.0f}")
+            print(f"[opus] seg  f{i:3d}  " + "   ".join(_out), flush=True)
+        if os.environ.get("ARM_PHYS") and not globals().get("_PHYS_SHOWN"):
+            # 226 Nm of load at f90 with nothing within 262 mm of the hand is impossible for a
+            # 2 kg arm on a 0.3 m lever (6 Nm). Before blaming the drive, dump the physics the
+            # way the convex-hull bug was found: mass and inertia per link. Read-only.
+            globals()["_PHYS_SHOWN"] = True
+            try:
+                _m = robot.root_physx_view.get_masses().cpu().numpy()[0]
+                _in = robot.root_physx_view.get_inertias().cpu().numpy()[0]
+            except Exception as _e:
+                print(f"[opus] phys: unavailable ({_e})"); _m = None
+            if _m is not None:
+                _sel = [j for j, n in enumerate(robot.body_names)
+                        if n.startswith("R_") or n.startswith("right_shoulder") or n.startswith("right_elbow")
+                        or n.startswith("right_wrist") or n in ("torso_link", "pelvis")]
+                print(f"[opus] phys: total robot mass {_m.sum():.2f} kg over {len(_m)} links")
+                for j in _sel:
+                    _I = _in[j].reshape(3, 3) if _in[j].size == 9 else _in[j]
+                    _d = np.diag(_I) if getattr(_I, "ndim", 1) == 2 else _I[:3]
+                    print(f"[opus] phys:   {robot.body_names[j]:<26s} m {_m[j]:8.4f} kg   Idiag {np.round(_d, 5)}")
+                _hb = [j for j, n in enumerate(robot.body_names) if n.startswith("R_")]
+                print(f"[opus] phys: right hand = {len(_hb)} links, {_m[_hb].sum():.4f} kg;  "
+                      f"right arm+hand = {_m[[j for j in _sel if robot.body_names[j] not in ('torso_link','pelvis')]].sum():.4f} kg")
+        if os.environ.get("HAND_FLOOR") and i % 10 == 0:
+            _hb = [j for j, n in enumerate(robot.body_names) if n.startswith("R_") or n.startswith("right_wrist")]
+            if _hb:
+                _z = robot.data.body_pos_w[0, _hb, 2].cpu().numpy()
+                print(f"[opus] handz f{i:3d}  lowest {_z.min():+.4f} ({robot.body_names[_hb[int(_z.argmin())]]})", flush=True)
+        if os.environ.get("LIMB_GAP") and i >= 90 and i % 10 == 0:
+            # shoulder_roll sits at tau -300/300 with vel +1.5 rad/s for the whole dwell: a
+            # saturated drive that still moves is being pushed, not drooping. The only body
+            # near the right arm in this kneel is the right leg. Print the arm-to-leg link
+            # distances so a collision is a number. Read-only.
+            _A = ["right_shoulder_roll_link", "right_shoulder_yaw_link", "right_elbow_link", "right_wrist_roll_link"]
+            _L = ["right_hip_roll_link", "right_hip_yaw_link", "right_knee_link", "torso_link", "pelvis"]
+            _pos = {}
+            for _n in _A + _L:
+                _b = robot.find_bodies([_n])[0]
+                if _b: _pos[_n] = robot.data.body_pos_w[0, _b[0]].cpu().numpy()
+            _pr = [(float(np.linalg.norm(_pos[x] - _pos[y])), x, y) for x in _A if x in _pos for y in _L if y in _pos]
+            _pr.sort()
+            print("[opus] gap f%3d  " % i + "   ".join(
+                f"{x.replace('right_','').replace('_link','')}-{y.replace('right_','').replace('_link','')} {d*1000:.0f}"
+                for d, x, y in _pr[:5]), flush=True)
         if MARKS and (i + 1) in MARKS:                        # end of a scheduled phase (assist wrap): a picture and the object's pose
             _ph = MARKS[i + 1]; snap(f"{int(k)}_{_ph}")
             _o = obj_centre(); _bq = box.data.root_quat_w[0].cpu().numpy()

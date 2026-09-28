@@ -69,6 +69,18 @@ if os.environ.get("ARM_KP_SCALE") and "arms" in cfg.actuators:
     cfg.actuators["arms"] = cfg.actuators["arms"].replace(
         stiffness={n: v * _k for n, v in cfg.actuators["arms"].stiffness.items()} if isinstance(cfg.actuators["arms"].stiffness, dict) else cfg.actuators["arms"].stiffness * _k,
         damping={n: v * _k ** 0.5 for n, v in cfg.actuators["arms"].damping.items()} if isinstance(cfg.actuators["arms"].damping, dict) else cfg.actuators["arms"].damping * _k ** 0.5)
+# ARM_EFFORT: measured in the probe, not guessed. At the low reach right_shoulder_roll holds
+# 184 mrad from its command with the drive clamped at its 300 Nm ceiling; an 8x kp sweep barely
+# moved it (149/181/186 mrad at kp 3000/12000/24000), so it is not a stiffness deficit, and the
+# base is rigid to 0.00 mm, self-collision is off, joint friction is 0 and no hand link carries
+# more than 1.4 N. Raising the ceiling is the one lever that moved the number: eff 300 -> 181.5,
+# eff 1000 -> 76.4, eff 4000 -> 75.5 mrad (demand -901 Nm, unclamped), i.e. ~105 mrad ~ 47 mm off
+# the 80 mm execution error. It is a simulation-fidelity concession, not a physical fix: the real
+# actuator is rated effort="25" in g1_29dof_rev_1_0.urdf, so the stock 300 is already 12x and
+# 1000 is 40x. Measured side effect: shoulder_pitch's own error worsens 9.6 -> 21.3 mrad.
+if os.environ.get("ARM_EFFORT") and "arms" in cfg.actuators:
+    cfg.actuators["arms"] = cfg.actuators["arms"].replace(
+        effort_limit=float(os.environ["ARM_EFFORT"]), effort_limit_sim=None)
 if os.environ.get("HAND") != "inspire": cfg.actuators["hands"] = cfg.actuators["hands"].replace(effort_limit=1.4, velocity_limit=12.0,
     # HAND_DAMPING: the body is written every substep, and PhysX then
     # reports garbage joint velocities on the simulated fingers (-2.5 to

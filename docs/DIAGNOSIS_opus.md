@@ -2377,3 +2377,83 @@ f165~f193 (닫기 구간) 에서 다르며 엄지·손가락 램프가 `reach_fr
 
 성공 신호는 하나다: 닫기 구간에 손가락이 1.47 에 도달하지 **못하고** 대조군 곡선에서
 벗어나는 것.  그것이 손잡이가 손 안에 있다는 유일한 증거다.
+
+---
+
+## v42 의 판정과, 실행 오차 하나만 남기고 닫은 후보들
+
+v42(`POWER_Y=0.02,0.03`)는 8후보 전부 LOST 다.  `cuRobo 4.9~18.8 mm`, stand-up 변위
+`-0.000` 6건 / 후보1 `-0.099` / 렌더 `[eval] dxy 0.2068 dz -0.1051`.  손바닥면을 손잡이
+윗면 8.5 / 18.5 mm 위까지 내려도 손 안에 손잡이가 남지 않는다.
+
+그래서 자세 탐색을 멈추고 **실행 오차** 자체를 측정했다.  cuRobo 가 파지점에서 5~18 mm
+를 보고하는데 Isaac 의 손목은 ~80 mm 떨어진 곳에 있다.  이 오차는 `right_shoulder_roll`
+하나가 지고 있고, 낮은 리치 구간에서 자기 명령에서 **184 mrad** 떨어진 채 드라이브가
+300 Nm 에 클램프된다.  8개 버전을 지배한 것은 파지 자세가 아니라 이것이다.
+
+### 계측기부터 버렸다 (결론: F 와 tau 와 vel 은 쓸 수 없다)
+
+- `applied_torque` 는 해석식이다.  `ImplicitActuator.compute()` =
+  `stiffness*error_pos + damping*error_vel + joint_efforts` 를 클립한 값
+  (`isaaclab/actuators/actuator_pd.py`).  `tau -300.0/300` 은
+  `12000 x 0.184 > 300` 을 되풀이한 것뿐이고, **"300 Nm 하중" 판독은 순환논증이었다 — 철회한다.**
+- `velocity_limit` 은 implicit actuator 에서 폐기된다 ("we continue to not use it").
+  `velocity_limit=100` 은 무효이고 `effort_limit` 만 `effort_limit_sim` 으로 PhysX 에 닿는다.
+- `vel` 은 f195 에서 +1.50 rad/s 를 보고하는데 위치 미분은 -0.013 rad/s 다 — 부호가
+  반대이고 60배 차이.  이 저장소가 이미 기록한 PhysX 속도 쓰레기값이다.
+  따라서 **"링잉 배제"도 철회한다**: 그 판정을 낸 실행은 awk 열이 잘못되어
+  `shoulder_roll` 대신 `wrist_roll` 을 찍었고, 같은 프레임·같은 kp 의 깨끗한
+  `d +181.5` 와 모순된다.
+- `F`(incoming joint force) 는 하중 측정치가 아니다.  1100 N 은 `wrist_yaw` 에서 끝나고
+  손가락에 1.4 N 도 닿지 않는다 — 끝이 1.4 N 인 체인은 1100 N 을 전달하지 못한다.
+  게다가 원위 질량이 줄어드는데 F 는 바깥으로 단조증가한다
+  (1032.8 -> 1047.9 -> 1061.0 -> 1075.3 -> 1089.1 -> 1091.3 -> 1103.8).
+  자기일관적인 것은 `T` 뿐이고, 그것이 보여주는 것은
+  `shoulder_pitch T 303.8` 인데 자기 구동은 `-48.6/300` 뿐 (즉 ~300 Nm 가 축 밖),
+  바깥으로 306.1 -> 237.8 -> 191.5 -> 117.6 -> 92.3 -> 62.5 -> 손가락 0.0 감쇠 —
+  `shoulder_roll` 자신의 포화된 300 Nm 가 체인을 타고 반작용하는 모양이다.
+
+### 숫자로 닫은 후보 (전부 음성)
+
+| 후보 | 측정 | 판정 |
+|---|---|---|
+| 베이스 이동 | ROOTDRIFT: f40~f430 전 구간 `drift 0.00 mm`, `jump 0.00 mm`, `vel 0.000 m/s` | 닫힘 |
+| 감쇠 부족 | kd 20/120/600 -> 184.1/179.9/170.8 mrad, 구속력 1032.8/1114.3/1014.2 N | 닫힘 |
+| 강성 부족 | kp 3000/12000/24000 -> 149.4/181.5/186.1 mrad | 닫힘(악화) |
+| 손·바닥 접촉 | 오른손 전 링크 0.3~1.4 N, 최저 링크 `thumb_distal z +0.0194` | 닫힘 |
+| 팔-다리 접촉 | SEG_GAP 전 구간 최소 301 mm; f180~f220 은 346~365 mm 로 오히려 벌어짐 | 닫힘 |
+| 관절 한계 | 하드 [-2.2515 +1.5882], 소프트 [-2.0595 +1.3962], 명령 -0.867 | 닫힘(1.19 rad 안쪽) |
+| 관절 마찰 | `joint_friction_coeff 0.00000`, `joint_friction 0.00000`, `joint_armature 0.00100` | 닫힘 |
+| 자기충돌 | `enabled_self_collisions=False` | 닫힘 |
+| 질량/관성 | f0 `shoulder_pitch F 34.7 N` = 3.54 kg x 9.81 정확히 | 정상 |
+| 인덱스 오매핑 | `_ai = [names.index(n) for n in _an]`, `_aj = [body_ids[j] for j in _ai]` — cmd/got 모두 shoulder_roll | 닫힘 |
+| 속도 추종 지연 | cmd 가 f180 -0.8506 -> f210 -0.8722 = 0.022 rad/s, kp 12000 은 ~4e-5 rad 만 뒤짐 | 닫힘 |
+
+ROOTDRIFT 의 부수 결론 둘: `pelvis F 0.0` 은 하중이 없다는 증거가 아니라 **구조적**이다
+(운동학 루트에는 들어오는 관절이 없다).  그리고 `jump 0.00` 은 리치 동안 root7 이 상수라는
+뜻이므로 플래너의 `pelvis z 0.340..0.440` 은 참조값이고 테스터가 재생하는 값이 아니다.
+
+### 남은 하나: effort 상한
+
+```
+eff  300 -> 181.5 mrad
+eff 1000 ->  76.4 mrad
+eff 4000 ->  75.5 mrad   (요구 -901 Nm, 클램프 없음 -> 1000 에서 효용이 끝난다)
+```
+105 mrad ≈ 47 mm, 80 mm 실행 오차의 절반이 넘는다.  **다만 이것은 물리적 해결이 아니다.**
+`g1_29dof_rev_1_0.urdf` 의 정격은 `effort="25"` 이므로 기본값 300 도 이미 12배, 1000 은 40배다.
+측정된 부작용: 상한을 올리면 `shoulder_pitch` 자신의 오차가 9.6 -> 21.3 mrad 로 나빠진다.
+간극이 이것으로 닫히면 답은 40배를 쓰는 것이 아니라 **25 Nm 가 버티는 자세로 다시 계획**하는 것이다.
+
+-> **v43 = `ARM_EFFORT=1000`**, 자세는 v42 그대로 재사용(재solve 없음).
+렌더는 knob 하나 때문에 `play_in_cell_opus.py` 로 가지만 교란은 없다:
+`SOLVER_IT/SOLVER_VIT` 기본값 12/4 는 Fable 의 `play_in_cell.py:164-167`, `:328-330`
+하드코딩과 동일하고, 다른 `_opus` 추가분은 전부 env 게이트 + 기본 off 다.
+
+### 오픈소스와의 차이는 차이로만 적는다 (원인으로 적지 않는다)
+
+- 팔 감쇠: GraspGenX `end2end/robots/g1_inspire_arm.yaml` 은 arm_kp 2000 / arm_kd 100
+  (kd/kp 0.05), 우리는 20/12000 (0.0017) — 30배 적다.  단 위 표대로 **오차의 원인은 아니다**
+  (그리고 GraspGenX 쪽은 베이스 고정된 팔 단독이다).
+- 손: 우리는 `CLOSE_MODE=position HAND_KP=40`, 오픈소스는 `gripper_control_mode: velocity`,
+  `FINGER_KP_DEFAULT 2000`, `FINGER_KD_DEFAULT 200`, `finger_effort_limit 1000`.
