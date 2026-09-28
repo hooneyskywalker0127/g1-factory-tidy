@@ -481,6 +481,23 @@ if _oit:
         _api.CreateSolverPositionIterationCountAttr(_oit)
         _api.CreateSolverVelocityIterationCountAttr(_ovit)
         print(f"[solver] object {_tp.GetPath()} iterations {_oit}/{_ovit}")
+
+# --- depenetration cap on the object body -------------------------------------
+# Every IsaacLab manipulation config that grasps a rigid body caps the velocity
+# the solver may introduce to push a penetrating pair apart:
+# max_depenetration_velocity=5.0 in manipulation/lift/config/franka/joint_pos_env_cfg.py:58,
+# direct/factory/factory_tasks_cfg.py and manipulation/deploy/gear_assembly/*.
+# Ours never set it (v12's dump_physics lists no such attribute on
+# /World/GraspTarget), so the solver may introduce any velocity it likes.
+# Unset here -> the attribute is not authored and the run is unchanged.
+_mdv = os.environ.get("OBJ_MAX_DEPEN_VEL", "")
+if _mdv:
+    from pxr import PhysxSchema as _PxS2
+    _tp2 = stage.GetPrimAtPath(os.environ.get("TARGET_PRIM", "/World/GraspTarget"))
+    if _tp2 and _tp2.IsValid():
+        _PxS2.PhysxRigidBodyAPI.Apply(_tp2).CreateMaxDepenetrationVelocityAttr(float(_mdv))
+        print(f"[phys] object maxDepenetrationVelocity {_mdv} m/s (IsaacLab manipulation cfgs use 5.0)")
+# ------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------
 
 from plan_scene import floor_slab
