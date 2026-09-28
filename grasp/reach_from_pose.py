@@ -330,6 +330,13 @@ def main():
                 # both palms oriented alike the crate lifted on one side only
                 # and fell on its flank).
                 y = (u if (name == "left" and os.environ.get("LEFT_Y_IN", "1") == "1") else -u)
+                # PINCH_OUTSIDE=1 (Sehoon, 2026-09-28: "왜 안으로 손을 넣냐? 밖으로 손을 넣는게 더 안정적"): the hand
+                # stays OUTSIDE the crate -- palm and four fingers on the outer face of the wall, only the thumb
+                # reaches over the rim to the inside. Thumb side (+y right / -y left) turns inward, and the palm
+                # centre sits PINCH_IN outside the wall instead of inside.
+                outside = os.environ.get("PINCH_OUTSIDE", "0") == "1"
+                if outside:
+                    y = -y
                 x = np.array([0.0, 0.0, -1.0]); z = np.cross(x, y)
                 T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x, y, z
                 insp = os.environ.get("HAND") == "inspire"
@@ -347,7 +354,7 @@ def main():
                     # 4 cm INSIDE the wall. Left palm (+y turned inward, LEFT_Y_IN): its thumb side -y is
                     # outward, centre 4 cm inside as well. Open, the thumb tip is 9.3 cm on its side -- 5 cm
                     # outside the wall on the way down; the fingers (y 0) 4 cm inside.
-                    T[:3, 3] += float(os.environ.get("PINCH_IN", "0.04")) * u
+                    T[:3, 3] += (-1.0 if outside else 1.0) * float(os.environ.get("PINCH_IN", "0.04")) * u
                 else:
                     # the pinch point sits 4.3 cm from the palm centre on the THUMB
                     # side (+y of the right palm). For the mirrored left palm with
