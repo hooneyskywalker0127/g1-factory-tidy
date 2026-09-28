@@ -384,6 +384,16 @@ else:
     cfg.init_state = cfg.init_state.replace(
         pos=STAND,
         rot=(math.cos(_y / 2.0), 0.0, 0.0, math.sin(_y / 2.0)))
+# --- CONTACT_FORCE: measure how hard the fingertips push the object ----------
+# IsaacLab's own dexterous-hand task (manager_based/manipulation/dexsuite/config/
+# kuka_allegro/dexsuite_kuka_allegro_env_cfg.py:43-56) hangs a ContactSensor on every
+# fingertip, filtered to the object, and calls the grasp good when the thumb and one
+# opposing finger each exceed 1.0 N (mdp/rewards.py:50-71, threshold passed at :111);
+# it clips the observation at 20 N with the note "contact force in finger tips is under
+# 20N normally". We have never measured this number. A ContactSensor only reports if the
+# body was spawned with contact reporting on. Unset -> the run is byte-for-byte unchanged.
+if os.environ.get("CONTACT_FORCE"):
+    cfg.spawn = cfg.spawn.replace(activate_contact_sensors=True)
 robot = Articulation(cfg)
 stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_reference.py)
 
@@ -548,6 +558,45 @@ if "object" in meta:
                                              spawn=None))
 
 from plan_scene import dump_physics; dump_physics(stage)
+# The sensor has to exist before sim.reset(): PhysX builds its scene there. One sensor
+# with a regex over the right-hand links gives force_matrix_w of shape (1, B, 1, 3) --
+# per-link force against the one filtered body, the object -- with sensor.body_names
+# giving the B ordering (contact_sensor_data.py:97-105).
+_fsensor = None
+if os.environ.get("CONTACT_FORCE") and target_body is not None:
+    from isaaclab.sensors import ContactSensor, ContactSensorCfg  # noqa: E402
+    _tprim = os.environ.get("TARGET_PRIM", "/World/GraspTarget")
+    _fsensor = ContactSensor(ContactSensorCfg(
+        prim_path=os.environ.get("CONTACT_LINKS", "/World/G1/R_.*"),
+        filter_prim_paths_expr=[_tprim], history_length=0, update_period=0.0))
+    print(f"[force] contact sensor on {os.environ.get('CONTACT_LINKS', '/World/G1/R_.*')} "
+          f"filtered to {_tprim}")
+
+
+def _force_line(i):
+    """Per-fingertip contact force against the object, in newtons.
+
+    DexSuite's criterion (mdp/rewards.py:50-71) is thumb > 1.0 N AND one opposing finger
+    > 1.0 N; its observation clips at 20 N as the normal range. Printing the magnitudes
+    lets us compare, instead of assuming what the squeeze is doing.
+    """
+    if _fsensor is None:
+        return
+    _fsensor.update(sim.get_physics_dt(), force_recompute=True)
+    _fm = _fsensor.data.force_matrix_w
+    if _fm is None:
+        print(f"[force] frame {i:5d} no filtered contact data"); return
+    _mag = _fm[0, :, 0, :].norm(dim=-1).cpu().numpy()
+    _nm = _fsensor.body_names
+    _hit = [(n, m) for n, m in zip(_nm, _mag) if m > 0.01]
+    _hit.sort(key=lambda t: -t[1])
+    _thumb = max([m for n, m in zip(_nm, _mag) if "thumb" in n], default=0.0)
+    _other = max([m for n, m in zip(_nm, _mag) if "thumb" not in n], default=0.0)
+    print(f"[force] frame {i:5d} sum {_mag.sum():7.2f} N  max {_mag.max():6.2f} N  "
+          f"thumb {_thumb:6.2f} N  best-opposing {_other:6.2f} N  "
+          f"dexsuite_good={bool(_thumb > 1.0 and _other > 1.0)}  "
+          + ", ".join(f"{n} {m:.2f}" for n, m in _hit[:6]))
+
 sim.reset()
 
 obj_start = None
@@ -841,6 +890,7 @@ if walk is not None:
                 print(f"[obj ] frame {i:5d} pos {np.round(_op, 4)}  moved "
                       f"{np.linalg.norm(_op - obj_start):.4f} m  vel {np.round(target_body.data.root_lin_vel_w[0].cpu().numpy(), 3)}"
                       f"  quat {np.round(target_body.data.root_quat_w[0].cpu().numpy(), 3)}")
+                _force_line(i)
                 _out = []
                 for _ln in (PALM_LINK["right"],
                             "left_ankle_roll_link", "right_ankle_roll_link", "left_knee_link", "right_knee_link"):
@@ -1418,6 +1468,7 @@ for i in range(traj.shape[0]):
         op = target_body.data.root_pos_w[0].cpu().numpy()
         print(f"[obj ] frame {i:5d} pos {np.round(op,4)}  moved "
               f"{np.linalg.norm(op - obj_start):.4f} m")
+        _force_line(i)
     if i % 200 == 0:
         got = np.array([robot.data.joint_pos[0, j].item() for j in ids])
         want = np.array([traj[i, k] for k in range(len(ids))])
