@@ -399,3 +399,41 @@ position close), B = A 에서 **오직 한 가지**, GraspGenX 자신의 velocit
 CLOSE_VEL=0.25, CLOSE_KD=800)만 바꾼 것. 확정된 파지(hammer #138, drill #57)와 각자의 carry 클립으로
 일어서는 동안 5 지점에서 물체를 **손바닥 자신의 좌표계**에서 읽는다. 손가락 축을 따라 빠지면 손끝
 집기가 손잡이를 놓치는 것이고, 손바닥 면에서 멀어지면 상승 가속도에 접촉을 잃는 것이다. 처방이 다르다.
+
+## v9 의 질문이 드디어 측정되기 직전이다 — 그리고 "성공"의 정체가 달랐다 (260928 21:20)
+
+**1) hammer #138 이 HELD 였다는 기록은 수직 들어올리기였다. 전신 일어서기는 그때도 실패한다.**
+같은 파지, 같은 물체 위치(`[-0.3 0.05 0.162]`, 테스터·렌더 동일), 같은 링크(PALM_LINK = right_wrist_yaw_link)로
+두 기록을 맞춰 보았다.
+
+| | 형식 | 결과 |
+|---|---|---|
+| v6 `evidence/verify_138.txt` | `box at close +0.024  after lift dz +0.147 m` — 테스터 :590 의 **수직 들어올리기** | HELD |
+| 오늘 (기준 게인 그대로) | `slipped in the stand-up (+0.000 of 0.36 m)` — `TEST_RISE_PKL` 의 **전신 일어서기** | LOST |
+
+두 줄은 서로 다른 시험이다. 즉 #138 은 팔로 수직으로 들면 +0.147 m 를 버티고, 캐리 클립의 전신 일어서기
+(몸 0.36 m)에서는 물체가 전혀 따라오지 않는다. hammer/v9 가 쓴 "the pick holds, the stand-up drops it" 이
+테스터 안에서, **기준 게인(kp 40 / kd 0.4 / effort 30, position close)에서** 재현된다. 게인 문제가 아니다.
+(v6 의 cuRobo 4.9 mm 와 오늘의 3.9 mm 는 같은 궤적의 다른 웨이포인트다 — 출력이 `err[k, n_go-1]` 이고
+n_go 가 프레임 수에 따라 달라진다. 해가 바뀐 증거가 아니므로 폐기한다. reach_all.npz(12:12)는 v6(13:45)보다
+앞서므로 인덱스 138 은 같은 파지다.)
+
+**2) 그런데 내 probe 는 손실의 순간을 볼 수 없었다. 첫 관측이 이미 사후였다.**
+`test_grasps_in_isaac_opus.py:537` 의 `_checks = {int(round(len(_seq) * _fr)) - 1 for _fr in (0.001, ...)}` 에서
+선두 항 0.001 은 실제 N(150~260)에서 `round(N*0.001) - 1 == -1` 이 되어 **한 번도 발화하지 않았다.**
+그래서 가장 이른 관측이 일어서기의 24% 다. 그 시점에 물체는 이미 손바닥 좌표계로 304 mm 밖이고 정지해 있으며,
+24/50/75/100% 네 점이 서로 같은 값을 주는 이유가 이것이다(물체 `[-0.282 0.047 0.153]` 고정, tilt 6.8 deg 고정,
+손가락 12 축 1.47 에 잔차 0). 손실은 첫 1/4 안에서 끝난다.
+`_checks` 를 0/4/8/12/16/20/25/50/75/100% 로 고쳤다(내 사본만). 첫 프레임이 반드시 찍힌다.
+
+**3) 다시 도는 것:** `scratchpad/rise_ab2.sh` — A(기준 게인, position close) / B(A + GraspGenX 자신의
+velocity close: kd 800, 0.25 rad/s)를 해머 먼저, 각 arm 마다 일어서기 첫 1/4 을 촘촘히 읽는다.
+손가락 축을 따라 빠지는지, 손바닥 면에서 멀어지는지가 여기서 갈린다.
+
+**4) 참고로 확보한 숫자(아직 시험 안 함):** `end2end/tasks.py:170-184` 는 들어올리기를 LIFT_FRAMES 240
+(60 fps = **4 초**)로 늘리며 이유를 적는다 — "cuRobo's lift_interpolated_trajectory is only ~41 waypoints,
+which at 60 fps plays in 0.7 sec — too fast for the gripper to keep grip on the object under physics."
+접근(APPROACH_FRAMES)과 최종 직진(GRASP_FRAMES)도 각각 120 프레임 = 2 초로 늘린다.
+우리 일어서기는 플래너 ~1.4 초를 `build_place_reference.py:66-69` 의 RISE_SLOW=2 로 늘린 ~2.8 초다.
+RISE_SLOW 는 환경변수이므로 페이블 파일을 고치지 않고 올릴 수 있다. probe 결과가 "상승 가속도에 접촉을
+잃는다"로 나오면 이것이 다음 한 가지다.

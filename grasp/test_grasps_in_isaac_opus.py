@@ -534,7 +534,12 @@ for k in order:
             # face. Without this the only datum was "it is gone by the end".
             _pb = robot.find_bodies([PALM_LINK["right"]])[0][0]
             _seq = list(_frames) + [float(_n_end)] * 30
-            _checks = {int(round(len(_seq) * _fr)) - 1 for _fr in (0.001, 0.25, 0.5, 0.75, 1.0)}
+            # The first checkpoint has to be the rise's FIRST frame. With (0.001, ...) it evaluated to
+            # int(round(N*0.001)) - 1 == -1 for every real N and never fired, so the earliest observation
+            # was 24% of the stand-up -- by which point hammer #138 was already 304 mm out of the palm and
+            # static. The loss happens inside the first quarter, so sample that quarter densely.
+            _checks = {max(0, int(round(len(_seq) * _fr)) - 1)
+                       for _fr in (0.0, 0.04, 0.08, 0.12, 0.16, 0.20, 0.25, 0.5, 0.75, 1.0)}
 
             def _rise_probe(_tag):
                 box.update(sim.get_physics_dt())
