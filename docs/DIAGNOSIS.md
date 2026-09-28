@@ -681,3 +681,10 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - 11:44-11:58 The repo was on `main` (checked out by hand) for 14 min: grasp/ absent there, so the idle test, the A/B
   experiments and the slot hook all died with "file not found". main reset to origin/main, back on the work branch,
   everything relaunched.
+- 11:55 FOUND THE TESTER/RENDER GAP: the tester idled 0.5 s (15-frame blend) before the approach, the render 13 s.
+  Drill #63 with SETTLE_IDLE=400 in the tester: LOST 3/3 (was HELD 3/3). Palm at grasp identical (z 0.237 vs
+  0.236, offsets within 3 mm), so it is not arm sag -- the close is that marginal; a 13 s different history flips
+  it. Consequences: (1) the tester now idles 13 s before every approach (SETTLE_IDLE=400 in verify/rereach) so a
+  "held" means held under the render's conditions; (2) GraspGenX's own timing adopted -- 2 s approach + 2 s run-in
+  (APPROACH_FRAMES/GRASP_FRAMES, were 1.0/0.67 s; their tasks.py says 0.7 s bumps the object before the close).
+  Hammer and drill re-reached with both, one at a time (slow_approach_queue.sh).

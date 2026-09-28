@@ -561,7 +561,10 @@ def main():
         # from wherever the wrist is to the grasp pose comes in diagonally
         # and the hand hits the object on the way -- measured, the clamp was
         # swept 31 cm before the fingers closed.
-        n_pre, n_in, n_lift = 30, 20, 30
+        # APPROACH_FRAMES / GRASP_FRAMES: GraspGenX's own task player stretches the free-space approach and the
+        # final straight run-in to 2 s each (end2end/tasks.py: "0.7 s is fast enough that the approach can bump /
+        # tip the object before the fingers close"); ours were 1.0 s and 0.67 s.
+        n_pre, n_in, n_lift = int(os.environ.get("APPROACH_FRAMES", "60")), int(os.environ.get("GRASP_FRAMES", "60")), 30
         # GRASP_SLIDE (m, default 0): the descent lands the fingertips GRASP_SLIDE beyond the handle (palm -y,
         # away from the thumb), then the hand slides +y until the finger pads sit against the handle, and only
         # then the close. A descent aimed at the grasp itself lands the pads on the handle's edge and whether it
