@@ -418,6 +418,66 @@ def main():
         print(f"[reach] wrote {sys.argv[sys.argv.index('--out') + 1]}")
         return
 
+    # --crate-grasps CRATE.json: the crate lifted with GraspGen-X's OWN candidates (grasps_json), one per hand, instead
+    # of hand-designed pinch/hook geometry (Sehoon 2026-09-28: "파지점을 찾을 거 아니야? 확률 기반 아님? 더 높은 걸
+    # 하는 거지"). Candidates are split into the robot's left/right side of the crate, kept if they sit on the
+    # upper part (z > CRATE_GRASP_ZMIN * top), ranked by confidence, and the top PAIRS are solved for both hands
+    # (rise first, descend, hold, lift); every pair is written so the physics tester can pick the one that holds.
+    if "--crate-grasps" in sys.argv:
+        cj = json.load(open(sys.argv[sys.argv.index("--crate-grasps") + 1]))
+        c = np.array(cj["centre"][:2]); ax = np.array(cj["long_axis"]); side = np.array([-ax[1], ax[0]])
+        left_dir = np.array([-cj["long_axis"][1], cj["long_axis"][0]])            # robot's left when facing +long_axis
+        wrists_all, conf_all = grasps_in_cell(grasps_json, cap)
+        P2 = np.eye(4); P2[:3, 3] = WRIST_TO_PALM
+        palms_all = np.array([w @ P2 for w in wrists_all])
+        zmin = float(os.environ.get("CRATE_GRASP_ZMIN", "0.6")) * cj["top"]
+        cands = {"left": [], "right": []}
+        for k, (Wp, cf) in enumerate(zip(palms_all, conf_all)):
+            pinch = (Wp @ np.array([0.15, 0.06, 0.0, 1.0]))[:3]                 # the Inspire pinch point (rank_handle.py)
+            if pinch[2] < zmin:
+                continue
+            s_ = float((pinch[:2] - c) @ left_dir)
+            cands["left" if s_ > 0 else "right"].append((float(cf), k))
+        for nm in cands:
+            cands[nm].sort(reverse=True)
+        n_top = int(os.environ.get("CRATE_PAIRS", "4"))
+        print(f"[reach] crate grasps: {len(wrists_all)} candidates, {len(cands['left'])} left / {len(cands['right'])} right above z {zmin:.2f}; "
+              f"top left {[k for _, k in cands['left'][:n_top]]}, top right {[k for _, k in cands['right'][:n_top]]}")
+        li = list(cfg.tool_frames).index("left_wrist_yaw_link"); ri = list(cfg.tool_frames).index("right_wrist_yaw_link")
+        lift = float(os.environ.get("CRATE_LIFT", "0.12")); n_over, n_down, n_hold, n_lift = 45, 60, 30, 45
+        seqs, errs, pairs = [], [], []
+        for (cl, kl) in cands["left"][:n_top]:
+            for (cr, kr) in cands["right"][:n_top]:
+                hands = {li: wrists_all[kl], ri: wrists_all[kr]}
+                steps = []
+                for i in range(n_over + n_down + n_hold + n_lift):
+                    st = {}
+                    for k, G in hands.items():
+                        T0 = np.eye(4); T0[:3, 3] = pos0[k]; T0[:3, :3] = quat_to_mat(quat0[k])
+                        over = G.copy(); over[2, 3] = G[2, 3] + 0.20
+                        if i < n_over:
+                            a = (i + 1) / n_over; au = min(1.0, a * 3.0); M = over.copy()
+                            M[:3, 3] = T0[:3, 3] + (over[:3, 3] - T0[:3, 3]) * a; M[2, 3] = T0[2, 3] + (over[2, 3] - T0[2, 3]) * max(a, au)
+                            if a < 0.34: M[:3, :3] = T0[:3, :3]
+                        elif i < n_over + n_down:
+                            a = (i + 1 - n_over) / n_down; M = G.copy(); M[:3, 3] = over[:3, 3] + (G[:3, 3] - over[:3, 3]) * a
+                        elif i < n_over + n_down + n_hold:
+                            M = G.copy()
+                        else:
+                            a = (i + 1 - n_over - n_down - n_hold) / n_lift; M = G.copy(); M[2, 3] += lift * a
+                        st[k] = M
+                    steps.append(st)
+                sol, err = solve_multi(steps)
+                seqs.append(sol); errs.append(err); pairs.append((kl, kr))
+                print(f"[reach] pair L#{kl} (conf {cl:.2f}) R#{kr} (conf {cr:.2f}): wrist error mean {err.mean()*1000:.1f} mm, at the grasp {err[n_over+n_down-5:n_over+n_down].mean()*1000:.1f} mm")
+        n_go = n_over + n_down
+        out = sys.argv[sys.argv.index("--out") + 1]
+        np.savez(out, q=np.stack(seqs), err=np.stack(errs), joint_names=np.array(jn), n_go=n_go, n_lift=n_lift,
+                 grasps=np.stack([wrists_all[kr] for _, kr in pairs]), conf=np.array([conf_all[kr] for _, kr in pairs]),
+                 pairs=np.array(pairs), close_from=n_go, lift_from=n_go + n_hold)
+        print(f"[reach] wrote {out}: {len(pairs)} pairs")
+        return
+
     if "--crate" in sys.argv:
         cj = json.load(open(sys.argv[sys.argv.index("--crate") + 1]))
         ax = np.array(cj["long_axis"] + [0.0]); side = np.array([-ax[1], ax[0], 0.0])
