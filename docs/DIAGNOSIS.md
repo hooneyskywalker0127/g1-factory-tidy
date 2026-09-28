@@ -642,3 +642,8 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   Drill re-reach: tester 1/40, render not reached. Pliers/screwdriver/hammer2 not reached.
 - Restarted as ONE sequential queue (morning_queue.sh): crate v10 -> crate carry (v10 plan) -> hammer #93 no-sleep
   render -> drill, pliers, screwdriver, hammer2 re-reach + render (outputs under 260928/5지/).
+- 10:08 Crate v10 (inside grip, 12 cm lift; 260928/crate/v1): rose 8 cm, right hand let go at the top, crate hung on
+  the left, tilted 19 deg -- "HELD +66" is the tilted rest. Sehoon: grasp from the OUTSIDE (hands outside the walls,
+  thumb over the rim) -> PINCH_OUTSIDE=1. v2: tester held +75 mm but in the render the right hand hit the near corner
+  on its way out and turned the crate 18 deg; v3 rises 32 cm first, then travels out (PINCH_OVER, bent path).
+  Screwdriver #99 with stiffness 40 + object awake: 0/3 (yesterday 1/1 with stiffness 10) -> factor test queued.
