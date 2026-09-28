@@ -719,3 +719,8 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - 12:29 HAMMER v3 (260928/5지/hammer/v3): the full render -- walk, kneel, handle, wrap, lift -- HELD +111 mm.
   First floor pick that holds in the render. Carry to the desk crate (place_v2) and the crate slot hook v8 are
   rendering; drill and screwdriver re-verification with the decomposition collider follow.
+- 12:35 Hammer carry v4 (260928/5지/hammer/v4): the pick held (+10 cm), then the hammer slid out while the robot
+  sat still and stood up (frames 734-800), before any step. Seam smooth (6 mm / 0.2 deg). -> RISE_SLOW=2 in
+  build_place_reference (stretch the stand-up frames 2x) and a finger-stiffness test on the decomposition
+  collider (#138, 13 s idle, HAND_KP 20/40). Crate slot hook v8 LOST again (IK 17 mm at the slots from 0.40 m):
+  parked; the outside rim pinch stays the crate grip.
