@@ -668,3 +668,7 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - 11:25 The Claude session restarted at ~11:21 and killed all four running renders (hammer #138, drill #63, crate
   carry v6, screwdriver #98) 12-20 min in; references were built, so render_only.sh re-renders them two at a time,
   with a room-view frame saved into evidence/ for the check rule.
+- 11:36 Four re-renders started together (the "two at a time" guard raced) next to Sehoon's own eval_student.py
+  (2.8 GB GPU): GPU 14.3 of 16.3 GB, RAM 1 GB free -- the state that crashed a render yesterday. Stopped the
+  screwdriver reference render (#98, re-verified 0/2, least value) and re-queued it behind the others; 11.4 GB /
+  5 GB free now. Rule: never more than three Isaac processes, and check for other users' GPU jobs first.
