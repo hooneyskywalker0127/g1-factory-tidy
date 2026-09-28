@@ -208,7 +208,7 @@ def main():
 
     close_at = len(qpos_w) + int(d["close_from"])
     hands = np.tile(np.array(HAND_OPEN, np.float32), (len(qpos), 1))
-    ramp = 20
+    ramp = int(os.environ.get("CLOSE_RAMP", "30"))   # frames; the tester's --slow closes over 30 (was 20 here: a faster close than what was verified)
     for k in range(ramp):
         a = (k + 1) / ramp
         if os.environ.get("CLOSE_ORDER", "together") == "thumb_first":

@@ -310,7 +310,7 @@ for k in order:
     # before the lift, and the lift itself is slow (20 cm over 7 s there).
     # A 0.8 s close and a 15 cm/s lift let a pinch on a 39 mm box slip.
     SLOW = "--slow" in sys.argv
-    n_ramp, n_settle, lift_x = (30, 150, 4) if SLOW else (20, 5, 1)
+    n_ramp, n_settle, lift_x = (int(os.environ.get("TEST_RAMP", "30")), 150, 4) if SLOW else (20, 5, 1)
     # CLOSE_ORDER: thumb_first | fingers_first | together. Closing everything
     # at once pushed a standing bottle over with whichever finger touched
     # first (40 of 40 candidates); a hand cages before it squeezes.
