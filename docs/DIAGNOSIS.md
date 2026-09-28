@@ -755,3 +755,11 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   Room camera moved to (1.9, -3.4, 2.4) looking at (-0.1, 0.3, 0.3): robot, object, desk crate and shelves in
   frame from the first step (Sehoon: the old view showed the robot only after it arrived); hammer/drill picks are
   being re-rendered with it for the YouTube cuts. Wrap chains queued: drill now, hammer after its confidence carry.
+- 13:55 Room camera (1.9, -3.4, 2.4) -> (-0.1, 0.3, 0.3): hammer (v6) and drill (v5) picks re-rendered, both HELD
+  again; the YouTube cuts rebuilt from them (robot in frame from the first step) and copied next to the runs.
+  Sehoon on the hammer close-up: the hand holds it with two or three fingertips -- a pinch, not a grip in the palm
+  -- and that is why it slides out on the stand-up. Finger-support check confirms: 0 of 156 hammer and 0 of 135
+  drill GraspGen-X candidates put all four fingers on the object (GraspGen-X's Inspire sweep volume is 11.8-13.5 cm
+  from the hand base = the fingertips). New --power-grasp mode (reach_from_pose.py): palm laid face-down on the
+  language-found handle, fingers across it, spread along it, 8 candidates along the handle; tester with the 13 s
+  idle + 3 s hold + 0.35 m stand-up; hammer power reach solved (12-14 mm), tester running, drill next.
