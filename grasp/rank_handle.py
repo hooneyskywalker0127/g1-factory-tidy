@@ -61,15 +61,23 @@ for k in range(len(W)):
         dxy = np.linalg.norm(pts[:, None, :2] - head[None, :, :2], axis=2).min(1)
         below = pts[:, 2] < head[:, 2].max() + 0.01          # the point ends up level with the bulk
         hit = float(np.sum((dxy < CLEAR) & below))
-    rows.append((k, off, frac, err[k], hit))
+    # FULL-HAND WRAP filter (2026-09-28 13:40): the carries lost the hammer and the drill from two-finger grips
+    # (index+middle on the handle, ring+pinky closing on air). Require the finger-spread axis (palm z) to run
+    # along the handle (|cos| >= ALIGN_MIN) and the pinch point to sit END_MARGIN inside both handle ends, so all
+    # four fingers land on the handle.
+    spread = G[:3, 2]; align = abs(float(spread[0] * ax[0] + spread[1] * ax[1]))
+    end_ok = (tp - t0) >= float(os.environ.get("END_MARGIN", "0.04")) and (t1 - tp) >= float(os.environ.get("END_MARGIN", "0.04"))
+    wrap_ok = align >= float(os.environ.get("ALIGN_MIN", "0.8")) and end_ok
+    rows.append((k, off, frac, err[k], hit, wrap_ok))
 # RANK_BY=conf (default now, Sehoon 2026-09-28: "확률 기반 아님? 더 높은 걸 하는 거지"): GraspGen-X's own confidence
 # decides the order; this script only keeps the language condition (the pinch on the handle's axis) and the
 # open-hand-over-bulk veto. RANK_BY=head restores the hand-made "35 % from the head" preference.
 conf_all = d["conf"] if "conf" in d.files else np.zeros(len(W))
 if os.environ.get("RANK_BY", "conf") == "conf":
-    order = sorted(rows, key=lambda r: (r[1] > 0.03, r[4] > 0, -float(conf_all[r[0]]), r[3]))
+    order = sorted(rows, key=lambda r: (r[1] > 0.03, not r[5], r[4] > 0, -float(conf_all[r[0]]), r[3]))
 else:
-    order = sorted(rows, key=lambda r: (r[1] > 0.03, r[4] > 0, abs(r[2] - target) if r[1] <= 0.03 else 9, r[3]))
+    order = sorted(rows, key=lambda r: (r[1] > 0.03, not r[5], r[4] > 0, abs(r[2] - target) if r[1] <= 0.03 else 9, r[3]))
+print(f"[rank] full-hand wraps (spread axis along the handle, >= {float(os.environ.get('END_MARGIN', '0.04'))*100:.0f} cm from both ends): {sum(r[5] for r in rows)} of {len(rows)}")
 print(f"[rank] open-hand footprint on the bulk ({len(head)} pts): {sum(r[4] > 0 for r in rows)} of {len(rows)} candidates flagged, ordered last")
 with open(out, "w") as f:
     f.write(",".join(str(r[0]) for r in order))

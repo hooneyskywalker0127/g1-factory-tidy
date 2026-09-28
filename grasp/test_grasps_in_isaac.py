@@ -420,6 +420,20 @@ for k in order:
     # lift and slid out of a two-finger grip during the next second (260928/5지/hammer/v4, v5).
     for _ in range(int(os.environ.get("TEST_HOLD_AFTER", "90"))):
         put(roots[-1], dofs[-1], HAND_OPEN if os.environ.get("NO_CLOSE") else HAND_CLOSED)
+    # TEST_RISE (m, default 0.35): after the hold, raise the whole body like the stand-up (pelvis 0.42 -> 0.79 m in
+    # ~1.4 s of the planner's clip, here over TEST_RISE_FRAMES) -- the hammer and the drill both passed the static
+    # hold and slid out of two-finger grips during exactly this (260928/5지/hammer/v5, drill/v4).
+    _rise = float(os.environ.get("TEST_RISE", "0.35")); _nr = int(os.environ.get("TEST_RISE_FRAMES", "45"))
+    if _rise > 0 and not os.environ.get("NO_CLOSE"):
+        _z0 = float(obj_centre()[2])
+        for _i in range(_nr + 30):
+            _r = roots[-1].copy(); _r[2] += _rise * min(1.0, (_i + 1) / _nr)
+            put(_r, dofs[-1], HAND_CLOSED)
+        _dz_r = float(obj_centre()[2]) - _z0
+        print(f"[test]    stand-up test: body up {_rise:.2f} m, object followed {_dz_r:+.3f} m")
+        if _dz_r < 0.5 * _rise:
+            print(f"[test] grasp #{int(k):2d} conf {float(d['conf'][k]):.3f} cuRobo {float(d['err'][k, n_go - 1])*1000:5.1f} mm  held the lift but slipped in the stand-up ({_dz_r:+.3f} of {_rise:.2f} m)  -> LOST")
+            results.append((int(k), 0.0, False)); continue
     snap(f"{int(k)}_lift")
     if velocity_mode:
         _hq = robot.data.joint_pos[0, _rh].cpu().numpy()

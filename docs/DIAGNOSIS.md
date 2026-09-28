@@ -748,3 +748,10 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
 - 13:25 Sehoon: crate on hold; focus on carrying the hammer and the drill to the desk crate. Drill hold test (13 s
   idle, 3 s hold after the lift, stiffness 40): #87 2/2, #55 2/2, #57 1/2, #58 1/2. Carry chain on #55 running
   (drill/v4). Hammer: confidence-order top-40 with the same test running; the carry follows on its best.
+- 13:42 Drill carry v4: pick held (+11 cm), then slid out during the stand-up -- index+middle on the handle,
+  ring+pinky on air, exactly the hammer's failure. The tester's static 3 s hold passed it 2/2, so the tester now
+  also does the STAND-UP (root +0.35 m over 45 frames; LOST if the object follows less than half), and
+  rank_handle.py keeps only FULL-HAND wraps (finger spread axis along the handle, pinch >= 4 cm from both ends).
+  Room camera moved to (1.9, -3.4, 2.4) looking at (-0.1, 0.3, 0.3): robot, object, desk crate and shelves in
+  frame from the first step (Sehoon: the old view showed the robot only after it arrived); hammer/drill picks are
+  being re-rendered with it for the YouTube cuts. Wrap chains queued: drill now, hammer after its confidence carry.
