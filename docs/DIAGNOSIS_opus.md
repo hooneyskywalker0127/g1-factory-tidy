@@ -250,3 +250,31 @@ convexDecomposition 으로 (play_in_cell_opus.py 의 FINGER_COACD, 기본값 없
 USD 가 instanceable 이라 각 링크의 collisions 스코프를 먼저 de-instance 한다
 (plan_scene.py:266 이 그 제약을 적어 두었다). 나머지는 v14/v11 그대로:
 kp 650 kd 100 effort 20 armature 0.5, solver 100/50, maxDepenetrationVelocity 5.
+
+## 20:15 — 해머 v15: 콜라이더 분해는 작동했고, 그 다음 문제가 드러났다
+
+[eval] dxy 0.2388 m, dz -0.2497 m -> LOST. 그러나 실패의 종류가 바뀌었다.
+
+**의도한 기구는 고쳐졌다.** `FINGER_COACD=intermediate,distal` (6 메시 분해) 후
+R_thumb_proximal_pitch 가 프레임 560 에 목표 0.5 rad 에 도달하고 끝까지 유지한다.
+네 손가락 proximal 도 1.47 에 도달한다. v14 에서 290 프레임 동안 0.00 에 막혀 있던 엄지가 풀렸다.
+손가락 콜라이더의 볼록껍질이 엄지를 막고 있었다는 것이 확인됐다.
+
+**드러난 다음 문제: 닫히는 손가락이 물체를 차 버린다.**
+0~480 프레임 해머는 z 0.1499 에 정지. 490~500 첫 접촉.
+프레임 510 에 z 0.3005 (10 프레임에 +15 cm), 속도 [0.04 -1.483 -1.395] = 2.04 m/s.
+520 에 z -0.0611 (바닥 아래), 540 에 -0.0877 에서 정지.
+손가락이 1.47/0.50 에 도달한 것은 560 이므로, 다 닫혔을 때는 이미 빈손이었다.
+닫히는 속도(측정): 0 -> 1.47 rad 을 480~560, 80 프레임 = 평균 0.55 rad/s.
+
+**다음 (v16/v13).** GraspGenX 의 close 방식을 그대로 쓴다:
+end2end/robots/g1_inspire_arm.yaml 은 이 손에 `gripper_control_mode: velocity` 와
+`gripper_close_velocity` thumb_0 = 0.0 / 나머지 +-0.25 rad/s 를 지정하고,
+end2end/dynamic_playback.py:71 은 FINGER_KD_DEFAULT = 200.0 이다.
+play_in_cell_opus.py:735-741 에 GraspGenX 자신의 이유가 이미 적혀 있다 --
+position mode 는 "snaps the fingers to the closed angles and they bat the object away".
+v15 의 0.55 rad/s 는 그들의 0.25 rad/s 의 2.2 배다.
+바꾸는 것: CLOSE_MODE=velocity CLOSE_VEL=0.25 CLOSE_KD=200 (코드는 이미 구현되어 있다).
+정지 상태의 쥐는 힘은 같다: 200 x 0.25 = 50 N.m 요구 -> effort 20 N.m 로 잘리므로
+position mode 에서 잘리던 20 N.m 과 동일하다. 달라지는 것은 접근 속도뿐이다.
+나머지(FINGER_COACD, kp 650, effort 20, armature 0.5, solver 100/50, depenetration 5)는 v15 그대로.
