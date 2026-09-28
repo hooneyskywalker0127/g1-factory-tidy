@@ -1743,3 +1743,66 @@ hand could arrive already through the box."* 두 검사 모두 이 자세에 적
 `at grasp: palm - object` 수평거리가 0.197 m 에서 줄고(목표: 반길이 0.160 m 안),
 `stand-up test: object followed` 가 0.000 m 에서 커지는지 먼저 본다. 통과한 후보만
 클립으로 만들어 렌더한다. 닫기 쪽(위치/속도, effort, kp/kd, 정착창, 솔버)은 모두 닫혔다.
+
+## v33·v34 판정 무효 — 테스터가 5지가 아니라 Dex3 손을 들고 돌았다
+
+**결론부터: 기하 문제가 아니었다. 내 두 실행은 `HAND=inspire` 없이 돌아서 손가락이
+한 번도 닫히지 않았다.** 그래서 v34 의 "px 는 레버가 아니다" 는 **철회한다** —
+손이 열려 있는 실행의 `followed +0.000 m` 에는 정보가 없다.
+
+근거(`results/fable40/test_pw34_only.txt`, 내가 만든 로그):
+
+```
+right fingers at close (index0 index1 middle0 middle1 thumb0 thumb1 thumb2):
+        [0. 0. 0. 0. -0. 0.72 0.]  of closed [1.57 1.75 1.57 1.75 0. -1.05 -1.5]
+right finger q [0. 0. 0. 0. -0. 0.72 0.]  target [0. 0. 0. 0. 0. 1.47 1.47]
+```
+
+헤더가 Dex3 이름 7개다. 5지면 한 손 12개(`R_*_proximal/intermediate`)가 찍힌다.
+
+메커니즘(두 파일의 비대칭):
+- `reach_from_pose.py:559-561` — power-grasp 분기의 `_open`/`_closed` 는 **HAND 와
+  무관하게** 12칸 인스파이어 벡터로 하드코딩되어 있다. 그래서 npz `hands` 는 항상
+  24칸으로 나온다(pw3·pw34 마지막 행이 바이트 단위로 같다: `_open_one + _closed_one`).
+- `test_grasps_in_isaac.py:146-147` — `hand_ids` 는 `HAND_NAMES` 에서 오고, 그쪽은
+  `HAND == "inspire"` 로 갈린다. 미설정이면 Dex3 이름 14개.
+- `put(root7, dof29, hands14)` 는 `for k, j in enumerate(hand_ids): tgt[0,j] = hands14[k]`
+  로 zip 한다 → 24칸 벡터의 **앞 14칸**만 쓰인다. 왼손 0..6, 오른손 7..13 =
+  `[0,0,0,0,0,1.47,1.47]`. 검지·중지는 0(활짝 열림), thumb_1/2 만 1.47.
+
+`docs/DIAGNOSIS.md:492` 가 이미 "테스터·렌더·순위·체인 전부 `HAND=inspire` 분기"
+라고 적어 둔 그 변수다. 내가 체인을 새로 쓰면서 빠뜨렸다.
+
+### pw3 재현은 파라미터 역산이 아니라 그 실행의 스크립트로 해야 했다
+
+`scratchpad/power3_chain.sh`(pw3 를 만든 스크립트)와 내 `pw34_chain.sh` 를 맞춰 보면
+바뀐 변수가 1개가 아니라 12개다: `HAND=inspire`, `POWER_RADIUS` 0.0115(기본 0.016),
+`POWER_SLIDE` 0.05, `POWER_FRACS` 0.4,0.55, `grasps_all.json`(내 것은 `grasps_palm.json`),
+`RETARGET_CFG=..._retarget_floor.yml`, `BODY_W=0.1`, 씬(`TIDY_NO_FLOOR_CARTON`,
+`TIDY_CRATE_ON_DESK`), 테스터의 `FIX_ROOT ARM_KP_SCALE=4 PD_BODY HAND_KP=40
+OBJECT_NO_SLEEP SETTLE_IDLE=400 --slow`.
+
+`POWER_RADIUS` 가 달랐으므로 내 역산값도 틀렸다: `centre_z = top - radius` 이므로
+pw3 의 실제 `POWER_Y` 는 0.0445 가 아니라 **0.0400**(스크립트 기본값 `PY:-0.04`).
+즉 "pw3 파라미터를 정확히 복원했다" 는 앞 절의 주장도 철회한다.
+
+### 커밋 2e60868 제목 철회
+
+"The hand was never over the handle: 0.197 m from a hammer with a 0.160 m half-length" —
+그 0.197 m 는 (a) `for i in range(n_go)` **뒤**에 찍히는 post-lift 표본이고,
+(b) 손잡이 축이 world −y 이므로 그 거리의 x 성분 0.130 은 `POWER_X` 설계 오프셋이다.
+파지 시점(f165) 값이 아니다.
+
+### 부수 발견: 테스터 배치 실행은 첫 후보만 믿을 수 있다
+
+`test_grasps_in_isaac.py:122,270` — `box0` 는 `sim.reset()` 직후 상태, 즉 **낙하 전
+`[-0.3 0.05 0.162]`(13 cm 공중)**. 후보마다 이 상태로 되돌리므로 매번 다시 떨어지고,
+그 사이 팔은 다음 후보의 pre-pose 로 블렌딩한다. px 를 깊게 준 v34 배치에서는 팔이
+떨어지는 망치를 쳐서 8개 중 6개가 30~90 cm 밖 또는 173° 뒤집힌 상태로 시작했다.
+→ 후보별 판정은 `--only k` 를 **프로세스마다 새로** 띄워서만 신뢰한다(1회 ≈ 19 s).
+
+### v35: pw3 의 스크립트 그대로, PX 만
+
+`power3_chain.sh` 를 동결 복사해 env 를 손대지 않고 `PX=0.13,0.147` 만 준다
+(0.13 = pw3 자신, 같은 실행 안의 대조군). 게이트는 `right fingers at close` 가
+12칸 5지 헤더로 찍히는지 먼저 확인하는 것이고, 그 다음이 `followed`.
