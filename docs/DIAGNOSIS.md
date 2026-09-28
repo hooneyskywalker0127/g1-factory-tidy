@@ -692,3 +692,12 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   kd 800, effort limit 1000 N; robots/g1_right_arm.yaml: "position mode snaps the fingers to the closed angles and
   they bat the object away"), arm kp 2000 / kd 100, approach 2 s + run-in 2 s + lift 4 s. We close in position mode
   at stiffness 10. Queued: drill #63 under the 13 s idle with velocity close, kd 8 and 40, x3 (vel_idle_test.sh).
+- 12:03 Under the render-like 13 s idle, drill #63 loses at arm gain x8 and x16 too, and with velocity-mode closing
+  (kd 8 / 40) -- none of those is the gap. Close ramp: tester #138 with the render's 20-frame ramp still holds 2/3;
+  render B (no walk, no cameras, 30-frame ramp) still LOSES. So play_in_cell loses the same plan the tester holds
+  with every known parameter equal -> side-by-side trace of #138 in both (cmp_test.sh) to find the first frame
+  where the palm/object differ.
+- 12:03 Crate slot hook v7: the whole-body IK (BODY_W 0.03, kneel 0.50 m back) folded the torso into the crate to
+  reach the slot targets (0.65 m apart at 0.13 m height); the hands shoved the crate in the first 14 frames. v8:
+  kneel 0.40 m back, BODY_W 0.1. Sehoon asked for the hammer -> desk crate attempt with the v2 plan: place_v2.sh
+  running (pick #138 -> rise-first -> walk -> release over the crate; the room camera fixed).
