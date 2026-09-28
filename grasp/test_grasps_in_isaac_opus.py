@@ -76,9 +76,22 @@ if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_KD"):
 
 cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
     contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
+# --- contact solver: GraspGenX's own iteration counts --------------------------
+# NVIDIA GraspGenX end2end/dynamic_playback.py:91-98:
+#   SOLVER_ITERATIONS = 100, SOLVER_LS_ITERATIONS = 50, with the comment
+#   "With only 10 iterations the constraint solver doesn't fully converge and
+#    grasps slip during the lift segment."
+# Their object mass (0.2 kg) and friction (object mu 10, finger mu 3) we already
+# match; the iteration count is the one setting we never did (12/4 here).
+SOLVER_IT = int(os.environ.get("SOLVER_IT", "12"))
+SOLVER_VIT = int(os.environ.get("SOLVER_VIT", "4"))
+if os.environ.get("SOLVER_IT"):
+    print(f"[solver] articulation iterations {SOLVER_IT}/{SOLVER_VIT} (GraspGenX 100/50)")
+# ------------------------------------------------------------------------------
+
 cfg.spawn = cfg.spawn.replace(articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-    enabled_self_collisions=False, solver_position_iteration_count=12,
-    solver_velocity_iteration_count=4, fix_root_link=(os.environ.get("FIX_ROOT", "0") == "1")))
+    enabled_self_collisions=False, solver_position_iteration_count=SOLVER_IT,
+    solver_velocity_iteration_count=SOLVER_VIT, fix_root_link=(os.environ.get("FIX_ROOT", "0") == "1")))
 # ARM_KP_SCALE: with the body on its PD drives (PD_BODY) the stock arm gains let an
 # outstretched arm sag -- measured on the crate approach, the left palm 10 cm under
 # its reference while the IK was within 24 mm -- and the sagging hand dragged the crate.
@@ -109,6 +122,19 @@ _fm = sim_utils.RigidBodyMaterialCfg(static_friction=FINGER_MU, friction_combine
 _fm.func("/World/G1/FingerMaterial", _fm)
 sim_utils.bind_physics_material("/World/G1", "/World/G1/FingerMaterial")
 build_plan_scene(stage, app, meta, torso_pose((-1.30, -0.60, SPAWN_Z), math.radians(-90.0)))
+
+# --- contact solver on the object body, same source ---------------------------
+_oit = int(os.environ.get("OBJ_SOLVER_IT", os.environ.get("SOLVER_IT", "0")))
+if _oit:
+    from pxr import PhysxSchema as _PxS
+    _tp = stage.GetPrimAtPath(os.environ.get("TARGET_PRIM", "/World/GraspTarget"))
+    if _tp and _tp.IsValid():
+        _ovit = int(os.environ.get("OBJ_SOLVER_VIT", str(SOLVER_VIT)))
+        _api = _PxS.PhysxRigidBodyAPI.Apply(_tp)
+        _api.CreateSolverPositionIterationCountAttr(_oit)
+        _api.CreateSolverVelocityIterationCountAttr(_ovit)
+        print(f"[solver] object {_tp.GetPath()} iterations {_oit}/{_ovit}")
+# ------------------------------------------------------------------------------
 floor_slab(stage)
 box = RigidObject(RigidObjectCfg(prim_path=os.environ.get("TARGET_PRIM", "/World/GraspTarget"), spawn=None))
 # The rigid body's origin is the mesh origin, which for the lying tools sits
@@ -497,8 +523,17 @@ for k in order:
                 _pp = robot.data.body_pos_w[0, _pb].cpu().numpy()
                 _pqw = robot.data.body_quat_w[0, _pb].cpu().numpy()
                 _loc = R.from_quat(_pqw[[1, 2, 3, 0]]).inv().apply(_o - _pp)
+                # The discriminator: object sliding in the palm frame vs the fingers themselves
+                # backing off their commanded target. q - target > 0 means the finger was pushed
+                # open by the contact (back-drive, a damping question); ~0 with the object sliding
+                # means friction/geometry; both still means the wrist reference moved.
+                _rhi = hand_ids[len(hand_ids) // 2:]
+                _q = robot.data.joint_pos[0, _rhi].cpu().numpy()
+                _tg = np.asarray(_hc)[len(hand_ids) // 2:] if np.asarray(_hc).size == len(hand_ids) else np.full(len(_rhi), np.nan)
                 print(f"[test]    rise {_tag:>4s}: object {np.round(_o, 3)} tilt {_tl:5.1f} deg  "
                       f"in palm frame {np.round(_loc * 1000, 1)} mm  palm z-axis {np.round(R.from_quat(_pqw[[1, 2, 3, 0]]).apply([0, 0, 1]), 2)}")
+                print(f"[test]    rise {_tag:>4s}: right finger q {np.round(_q, 3)}")
+                print(f"[test]    rise {_tag:>4s}: q - target    {np.round(_q - _tg, 3)}  (>0 = pushed open by the object)")
                 sys.stdout.flush()
                 if SNAP:
                     snap(f"{int(k)}_rise{_tag}")

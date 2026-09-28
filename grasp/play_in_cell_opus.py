@@ -182,12 +182,25 @@ if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_KD"):
           f"armature {_rep.get('armature', getattr(_hz, 'armature', None))}")
 # ------------------------------------------------------------------------------
 
+# --- contact solver: GraspGenX's own iteration counts --------------------------
+# NVIDIA GraspGenX end2end/dynamic_playback.py:91-98:
+#   SOLVER_ITERATIONS = 100, SOLVER_LS_ITERATIONS = 50, with the comment
+#   "With only 10 iterations the constraint solver doesn't fully converge and
+#    grasps slip during the lift segment."
+# Their object mass (0.2 kg) and friction (object mu 10, finger mu 3) we already
+# match; the iteration count is the one setting we never did (12/4 here).
+SOLVER_IT = int(os.environ.get("SOLVER_IT", "12"))
+SOLVER_VIT = int(os.environ.get("SOLVER_VIT", "4"))
+if os.environ.get("SOLVER_IT"):
+    print(f"[solver] articulation iterations {SOLVER_IT}/{SOLVER_VIT} (GraspGenX 100/50)")
+# ------------------------------------------------------------------------------
+
 cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
     contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
 cfg.spawn = cfg.spawn.replace(
     articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-        enabled_self_collisions=False, solver_position_iteration_count=12,
-        solver_velocity_iteration_count=4,
+        enabled_self_collisions=False, solver_position_iteration_count=SOLVER_IT,
+        solver_velocity_iteration_count=SOLVER_VIT,
         fix_root_link=not (WBC or SONIC)))
 # Dex3-1 finger torque, from Unitree's own URDF: every hand joint in
 # g1_29dof_with_hand_rev_1_0.urdf is <limit effort="1.4" velocity="12">.
@@ -350,8 +363,8 @@ if WALK:
           f"{np.round(walk['pos'][0][:2], 2)} -> {np.round(walk['pos'][-1][:2], 2)}")
     cfg.spawn = cfg.spawn.replace(
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False, solver_position_iteration_count=12,
-            solver_velocity_iteration_count=4, fix_root_link=(os.environ.get("FIX_ROOT", "0") == "1")))
+            enabled_self_collisions=False, solver_position_iteration_count=SOLVER_IT,
+            solver_velocity_iteration_count=SOLVER_VIT, fix_root_link=(os.environ.get("FIX_ROOT", "0") == "1")))
     _q0 = walk["quat"][0]
     cfg.init_state = cfg.init_state.replace(
         pos=tuple(float(v) for v in walk["pos"][0]),
@@ -456,6 +469,19 @@ head_cam = None if NO_VIDEO else Camera(CameraCfg(
     spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.01, 20.0))))
 
 build_plan_scene(stage, app, meta, T_torso)
+
+# --- contact solver on the object body, same source ---------------------------
+_oit = int(os.environ.get("OBJ_SOLVER_IT", os.environ.get("SOLVER_IT", "0")))
+if _oit:
+    from pxr import PhysxSchema as _PxS
+    _tp = stage.GetPrimAtPath(os.environ.get("TARGET_PRIM", "/World/GraspTarget"))
+    if _tp and _tp.IsValid():
+        _ovit = int(os.environ.get("OBJ_SOLVER_VIT", str(SOLVER_VIT)))
+        _api = _PxS.PhysxRigidBodyAPI.Apply(_tp)
+        _api.CreateSolverPositionIterationCountAttr(_oit)
+        _api.CreateSolverVelocityIterationCountAttr(_ovit)
+        print(f"[solver] object {_tp.GetPath()} iterations {_oit}/{_ovit}")
+# ------------------------------------------------------------------------------
 
 from plan_scene import floor_slab
 

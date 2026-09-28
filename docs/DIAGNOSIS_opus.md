@@ -82,3 +82,27 @@ NVIDIA 자신도 `:684-688` 주석에서 "URDF의 effort=20 이 PD 힘을 묶어
 | drill v6 (#57, fable42p) | z 0.2622 | 900프레임 z 0.1591, 속도 0 | LOST |
 
 둘 다 일어서는 구간에서 놓쳤고, 그 뒤 보행과 손 펴기는 정상. 원인이 같은지는 확인 안 됨 — 각각 렌더해서 각각 판정한다.
+
+## 18:20 그립 — 게인은 이미 같았고, 남은 차이는 접촉 솔버 반복 수
+
+GraspGenX 소스(`/home/sehoon/Projects/GraspGenX/end2end/dynamic_playback.py`)와 항목별 비교:
+
+| 항목 | GraspGenX 검증값 | 우리 v9/v6 | 우리 v10/v7 | 출처 |
+|---|---|---|---|---|
+| 물체 질량 | 0.2 kg | 0.2 | 0.2 | `:87` |
+| 물체 mu / 손끝 mu | 10 / 3 | 10 / 3 | 10 / 3 | `:88-89`, 우리 `plan_scene.py:27-28` |
+| 손가락 kp / kd / effort | 2000 / 200 / 200 | 40 / 0.4 / 30 | 2000 / 200 / 200 | `:68-71`, `:689` |
+| 접촉 솔버 반복 (pos/vel) | 100 / 50 | 12 / 4 | 12 / 4 | `:91-98` |
+
+그 소스가 두 실패를 각각 이름으로 적어 두었다.
+- `:95-97` — 반복이 10이면 "the constraint solver doesn't fully converge and grasps slip during the lift segment". v9/v6 은 일어서는 구간에서 놓쳤다.
+- `:84-87` — 마찰이 3.0 이면 "prone to being launched by close-time contact impulse spikes". v10/v7 은 닫는 순간 21 cm 튕겨 나갔다. 다만 우리 물체 마찰은 이미 10 이다.
+
+결론: 질량·마찰·손가락 게인은 이미 그들과 같고, 남은 차이는 솔버 반복 수뿐이다(12/4 vs 100/50).
+v11(해머)·v8(드릴)은 이 한 항목만 100/50 으로 올려 렌더한다. `SOLVER_IT`/`SOLVER_VIT` 로 로봇 아티큘레이션과
+물체 바디 양쪽에 적용하고, `dump_physics` 로 실제 적용을 확인했다(`solverPositionIterationCount=100`).
+
+### probe_v9 측정은 무효
+물체가 rise 전 구간 `[-0.282 0.047 0.153]`(바닥 안착 높이) 고정, 손가락 `q - 목표 = -0.000`(접촉력 0),
+손바닥 거리 304 → 560 mm. 이 실행에서는 물체가 손에 들어간 적이 없다(`SETTLE_IDLE=200` + `TEST_RISE_SLOW=2`).
+게인 판정 근거로 쓰지 않는다.
