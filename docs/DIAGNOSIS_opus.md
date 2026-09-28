@@ -2243,3 +2243,42 @@ right_ankle_roll, right_wrist_roll, right_wrist_yaw` 4개는 Isaac 한계
 원인이 아니고, y 46 mm 는 210 mm 손잡이의 축방향이라 관용된다. 그러나
 `scene.npy` 의 z 0.162 는 렌더 증거를 118 mm 틀리게 만든 그 낡은 배치와
 같은 값이다. 결론에 쓰지 않고 남겨둔다.
+
+## 렌더의 "떠 있는 망치" 는 없었다 — 두 단계가 서로 다른 점을 측정한다
+
+내가 v38 부터 증거 문제로 취급해 온 것, 즉 "렌더의 망치는 z 0.15 에서 공중에 잠들어
+있고 테스터는 z 0.032 로 앉힌다 → 모든 영상이 118 mm 위의 물체를 상대로 채점됐다"
+는 **틀렸다. 철회한다.** 두 숫자는 같은 물리 상태다.
+
+근거는 추측이 아니라 페이블이 그 자리에 적어 둔 주석이다.
+`test_grasps_in_isaac.py:90-93`:
+
+```
+# The rigid body's origin is the mesh origin, which for the lying tools sits
+# 16 cm above the bottom of the mesh -- a can knocked over by the fingers
+# moves that origin 10-15 cm down without going anywhere. What is measured
+# below is the mesh centroid, carried with the body's pose.
+_c_off = ... trimesh.load(meta["object"]["mesh"]).centroid
+```
+
+측정값:
+- `hammer_flat.obj` 로컬 바운드 z −0.160 .. −0.0863, 로컬 무게중심 z **−0.1229**.
+  메시 원점은 바닥면보다 160 mm 위에 있다.
+- `plan_scene.py:124` 가 배치 때 직접 찍는다: `target at [-0.3 0.05 0.162] bottom z 0.002`.
+  즉 원점 z 0.162 는 **망치가 바닥에 놓인 상태**로 설계된 값이다. 낡은 좌표가 아니다.
+- 렌더 `play_in_cell.py:659` 는 `root_pos_w` — **원점**을 찍는다 → 0.1499.
+- 테스터는 `obj_centre()` — **원점 + R·무게중심**을 찍는다 → 0.031.
+- 0.1499 − 0.1229·cos(6.8°) ≈ 0.027. 테스터의 0.031 과 수 mm 안에서 일치한다.
+
+따라서:
+1. 렌더의 망치는 6 프레임 만에 12 mm 떨어져 바닥에 앉았고 속도 0 이 된 것이다.
+   `vel [0. -0. 0.]` 은 콜라이더 위에서 쉬는 신호가 맞았다 — 그 콜라이더가 **바닥**이다.
+2. `DIAG_IDLE_FRAMES` 는 고장나지 않은 것을 고치려 한 것이다. 실험에는 무해하므로
+   v40 에서도 그대로 두지만, 증거 수정으로서는 의미가 없다.
+3. `[eval] end pos [-0.1404 0.0064 0.1546] dxy 0.1655 m dz -0.0074 m` 는
+   "떠 있는 망치를 쳐냈다"가 아니라 **"바닥의 망치를 165 mm 옆으로 쳐냈고 들어올리지
+   못했다"** 는 뜻이다. 테스터가 프레임 단위로 본 타격·전복과 정확히 같은 이야기다.
+   두 단계는 갈라지지 않았다. 일치한다.
+
+남는 교훈은 v40 의 근거를 더 강하게 만든다: 렌더와 테스터가 독립적으로 같은 결론을
+낸다 — 손이 파지 전에 망치를 때린다. `POWER_LAND` 가 그 착지점을 정하는 유일한 노브다.
