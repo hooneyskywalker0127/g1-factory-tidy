@@ -1011,3 +1011,106 @@ negated)" 는 저장된 값이 이미 양수임을 뜻한다. 크기만 다르�
 
 palm_v22 의 렌더는 다시 띄우지 않는다. 그 체인이 고른 후보 #46 은 `dz +589 m` 로 판정된
 수치 폭발이므로, 렌더해도 보여 줄 것이 없다. 선별 결과(진짜 0/40)는 이미 위에 기록했다.
+
+## PhysX mimic 부호 규약 확정 — 부호 가설 기각
+
+NVIDIA 자체 테스트에서 읽었다. `omni.physx.tests` 의 `PhysxMimicJointAPI.py`,
+`test_prismatic_simple` / `test_revolute_simple` 는 `gearing = 1.0, offset = 0.0` 으로
+mimic 을 걸고 기준 관절에 stiffness 1.0e10 드라이브로 목표를 주입한 뒤 이렇게 검사한다:
+
+```
+self.assertAlmostEqual(linkAPos[axis], -linkBPos[axis], delta=posErrTolerance)
+self.assertAlmostEqual(linkAAngleDegree, -linkBAngleDegree, delta=posErrTolerance)
+```
+
+`_create_simple_prismatic_setup` 은 두 관절을 같은 축·같은 부모(rootLink)에 두고
+`localPos0` 를 각 링크의 정지 위치(−1, 0, 0)/(+1, 0, 0)로 잡는다. `_get_joint_pos` 는
+`q = (링크 현재 위치 + localPos1) − (부모 위치 + localPos0)` 이므로 `q_A = −0.1` 일 때
+어서션은 `q_B = +0.1` 을 요구한다. 세 축 모두 같은 결론이다:
+
+> **q_follower = −gearing × q_reference − offset**
+
+따라서 우리 에셋의 `−1.0 / −1.6 / −2.4` 는 종동을 **+1.0 / +1.6 / +2.4 배로** 끌고,
+이는 `soft_mimic` 의 양수 표, 제조사 URDF 의 양수 배율과 **같은 방향**이다.
+"USD 구속이 종동을 거꾸로 끌어 음의 하한에 박는다" 는 가설은 기각한다.
+틀린 것은 부호가 아니라 크기다.
+
+## MIMIC_SPLIT 은 물리에 닿지 않았다 (디스크 폴더 hammer/v23)
+
+패치는 제대로 잡혔다 (로그 51행): masters kp 40.0 kd 4.0, followers
+`['.*_intermediate_joint', '.*_thumb_distal_joint']` kp 1.0 kd 0.2. 그런데 v21 과
+v23 의 `[force] frame` 라인을 전부 diff 해도 한 줄도 다르지 않고 관절값·최고
+상승·`[eval]` 이 모두 일치한다. **종동 kp 를 40배 내려도 측정 가능한 변화가 없다** =
+종동 PD 토크는 파지를 제한하는 요인이 아니다. 왜 완전히 동일한지는 아직 설명하지
+못했다. `play_in_cell_opus.py` 245–345 의 이후 액추에이터 블록을 모두 읽었고 전부
+`"arms"/"legs"/"feet"` 만 건드리므로 `hands_mimic` 를 덮어쓰는 코드는 없다.
+
+## v23 측정: 손가락은 작동하고 엄지 사슬만 접혀 막힌다
+
+`[eval] dxy 0.0211 m dz −0.0090 m → LOST`. 최고 상승 **+0.1202 m (f720)**,
+접촉이 0 N 이 되는 첫 프레임 **f760**.
+
+| | 목표 | f520 | f560 | f640 | f720 | f760 | f800(이탈 후) |
+|---|---|---|---|---|---|---|---|
+| thumb_proximal_pitch | 0.5 | 0.00 | 0.00 | −0.00 | 0.00 | 0.03 | **0.50** |
+| thumb_intermediate | — | −0.15 | −0.16 | −0.16 | −0.13 | −0.07 | **0.80** |
+| thumb_distal | — | −0.17 | −0.18 | −0.01 | 0.05 | −0.03 | **1.20** |
+| 네 손가락 proximal | 1.47 | 0.96~1.03 | 0.95~1.09 | 0.96~1.47 | 0.97~1.47 | 1.02~1.47 | 1.47 |
+| 네 손가락 intermediate | (마스터 추종) | 0.59~0.88 | 0.61~0.84 | 0.59~1.47 | 0.59~1.47 | 0.82~1.47 | 1.47 |
+
+엄지 마스터는 목표 0.5 에 대해 **f520~f760 내내 0.000** 이었고, 해머가 떠난 다음
+프레임 f800 에 즉시 목표까지 갔다 — 게인 문제가 아니라 막혀 있었다. f480 시점,
+네 손가락이 아직 0.38 rad 일 때 이미 `intermediate −0.16`, `distal −0.24`(둘 다 우리
+USD 하한)였다. **엄지 사슬만** 음수로 접힌다(네 손가락 intermediate 는 0.59~0.88 로 정상).
+엄지 yaw 도 목표 1.31 에서 1.17 까지 0.14 rad 밀려났다.
+
+접촉 지탱 링크 (f440~f760, 프레임 수 / 최대 N):
+
+```
+R_index_intermediate   26 / 465.27      R_thumb_intermediate  23 / 790.16
+R_middle_intermediate  25 / 238.34      R_ring_intermediate   20 / 233.95
+R_pinky_intermediate    9 / 334.93      R_thumb_proximal       4 / 828.78
+R_thumb_distal          5 /  29.57
+```
+
+엄지 패드(distal)는 5 프레임 29.57 N 뿐이다. `evidence/head_f720.png` 에서도 손잡이는
+네 손가락이 감고 있고 엄지는 그 옆에 곧게 누워 대립하지 않는다.
+
+DexSuite 접촉 기준은 f750 까지 `dexsuite_good=True` 였다 (sum 638.02 N, thumb 304.44 N,
+best-opposing 234.95 N). v19~v23 **다섯 번 연속** 낙하를 예측하지 못했다.
+
+## v25 = 엄지 사절링크 비율을 제조사 URDF 로 (디스크 폴더는 hammer/v24 가 된다)
+
+`gripper_descriptions/x_grippers/inspire_hand/gripper_spherical_dof.urdf` 원본:
+
+| 관절 | URDF mult | URDF limit | 우리 USD gearing | 우리 닫힘 명령 |
+|---|---|---|---|---|
+| thumb_intermediate_joint | **1.334** | 0 .. 0.8 | 1.6 | 0.8 |
+| thumb_distal_joint | **0.667** | 0 .. **0.4** | **2.4** | **1.2** |
+| finger intermediate | 1.06399 / off −0.04545 | −0.04545 .. 1.56 | 1.0 | 측정 proximal |
+| thumb_proximal_pitch (마스터) | — | 0 .. 0.6 | — | 0.5 |
+
+0.5 rad 닫힘이 `thumb_distal` 에 **1.2 rad** 를 명령한다 — 실제 관절 전체 가동범위
+0.4 rad 의 3 배이고, URDF 배율의 3.6 배다. `MIMIC_URDF_RATIO=1` 이
+`play_in_cell_opus.py` 에서 (1) `build_reach_reference._MIMIC` 의 엄지 두 항목을
+1.334 / 0.667 로 바꾸고 (2) USD 의 해당 `physxMimicJoint:*:gearing` 을
+−1.334 / −0.667 로 다시 쓴다. Fable 파일은 런타임 몽키패치로만 건드린다.
+
+**한계를 분명히 적는다:** 유지 구간에는 마스터가 0.000 이었으므로 두 배율 모두 종동
+목표를 0 으로 만든다. 이 배율 오차가 유지 구간의 직접 원인이라는 증거는 없다.
+영향을 주는 곳은 닫기 구간(f440~f480, 마스터 0 → 0.07)과 USD mimic 구속이다.
+
+**다음 후보 (아직 실행 안 함):** 엄지 사슬의 음수 travel 을 URDF 대로 없애기.
+URDF 는 `thumb_intermediate 0 .. 0.8`, `thumb_distal 0 .. 0.4` 로 뒤로 접히는 구간이
+아예 없는데 우리 USD 는 −0.16 / −0.24 를 허용한다. v22 는 이 중 **intermediate 하나만**
+열었고 distal 의 −0.24 는 그대로 뒀다 — 사슬이 여전히 distal 에서 접힐 수 있었으므로
+v22 의 실패가 이 가설을 기각하지는 못한다. 다음에는 두 관절을 함께 0 으로 잡는다.
+
+## 마찰 계열과 확인된 오픈소스 수치 (누적)
+
+- 마찰은 한 번도 한계가 아니었다: 손 재질 `friction_combine_mode="max"` 가 물체의
+  `"average"` 를 이겨 유효 mu = 10. 300~800 N 수직력에 0.2 kg 물체가 필요로 하는
+  접선력 ~2 N. 마찰 노브는 전부 제외.
+- GraspGenX `end2end/robot_profiles.py` UR10eInspireHandProfile: 엄지 yaw
+  **1.308 고정(open=close)**, 엄지 pitch 0 → **0.6**, 네 손가락 0 → **1.47**.
+  우리는 yaw 1.308, 손가락 1.47 로 이미 일치하고 pitch 만 0.5 (마스터 상한은 0.6).

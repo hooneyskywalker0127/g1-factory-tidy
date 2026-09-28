@@ -433,6 +433,54 @@ if os.environ.get("CONTACT_FORCE"):
 robot = Articulation(cfg)
 stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_reference.py)
 
+# --- MIMIC_URDF_RATIO: the thumb's four-bar ratios, from the manufacturer URDF -------
+# Measured in hammer/v23: at f480, with the four fingers still only at 0.38 rad,
+# R_thumb_intermediate already sat at -0.16 and R_thumb_distal at -0.24 (both their USD
+# lower limits), and R_thumb_proximal_pitch then held 0.000 rad against its 0.5 rad
+# target from f520 to f760 -- snapping to 0.5 / 0.8 / 1.2 at f800, the frame after the
+# hammer left. Every contact in that window landed on R_thumb_intermediate /
+# R_thumb_distal, never the pad. The four fingers meanwhile curled to 0.96..1.03 rad
+# and stalled on the handle, which is what a working wrap looks like.
+#
+# The ratios we drive the thumb with are not this hand's. gripper_descriptions/
+# x_grippers/inspire_hand/gripper_spherical_dof.urdf declares:
+#     thumb_intermediate_joint  mimic thumb_proximal_pitch  mult 1.334   limit 0 .. 0.8
+#     thumb_distal_joint        mimic thumb_proximal_pitch  mult 0.667   limit 0 .. 0.4
+#     thumb_proximal_pitch_joint (master)                                limit 0 .. 0.6
+# Our USD authors those two at gearing -1.6 / -2.4 and soft_mimic mirrors it with
+# +1.6 / +2.4, so a 0.5 rad close commands thumb_distal to 1.2 rad: 3x past the real
+# joint's whole 0.4 rad travel, at 3.6x the URDF's multiplier. The tip curls under
+# faster than the intermediate wraps.
+#
+# Sign convention, from NVIDIA's own test (omni.physx.tests PhysxMimicJointAPI.py,
+# test_prismatic_simple / test_revolute_simple): with gearing = 1.0 and offset = 0.0 the
+# assertions are linkAPos[axis] == -linkBPos[axis] and linkAAngleDegree ==
+# -linkBAngleDegree, and in that setup both joints share one axis and one parent with
+# localPos0 at each link's rest position, so q_follower = -gearing * q_reference
+# - offset. The asset's negative gearings therefore drive the followers the same
+# direction soft_mimic's positive table does; only the magnitude is wrong.
+if os.environ.get("HAND") == "inspire" and os.environ.get("MIMIC_URDF_RATIO") == "1":
+    import build_reach_reference as _brr
+    _URDF_MULT = {"thumb_intermediate_joint": 1.334, "thumb_distal_joint": 0.667}
+    _brr._MIMIC[:] = [(a, b, _URDF_MULT.get(a.split("_", 1)[1], r)) for a, b, r in _brr._MIMIC]
+    print("[hand] MIMIC_URDF_RATIO: soft_mimic thumb ratios -> "
+          + ", ".join(f"{a} {r}" for a, b, r in _brr._MIMIC if "thumb" in a))
+    from pxr import Usd as _Usd
+    _ng = 0
+    for _prim in _Usd.PrimRange(stage.GetPrimAtPath("/World/G1")):
+        _k = next((k for k in _URDF_MULT if _prim.GetName().endswith(k)), None)
+        if _k is None:
+            continue
+        for _a in _prim.GetAttributes():
+            _nm = _a.GetName()
+            if _nm.startswith("physxMimicJoint:") and _nm.endswith(":gearing"):
+                _old = _a.Get()
+                _a.Set(-_URDF_MULT[_k])
+                print(f"[hand] MIMIC_URDF_RATIO: {_prim.GetName()} {_nm} {_old} -> {-_URDF_MULT[_k]}")
+                _ng += 1
+    print(f"[hand] MIMIC_URDF_RATIO: {_ng} thumb mimic gearings rewritten"
+          + ("  <<< EXPECTED 4, CHECK PRIM NAMES" if _ng != 4 else ""))
+
 # --- finger colliders: GraspGenX decomposes the intermediate/distal links ------
 # end2end/robot_profiles.py UR10eInspireHandProfile:
 #     coacd_link_keywords = ("intermediate", "distal")
