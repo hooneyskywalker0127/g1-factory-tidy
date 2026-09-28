@@ -446,6 +446,7 @@ if "object" in meta:
     target_body = RigidObject(RigidObjectCfg(prim_path=os.environ.get("TARGET_PRIM", "/World/GraspTarget"),
                                              spawn=None))
 
+from plan_scene import dump_physics; dump_physics(stage)
 sim.reset()
 
 obj_start = None
@@ -747,6 +748,8 @@ if walk is not None:
                         _out.append(f"{_ln.replace('_link', '').replace('right_hand_', 'R.')} "
                                     f"{np.round(robot.data.body_pos_w[0, _b[0]].cpu().numpy() - _op, 2)}")
                 print(f"[hand] frame {i:5d} rel. to object: " + "  ".join(_out))
+                _bR = robot.find_bodies([PALM_LINK["right"]])[0][0]
+                print(f"[abs ] frame {i:5d}: object {np.round(_op, 3)} palm {np.round(robot.data.body_pos_w[0, _bR].cpu().numpy(), 3)} root {np.round(robot.data.root_pos_w[0].cpu().numpy(), 3)}")
                 if _every <= 10:                       # diagnostic: which link is nearest the object's mesh centroid
                     import trimesh as _tm
                     if "_c_off" not in globals():

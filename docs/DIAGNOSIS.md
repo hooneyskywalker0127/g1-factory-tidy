@@ -701,3 +701,14 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   reach the slot targets (0.65 m apart at 0.13 m height); the hands shoved the crate in the first 14 frames. v8:
   kneel 0.40 m back, BODY_W 0.1. Sehoon asked for the hammer -> desk crate attempt with the v2 plan: place_v2.sh
   running (pick #138 -> rise-first -> walk -> release over the crate; the room camera fixed).
+
+## 2026-09-28 12:12 — THE OBJECT WAS A CONVEX HULL
+
+- While diffing the tester and the render (identical palm paths to the mm through the first contact, identical
+  root, identical thumb yield at frame 105, then the render's object flies) the physics dump showed the object
+  collider: `approximation=convexHull`. A hammer's hull fills the wedge between head and handle (hull/mesh volume
+  1.6; drill 1.8; screwdriver 1.3). The fingers never had a 3 cm handle to wrap -- they pressed a phantom slab, and
+  every "hold" was a scoop that 1 mm of history undid (why holds never repeated, why 13 s of idle flipped them).
+  GraspGenX plans on the true point cloud; the physics must collide with the same shape.
+- Fix: plan_scene.py object collider = convexDecomposition (32 hulls, 500k voxels, 1 % error; OBJECT_COLLISION env
+  restores the hull). Test running (decomp_test.sh): #138 tester short/13 s idle x3 and render B.

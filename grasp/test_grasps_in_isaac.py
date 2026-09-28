@@ -111,6 +111,7 @@ if SNAP:
     for nm in ("A", "B"):
         cams.append(Camera(CameraCfg(prim_path=f"/Render/Snap{nm}", update_period=0.0, width=960, height=720,
                                      data_types=["rgb"], spawn=sim_utils.PinholeCameraCfg(focal_length=24.0, clipping_range=(0.05, 20.0)))))
+from plan_scene import dump_physics; dump_physics(stage)
 sim.reset()
 # 1.5 s, not 0.12: a hammer lying on the side of its head was still rolling
 # to rest after 120 ms, and every candidate then read "box at close -0.016"
@@ -235,6 +236,24 @@ def put(root7, dof29, hands14):
     robot.update(sim.get_physics_dt())
 
 
+# --pkl REF.pkl --hands H.npy: replay the RENDER's own data (a motion-lib clip + finger schedule, the files
+# play_in_cell.py gets) through this tester's put() loop, then judge the lift. If this holds where the render
+# loses, the difference is in play_in_cell's loop, not in the data (2026-09-28: #138 held 3/3 here, lost there).
+if "--pkl" in sys.argv:
+    import joblib
+    _m = list(joblib.load(sys.argv[sys.argv.index("--pkl") + 1]).values())[0]
+    _h = np.load(sys.argv[sys.argv.index("--hands") + 1])
+    _rt, _rq, _dof = np.asarray(_m["root_trans_offset"]), np.asarray(_m["root_rot"]), np.asarray(_m["dof"])
+    z_ref = float(obj_centre()[2])
+    for i in range(len(_dof)):
+        put(np.concatenate([_rt[i], _rq[i][[3, 0, 1, 2]]]), _dof[i], _h[min(i, len(_h) - 1)])
+        if i % 5 == 0 or i == len(_dof) - 1:
+            _b = robot.find_bodies([PALM_LINK["right"]])[0][0]; _rh = hand_ids[len(hand_ids) // 2:]
+            print(f"[test]    pkl frame {i:4d}: object {np.round(obj_centre(), 3)} palm {np.round(robot.data.body_pos_w[0, _b].cpu().numpy(), 3)} "
+                  f"root {np.round(robot.data.root_pos_w[0].cpu().numpy(), 3)} fingers {np.round(robot.data.joint_pos[0, _rh].cpu().numpy(), 2)}")
+    _bp = obj_centre(); _dz = float(_bp[2] - z_ref)
+    print(f"[test] pkl replay: after {len(_dof)} frames dz {_dz:+.3f} m -> {'HELD' if _dz > 0.05 else 'LOST'}")
+    raise SystemExit(0)
 results = []
 for k in order:
     q = d["q"][k]

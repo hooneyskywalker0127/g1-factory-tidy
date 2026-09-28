@@ -96,8 +96,19 @@ def spawn_target(stage, mesh_path, T_torso, T_in_torso):
         PhysxSchema.PhysxRigidBodyAPI(prim).CreateSleepThresholdAttr(0.0)
         PhysxSchema.PhysxRigidBodyAPI(prim).CreateStabilizationThresholdAttr(0.0)
     UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
-    UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(
-        "convexHull")
+    # OBJECT_COLLISION (default convexDecomposition). The object collided as ONE CONVEX HULL until 2026-09-28:
+    # the hull of a hammer fills the wedge between head and handle (hull/mesh volume 1.6; drill 1.8; screwdriver
+    # 1.3), so the fingers never wrapped a handle -- they pressed on a phantom slab beside it, and every hold was
+    # a scoop that a 1 mm change undid. GraspGenX plans on the true point cloud; the physics must see the same shape.
+    _approx = os.environ.get("OBJECT_COLLISION", "convexDecomposition")
+    UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(_approx)
+    if _approx == "convexDecomposition":
+        _cd = PhysxSchema.PhysxConvexDecompositionCollisionAPI.Apply(mesh.GetPrim())
+        _cd.CreateMaxConvexHullsAttr(int(os.environ.get("OBJECT_MAX_HULLS", "32")))
+        _cd.CreateHullVertexLimitAttr(64)
+        _cd.CreateVoxelResolutionAttr(int(os.environ.get("OBJECT_VOXELS", "500000")))
+        _cd.CreateErrorPercentageAttr(float(os.environ.get("OBJECT_HULL_ERR", "1.0")))
+        _cd.CreateMinThicknessAttr(0.001)
     # Friction, from the values GraspGenX validates its own grasps under
     # (end2end/e2e_grasp_demo.py --object_mu, default 10.0). Left unset the
     # stage runs on PhysX's 0.5, and a grasp generated for mu 10 slips out the
@@ -200,6 +211,27 @@ def floor_slab(stage, z_top=0.0, thickness=0.5, half=6.0):
     prim.CreatePurposeAttr(_UG.Tokens.guide)                      # never rendered
     _UP.CollisionAPI.Apply(prim.GetPrim())
     return prim.GetPrim()
+
+
+def dump_physics(stage, paths=("/World/GraspTarget", "/World/GraspTarget/Mesh", "/World/G1")):
+    """Print every authored physics attribute on these prims (and the object's material): the tester and the render
+    build the same scene through this module, yet the object reacted differently to the same finger contact
+    (2026-09-28 12:10) -- this is how the two are compared."""
+    from pxr import Usd, UsdPhysics, UsdShade
+    for p in paths:
+        prim = stage.GetPrimAtPath(p)
+        if not prim:
+            print(f"[phys] {p}: (absent)"); continue
+        rows = []
+        for a in prim.GetAttributes():
+            n = a.GetName()
+            if n.startswith(("physics:", "physxRigidBody:", "physxCollision:", "physxArticulation:", "physxScene:", "physxSDFMeshCollision:", "physxConvex")) and a.HasAuthoredValue():
+                rows.append(f"{n.split(':', 1)[1]}={a.Get()}")
+        print(f"[phys] {p} [{prim.GetTypeName()}] schemas={sorted(s for s in prim.GetAppliedSchemas())}: " + ", ".join(rows))
+        rel = UsdShade.MaterialBindingAPI(prim).GetDirectBindingRel("physics") if prim.HasAPI(UsdShade.MaterialBindingAPI) else None
+        if rel is not None and rel.GetTargets():
+            m = stage.GetPrimAtPath(rel.GetTargets()[0])
+            print(f"[phys]   material {rel.GetTargets()[0]}: " + ", ".join(f"{a.GetName().split(':',1)[-1]}={a.Get()}" for a in m.GetAttributes() if a.GetName().startswith("physics:") and a.HasAuthoredValue()))
 
 
 def build(stage, app, meta, T_torso):
