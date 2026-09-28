@@ -201,7 +201,7 @@ def main():
     print(f"[reach] clip ends: pelvis z {root[2]:.3f}, torso pitch {math.degrees(pitch):+.1f} deg, "
           f"wrist at {np.round(pos0[wi], 3)}")
 
-    def solve(targets, from_here=False, left_targets=None):
+    def solve(targets, from_here=False, left_targets=None, seed=None):
         """targets: list of 4x4 wrist poses -> solved joint frames (T, 35), errors.
         left_targets: the same for the left wrist (PIN_JSON: the other hand
         holds the tool's head down while this one takes the handle)."""
@@ -230,7 +230,7 @@ def main():
             # liked (it liked standing up: a 259 mm, 218 deg seam).
             from curobo._src.types.tool_pose import GoalToolPose
             r.reset()
-            r._prev_solution = q.clone().view(1, -1)
+            r._prev_solution = (q.clone() if seed is None else torch.tensor(seed, dtype=torch.float32, device="cuda")).view(1, -1)
             sols = []
             for k in range(T):
                 g = GoalToolPose(tool_frames=cfg.tool_frames,
@@ -437,6 +437,67 @@ def main():
     # the spread (palm z) runs along the handle, and the palm's finger base sits POWER_X along the fingers above the
     # handle centre with the handle POWER_Y below the palm face. Candidates: POWER_FRACS along the handle x two
     # finger directions; approach straight down from 12 cm, hold, lift. Written in the reach_all format.
+    # --regrasp-wrap REACH_ALL.npz --only K: GraspGen-X's own fingertip pinch (verified to lift: hammer #138, drill #57), then the
+    # power grasp is made IN THE AIR, the way a person does after picking a hammer off the floor: lift, turn the palm up
+    # (REGRASP_TURN deg about the fingers' axis), let the handle settle from the fingertips into the curled fingers
+    # (fingers open to REGRASP_CRADLE, thumb open), close everything. No new grasp point is invented: the pinch is the
+    # model's, the floor is out of the way once the tool is up, and the stand-up test judges the wrap. Two candidates:
+    # the turn one way and the other. Written with a per-frame finger schedule ("hands", n_go = every frame).
+    if "--regrasp-wrap" in sys.argv:
+        d0 = np.load(sys.argv[sys.argv.index("--regrasp-wrap") + 1]); k0 = int(sys.argv[sys.argv.index("--only") + 1])
+        qk = d0["q"][k0]; n_go0, n_lift0 = int(d0["n_go"]), int(d0["n_lift"])
+        turn = math.radians(float(os.environ.get("REGRASP_TURN", "150"))); cradle = float(os.environ.get("REGRASP_CRADLE", "0.9"))
+        _open = np.array([0, 0, 0, 0, 1.308, 0, 0, 0, 0, 0, 0, 0], float)
+        _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.5, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)
+        # REGRASP_KEEP=pinch (default): the index and the thumb keep the pinch while the other three fingers open to the cradle and
+        # close round the handle -- first try (rg, hammer/drill, turn -150): the tool rode through the turn, then fell the moment
+        # all fingers and the thumb opened (hammer: at the cradle; drill: during the settle). REGRASP_KEEP=none opens everything.
+        _cradle = _closed.copy()
+        _opens = [1, 2, 3] if os.environ.get("REGRASP_KEEP", "pinch") == "pinch" else [0, 1, 2, 3]
+        for j in _opens: _cradle[j] = cradle; _cradle[j + 6] = 1.064 * cradle - 0.045
+        if os.environ.get("REGRASP_KEEP", "pinch") != "pinch": _cradle[[4, 5, 10, 11]] = _open[[4, 5, 10, 11]]
+        _th = np.array([False, False, False, False, True, True, False, False, False, False, True, True])
+        def ramp(A, B, a_f, a_t):
+            h = A.copy(); h[~_th] = A[~_th] + (B[~_th] - A[~_th]) * a_f; h[_th] = A[_th] + (B[_th] - A[_th]) * a_t; return h
+        # the wrist pose at the top of the lift, from the solved joints
+        ks_l = r.kinematics.compute_kinematics(JointState.from_position(torch.tensor(qk[-1:], dtype=torch.float32, device="cuda"), joint_names=jn))
+        _p = ks_l.tool_poses.position; _q = ks_l.tool_poses.quaternion
+        _p = _p[0, 0, pick[wi]] if _p.dim() == 4 else _p.view(1, -1, 3)[0, pick[wi]]
+        _q = _q[0, 0, pick[wi]] if _q.dim() == 4 else _q.view(1, -1, 4)[0, pick[wi]]
+        Tl = np.eye(4); Tl[:3, 3] = _p.cpu().numpy(); Tl[:3, :3] = quat_to_mat(_q.cpu().numpy())
+        n_close, n_hold, n_turn, n_cradle, n_settle, n_close2, n_hold2 = 30, 30, 60, 20, int(os.environ.get("REGRASP_SETTLE", "10")), 30, 30
+        seqs, errs, hands_all, wrists = [], [], [], []
+        _turns = [float(v) for v in os.environ.get("REGRASP_TURNS", "1,-1").split(",")]     # multiples of REGRASP_TURN; -1 kept the tool through the turn, +1 dropped the hammer
+        for sgn in _turns:
+            targets = []
+            for i in range(n_turn):
+                a = (i + 1) / n_turn; c, s_ = math.cos(sgn * turn * a), math.sin(sgn * turn * a)
+                Rx = np.array([[1, 0, 0, 0], [0, c, -s_, 0], [0, s_, c, 0], [0, 0, 0, 1.0]])
+                targets.append(Tl @ Rx)
+            targets += [targets[-1].copy() for _ in range(n_cradle + n_settle + n_close2 + n_hold2)]
+            sol_new, err_new = solve(targets, from_here=True, seed=qk[-1])
+            # assemble: approach (open) | close at the grasp pose | hold | lift (closed) | turn (closed) | cradle | settle | close | hold
+            q_all = np.concatenate([qk[:n_go0], np.repeat(qk[n_go0 - 1:n_go0], n_close + n_hold, axis=0), qk[n_go0:], sol_new])
+            hands = [_open] * n_go0
+            hands += [ramp(_open, _closed, max(0.0, min(1.0, (i + 1) / n_close * 2 - 1)), min(1.0, (i + 1) / n_close * 2)) for i in range(n_close)]   # thumb first
+            hands += [_closed] * (n_hold + (len(qk) - n_go0) + n_turn)
+            hands += [ramp(_closed, _cradle, (i + 1) / n_cradle, (i + 1) / n_cradle) for i in range(n_cradle)]
+            hands += [_cradle] * n_settle
+            hands += [ramp(_cradle, _closed, min(1.0, (i + 1) / n_close2 * 2), max(0.0, min(1.0, (i + 1) / n_close2 * 2 - 1))) for i in range(n_close2)]   # fingers first, thumb last
+            hands += [_closed] * n_hold2
+            assert len(hands) == len(q_all), (len(hands), len(q_all))
+            err_all = np.concatenate([d0["err"][k0][:n_go0], np.zeros(n_close + n_hold), d0["err"][k0][n_go0:], err_new])
+            seqs.append(q_all); errs.append(err_all); hands_all.append(np.array([np.concatenate([_open, h]) for h in hands])); wrists.append(Tl)
+            print(f"[reach] regrasp turn {sgn * math.degrees(turn):+.0f} deg: wrist error during the turn {err_new[:n_turn].mean()*1000:5.1f} mm (max {err_new[:n_turn].max()*1000:5.1f}), after {err_new[n_turn:].mean()*1000:5.1f} mm")
+        T = len(seqs[0]); m0 = n_go0 + n_close + n_hold; m1 = m0 + (len(qk) - n_go0)
+        marks = {"approach": 0, "pinch": n_go0, "hold": n_go0 + n_close, "lift": m0, "turn": m1, "cradle": m1 + n_turn, "settle": m1 + n_turn + n_cradle,
+                 "wrap": m1 + n_turn + n_cradle + n_settle, "hold2": T - n_hold2}
+        out = sys.argv[sys.argv.index("--out") + 1]
+        np.savez(out, q=np.stack(seqs), err=np.stack(errs), joint_names=np.array(jn), n_go=T, n_lift=0, grasps=np.stack(wrists), conf=np.array([float(d0["conf"][k0])] * len(_turns)),
+                 close_from=marks["pinch"], lift_from=marks["lift"], hands=np.stack(hands_all), marks=json.dumps(marks), source=f"{sys.argv[sys.argv.index('--regrasp-wrap') + 1]}#{k0}")
+        print(f"[reach] wrote {out}: {T} frames, marks {marks}")
+        return
+
     if "--power-grasp" in sys.argv:
         from PIL import Image as _Im
         cap_dir = sys.argv[sys.argv.index("--power-grasp") + 1]
@@ -467,6 +528,12 @@ def main():
                 y_ax = np.array([0.0, 0.0, -1.0])                      # palm face down
                 x_ax = sgn * np.array([-hax3[1], hax3[0], 0.0])        # fingers across the handle
                 z_ax = np.cross(x_ax, y_ax)
+                # POWER_PITCH (deg): heel down, fingers up, about the spread axis. Scoop tests pw4/pw5 (fable40): the fingers
+                # dragged the handle toward the wrist and it slid out under the palm heel (object x -0.29 -> -0.22 during the
+                # close); a lowered heel is the wall the handle is raked against, as a person rakes a pencil off a table.
+                _pt = math.radians(float(os.environ.get("POWER_PITCH", "0")))
+                if _pt:
+                    x_ax, y_ax = math.cos(_pt) * x_ax - math.sin(_pt) * y_ax, math.sin(_pt) * x_ax + math.cos(_pt) * y_ax
                 T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x_ax, y_ax, z_ax
                 T[:3, 3] = centre - px * x_ax - py * y_ax               # handle under the finger base, py below the palm face
                 P = np.eye(4); P[:3, 3] = -WRIST_TO_PALM
@@ -476,22 +543,56 @@ def main():
         n_pre, n_in, n_lift = int(os.environ.get("APPROACH_FRAMES", "60")), int(os.environ.get("GRASP_FRAMES", "60")), 30
         n_go = n_pre + n_in
         T0 = np.eye(4); T0[:3, 3] = pos0[wi]; T0[:3, :3] = quat_to_mat(quat0[wi])
-        seqs, errs = [], []
+        # POWER_HOOK (rad) + POWER_SLIDE (m): the SCOOP. Coming straight down, the fingers landed beside the handle and
+        # curled onto the floor next to it (power2, 24/24 LOST, results/fable40/power2_3_grid.png). A person hooks the
+        # fingers first, puts the fingertips on the floor just BEYOND the handle, drags the hand back so the tips slide
+        # under it (the settled handle floats 1.5-1.8 cm), then closes. Here: fingers curl to POWER_HOOK during the
+        # descent, the hand lands POWER_SLIDE short of the wrap pose along the fingers, slides that far, closes (fingers
+        # first, then the thumb) with the palm still, holds, lifts. The finger schedule is written per frame ("hands").
+        hook, slide = float(os.environ.get("POWER_HOOK", "0")), float(os.environ.get("POWER_SLIDE", "0"))
+        # POWER_LAND (m): where the hand lands along the fingers relative to the wrap pose (default -POWER_SLIDE: short of it).
+        # Measured on scoop #3 (results/fable40/scoop_3_grid.png): landing 5 cm short put the hooked fingertips ON the handle;
+        # +0.03 puts them on the floor beyond it. POWER_CLOSE=thumb_first blocks the near side before the fingers scoop.
+        land_off = float(os.environ.get("POWER_LAND", str(-slide)))
+        thumb_first = os.environ.get("POWER_CLOSE", "fingers_first") == "thumb_first"
+        n_slide, n_close, n_hold = (45 if slide > 0 else 0), (30 if slide > 0 else 0), (30 if slide > 0 else 0)
+        _open = np.array([0, 0, 0, 0, 1.308, 0, 0, 0, 0, 0, 0, 0], float)
+        _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.5, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)
+        _hookq = _open.copy(); _hookq[[0, 1, 2, 3]] = hook; _hookq[[6, 7, 8, 9]] = 1.064 * hook - 0.045
+        _fing = np.array([True, True, True, True, False, False, True, True, True, True, False, False])
+        seqs, errs, hands_all = [], [], []
         for k, Tg in enumerate(wrists):
-            pre = Tg.copy(); pre[2, 3] += 0.12
+            xa = Tg[:3, 0]
+            land = Tg.copy(); land[:3, 3] += land_off * xa             # fingertips just beyond the handle
+            pre = land.copy(); pre[2, 3] += 0.12
             up = Tg.copy(); up[2, 3] += 0.15
-            targets = []
+            targets, hands = [], []
             for i in range(n_pre):
                 a = (i + 1) / n_pre; M = Tg.copy(); M[:3, 3] = T0[:3, 3] + (pre[:3, 3] - T0[:3, 3]) * a; targets.append(M)
+                hands.append(_open + (_hookq - _open) * min(1.0, a * 3))
             for i in range(n_in):
-                a = (i + 1) / n_in; M = Tg.copy(); M[:3, 3] = pre[:3, 3] + (Tg[:3, 3] - pre[:3, 3]) * a; targets.append(M)
+                a = (i + 1) / n_in; M = Tg.copy(); M[:3, 3] = pre[:3, 3] + (land[:3, 3] - pre[:3, 3]) * a; targets.append(M); hands.append(_hookq)
+            for i in range(n_slide):
+                a = (i + 1) / n_slide; M = Tg.copy(); M[:3, 3] = land[:3, 3] + (Tg[:3, 3] - land[:3, 3]) * a; targets.append(M); hands.append(_hookq)
+            for i in range(n_close):
+                a = (i + 1) / n_close; h = _hookq.copy()
+                af, at = (max(0.0, min(1.0, a * 2 - 1)), min(1.0, a * 2)) if thumb_first else (min(1.0, a * 2), max(0.0, min(1.0, a * 2 - 1)))
+                h[_fing] = _hookq[_fing] + (_closed[_fing] - _hookq[_fing]) * af; h[~_fing] = _hookq[~_fing] + (_closed[~_fing] - _hookq[~_fing]) * at
+                targets.append(Tg.copy()); hands.append(h)
+            for i in range(n_hold):
+                targets.append(Tg.copy()); hands.append(_closed)
             for i in range(n_lift):
-                a = (i + 1) / n_lift; M = Tg.copy(); M[:3, 3] = Tg[:3, 3] + (up[:3, 3] - Tg[:3, 3]) * a; targets.append(M)
+                a = (i + 1) / n_lift; M = Tg.copy(); M[:3, 3] = Tg[:3, 3] + (up[:3, 3] - Tg[:3, 3]) * a; targets.append(M); hands.append(_closed)
             sol, err = solve(targets, from_here=True)
-            seqs.append(sol); errs.append(err)
-            print(f"[reach] power #{k}: at grasp {err[n_go-1]*1000:5.1f} mm, lift {err[n_go:].mean()*1000:5.1f} mm")
+            seqs.append(sol); errs.append(err); hands_all.append(np.array([np.concatenate([_open, h]) for h in hands]))
+            print(f"[reach] power #{k}: at grasp {err[n_go + n_slide - 1]*1000:5.1f} mm, lift {err[-n_lift:].mean()*1000:5.1f} mm")
         out = sys.argv[sys.argv.index("--out") + 1]
-        np.savez(out, q=np.stack(seqs), err=np.stack(errs), joint_names=np.array(jn), n_go=n_go, n_lift=n_lift, grasps=wrists, conf=conf)
+        if slide > 0:      # the whole sequence (approach, slide, close, hold, lift) is "approach" to the tester; it follows the hands array
+            T = len(seqs[0]); marks = {"pre": 0, "down": n_pre, "slide": n_go, "close": n_go + n_slide, "hold": n_go + n_slide + n_close, "lift": T - n_lift}
+            np.savez(out, q=np.stack(seqs), err=np.stack(errs), joint_names=np.array(jn), n_go=T, n_lift=0, grasps=wrists, conf=conf,
+                     close_from=marks["close"], lift_from=marks["lift"], hands=np.stack(hands_all), marks=json.dumps(marks))
+        else:
+            np.savez(out, q=np.stack(seqs), err=np.stack(errs), joint_names=np.array(jn), n_go=n_go, n_lift=n_lift, grasps=wrists, conf=conf)
         print(f"[reach] wrote {out}")
         return
 

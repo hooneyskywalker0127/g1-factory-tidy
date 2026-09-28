@@ -263,6 +263,7 @@ if "--pkl" in sys.argv:
 results = []
 for k in order:
     q = d["q"][k]
+    HS = None if HANDS_SEQ is None else (HANDS_SEQ[k] if HANDS_SEQ.ndim == 3 else HANDS_SEQ)   # this candidate's finger schedule
     roots = np.concatenate([q[:, bcol[:3]], R.from_euler("XYZ", q[:, bcol[3:]]).as_quat()[:, [3, 0, 1, 2]]], axis=1)
     dofs = q[:, col]
     # reset: box back, body back to the kneel
@@ -290,7 +291,7 @@ for k in order:
         _lo = float(box.data.body_pos_w[0, :, 2].min()) if hasattr(box.data, "body_pos_w") else float("nan")
         print(f"[test]    object settled: rotated {_rot:.1f} deg from where it was placed; quat now {np.round(_bq, 3)} placed {np.round(_pq, 3)}")
     for i in range(n_go):
-        put(roots[i], dofs[i], HAND_OPEN if HANDS_SEQ is None else HANDS_SEQ[i])
+        put(roots[i], dofs[i], HAND_OPEN if HS is None else HS[i])
         if MARKS and (i + 1) in MARKS:                        # end of a scheduled phase (assist wrap): a picture and the object's pose
             _ph = MARKS[i + 1]; snap(f"{int(k)}_{_ph}")
             _o = obj_centre(); _bq = box.data.root_quat_w[0].cpu().numpy()
@@ -385,7 +386,7 @@ for k in order:
             robot.set_joint_velocity_target(torch.zeros_like(_vel), joint_ids=_vel_ids)
     if velocity_mode:
         squeeze(True)
-    _hc = HAND_CLOSED if HANDS_SEQ is None else HANDS_SEQ[-1]       # what "closed" means after the sequence
+    _hc = HAND_CLOSED if HS is None else HS[-1]       # what "closed" means after the sequence
     for i in range(0 if HANDS_SEQ is not None else n_ramp + n_settle):
         a = 0.0 if os.environ.get("NO_CLOSE") else min(1.0, (i + 1) / n_ramp)
         if order == "together":
@@ -443,9 +444,31 @@ for k in order:
     _rise = float(os.environ.get("TEST_RISE", "0.35")); _nr = int(os.environ.get("TEST_RISE_FRAMES", "45"))
     if _rise > 0 and not os.environ.get("NO_CLOSE"):
         _z0 = float(obj_centre()[2])
-        for _i in range(_nr + 30):
-            _r = roots[-1].copy(); _r[2] += _rise * min(1.0, (_i + 1) / _nr)
-            put(_r, dofs[-1], _hc)
+        if os.environ.get("TEST_RISE_PKL"):
+            # TEST_RISE_PKL: the planner's OWN stand-up (the first frames of a carry clip from walk_clip.py --rise-first: pelvis
+            # 0.43 -> 0.78 m in 1 s with the torso pitching 14 -> 0 deg and the legs, waist and left arm moving), stretched
+            # TEST_RISE_SLOW times as build_place_reference does, root as a delta from the reach's last frame, right arm and
+            # fingers held. Sehoon: 일어설 때 문제라면 일어나는 것도 테스트에 넣어야 한다 -- the vertical raise was a stand-in.
+            import joblib as _jl
+            _m = list(_jl.load(os.environ["TEST_RISE_PKL"]).values())[0]
+            _rt, _rq, _rd = np.asarray(_m["root_trans_offset"]), np.asarray(_m["root_rot"]), np.asarray(_m["dof"])
+            _n_end = min(len(_rt) - 1, int(np.argmax(_rt[:, 2] > _rt[0, 2] + 0.9 * (_rt[:, 2].max() - _rt[0, 2]))) + 15)
+            _slow = float(os.environ.get("TEST_RISE_SLOW", "2"))
+            _rise = float(_rt[_n_end, 2] - _rt[0, 2])
+            _arm = [j for j, n in enumerate(names) if n.startswith("right_")]
+            _R0 = R.from_quat(_rq[0]); _Rl = R.from_quat(roots[-1][[4, 5, 6, 3]])
+            _frames = np.arange(0, _n_end, 1.0 / _slow)
+            for _f in list(_frames) + [float(_n_end)] * 30:
+                _j = int(_f); _a = _f - _j; _j1 = min(_j + 1, _n_end)
+                _t = (1 - _a) * _rt[_j] + _a * _rt[_j1]; _d = (1 - _a) * _rd[_j] + _a * _rd[_j1]
+                _Ri = R.from_quat(_rq[_j]) * _R0.inv() * _Rl
+                _r = roots[-1].copy(); _r[:3] = roots[-1][:3] + (_t - _rt[0]); _r[3:7] = _Ri.as_quat()[[3, 0, 1, 2]]
+                _dd = _d.copy(); _dd[_arm] = dofs[-1][_arm]
+                put(_r, _dd, _hc)
+        else:
+            for _i in range(_nr + 30):
+                _r = roots[-1].copy(); _r[2] += _rise * min(1.0, (_i + 1) / _nr)
+                put(_r, dofs[-1], _hc)
         _dz_r = float(obj_centre()[2]) - _z0
         print(f"[test]    stand-up test: body up {_rise:.2f} m, object followed {_dz_r:+.3f} m")
         if _dz_r < 0.5 * _rise:
