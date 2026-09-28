@@ -415,7 +415,10 @@ for k in order:
         j, a = int(f), f - int(f)
         j1 = min(j + 1, _l0 + n_lift - 1)
         put((1 - a) * roots[j] + a * roots[j1], (1 - a) * dofs[j] + a * dofs[j1], HAND_OPEN if os.environ.get("NO_CLOSE") else HAND_CLOSED)
-    for _ in range(10):
+    # TEST_HOLD_AFTER (frames, default 90): hold still after the lift before judging. GraspGen-X's player holds
+    # after the lift for the same reason ("preventing premature-lift slip"); hammer #138 read HELD at the top of the
+    # lift and slid out of a two-finger grip during the next second (260928/5지/hammer/v4, v5).
+    for _ in range(int(os.environ.get("TEST_HOLD_AFTER", "90"))):
         put(roots[-1], dofs[-1], HAND_OPEN if os.environ.get("NO_CLOSE") else HAND_CLOSED)
     snap(f"{int(k)}_lift")
     if velocity_mode:

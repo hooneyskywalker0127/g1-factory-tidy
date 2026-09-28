@@ -730,3 +730,10 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   kept above 60 % of the top, top-4 x top-4 pairs solved for both hands (rise-first, descend, hold, lift), every
   pair physics-tested, the holding pair rendered (crate_grasps_chain.sh -> 260928/5지/crate/vN). The hand-designed
   pinch/hook attempts (carry B, rim3, slot3) stay queued behind as fallbacks.
+- 12:52 Hammer carry v5 (stiffness 40, 2x slower stand-up): LOST at the same place -- the handle slid out during the
+  still hold after the lift (frames 700-800), before the stand-up. #138 holds with index+middle only (1.0 rad),
+  ring+pinky closed on air: a two-finger grip near the head that the head's weight rotates out. Tester now holds
+  3 s after the lift before judging (TEST_HOLD_AFTER=90, as GraspGen-X's player does). Sehoon: alternate the two
+  orderings -- GraspGen-X confidence vs the handle heuristic -- and compare; he expects the handle to score high.
+  Drill with the decomposition: 13/40 held in the head-order run (re-verify running); confidence-order runs for
+  hammer, drill, screwdriver are queued behind it.
