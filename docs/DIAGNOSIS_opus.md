@@ -836,3 +836,31 @@ v19 에서 약지 접촉력이 0↔1,571.78 N 로 진동하고 24,588 N 스파�
 v22 = 사본 `grasp/test_grasps_in_isaac_opus.py`(게인 오버라이드 + 솔버 100/50 + CoACD 손끝, 세 곳만 추가)
 으로 같은 40 개를 kp 40 / kd 4.0 / effort 30 / armature 0.001 에서 재판정하고, 가장 많이 들어올린
 후보를 carry+place 까지 렌더한다.
+
+## 엄지가 막힌 곳: 실물에 없는 뒤로 젖히는 범위
+
+v21 에서 `R_thumb_intermediate_joint` 는 f530 부터 f750 까지 **-0.16 rad** 에 있었다. 이 값은
+우리 자산 `assets/g1_inspire/g1_29dof_inspire_hand.usd` 의 이 관절 하한(-9.167 deg = -0.160 rad)과
+정확히 같다 — 즉 한계에 박혀 있었다. 같은 구간에 `R_thumb_proximal_pitch_joint` 는 목표 0.5 rad 에
+대해 0.00 이었다. 자산은 이 둘을 PhysX 미믹(gearing -1.6)으로 묶고 `stiffen_mimic` 이 200 Hz 로
+굳히므로, 중간마디가 하한에 박히면 근위 피치도 0 에 묶인다.
+
+제조사 서술에는 그 음의 범위가 없다. GraspGenX `ext/gripper_descriptions/.../x_grippers/inspire_hand/gripper.urdf`:
+
+| 관절 | 실물 URDF | 우리 USD |
+|---|---|---|
+| `thumb_proximal_pitch_joint` | 0 ~ 0.6 | 0 ~ 0.500 |
+| `thumb_intermediate_joint` | **0** ~ 0.8 (mimic x1.334) | **-0.160** ~ 0.960 (mimic x1.6) |
+| `thumb_distal_joint` | **0** ~ 0.4 (mimic x0.667) | **-0.240** ~ 1.440 (mimic x2.4) |
+
+네 손가락은 이 문제가 없다. 실물 `index_intermediate` 하한 -0.045 대 우리 -0.340 으로 우리가 더
+넉넉하지만, v21 에서 이들은 0.58~0.84 로 양수에 머물렀다 — 막힌 것은 엄지뿐이다.
+
+v23 = `THUMB_LIMIT_URDF=1`: 엄지 중간/말단의 **하한만** URDF 의 0 으로 올린다(상한·기어비·게인은
+v21 그대로). IsaacLab 런타임 `write_joint_position_limit_to_sim` 으로 `sim.reset()` 직후에 쓴다 —
+USD 스테이지 편집은 인스턴스 프록시가 읽기 전용이라 조용히 실패할 수 있다.
+사전 등록 합격 기준: (a) 유지 구간에 pitch q > 0.1 rad (v21 최대 0.07) (b) intermediate q >= 0 내내
+(c) 상승 구간에 근위가 1.47 에 닿는 손가락 없음 (d) 최고 상승 >= +0.1193 m.
+
+아직 원인이라는 증명은 아니다. 중간마디를 -0.16 에 붙들고 있던 힘이 무엇인지는 측정하지 않았다
+(구동 토크는 오차 0.16 rad x kp 40 = 6.4 Nm 로 0 쪽으로 밀고 있었는데도 움직이지 않았다).

@@ -429,6 +429,7 @@ if _coacd:
                 _nmesh += 1
     print(f"[hand] finger colliders -> convexDecomposition on {_kw}: {_nmesh} meshes "
           f"(GraspGenX coacd_link_keywords)")
+
 # ------------------------------------------------------------------------------
 if os.environ.get("BODY_COLLISION", "0") == "0" and "--hands" in sys.argv:
     from plan_scene import keep_only_hand_collisions
@@ -598,6 +599,27 @@ def _force_line(i):
           + ", ".join(f"{n} {m:.2f}" for n, m in _hit[:6]))
 
 sim.reset()
+# --- thumb joint limits: the real Inspire hand has no backward travel ---------
+# Measured in hammer/v21: R_thumb_intermediate_joint sat at -0.160 rad -- exactly our
+# USD's lower limit -- from f530 to f750, while R_thumb_proximal_pitch_joint never left
+# 0.00 against its 0.5 target. The asset's PhysX mimic (gearing -1.6) then pins the
+# pitch at 0, so the thumb was a straight post for the whole grasp.
+# The manufacturer's own description -- GraspGenX ext/gripper_descriptions/.../
+# x_grippers/inspire_hand/gripper.urdf -- gives these joints NO backward travel:
+#     thumb_intermediate_joint  limit 0 ~ 0.8   (mimic thumb_proximal_pitch x 1.334)
+#     thumb_distal_joint        limit 0 ~ 0.4   (mimic thumb_proximal_pitch x 0.667)
+# Our asset authors them -0.160 ~ 0.960 and -0.240 ~ 1.440. Raise the lower bounds to
+# the URDF's 0 and leave the upper bounds and the gearing alone.
+if os.environ.get("THUMB_LIMIT_URDF") == "1":
+    _tn = [n for n in ("R_thumb_intermediate_joint", "R_thumb_distal_joint") if n in robot.joint_names]
+    _tid, _ = robot.find_joints(_tn)
+    _lim = robot.data.joint_pos_limits[:, _tid, :].clone()
+    for _i, _n in enumerate(_tn):
+        print(f"[hand] {_n} limits {_lim[0, _i, 0]:.3f} .. {_lim[0, _i, 1]:.3f} rad -> "
+              f"0.000 .. {_lim[0, _i, 1]:.3f} (inspire_hand/gripper.urdf has no backward travel)")
+    _lim[:, :, 0] = 0.0
+    robot.write_joint_position_limit_to_sim(_lim, joint_ids=_tid)
+
 
 obj_start = None
 if target_body is not None:
