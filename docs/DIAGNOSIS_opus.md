@@ -768,3 +768,36 @@ open 5x7.7x10 cm @ z 0.10, half-open 4x7.7x7 cm @ z 0.095)로 파워 그립 후�
 
 v21(손끝 콜라이더)이 잡지 못하면 v22 는 이것이다: `grasps_palm.json` / `reach_palm.npz`
 를 v20 게인으로 재평가. 관련: [[crate-power-grip-later]].
+
+## 엄지 말단 미믹 배수가 실물 URDF 의 3.6 배다 (260928 22:50, 측정)
+
+GraspGenX 가 쓰는 실물 Inspire URDF
+(`ext/gripper_descriptions/.../x_grippers/inspire_hand/gripper.urdf`):
+
+    thumb_intermediate_joint  mimic thumb_proximal_pitch_joint  multiplier 1.334  limit 0 ~ 0.8
+    thumb_distal_joint        mimic thumb_proximal_pitch_joint  multiplier 0.667  limit 0 ~ 0.4
+
+우리 `build_reach_reference.py:109-110`:
+
+    (thumb_intermediate, thumb_proximal_pitch, 1.6)
+    (thumb_distal,       thumb_proximal_pitch, 2.4)
+
+로그의 target 값으로 실제 적용을 확인했다. v20 f710: j5(pitch) 0.24 -> j10 target 0.38
+(= 1.6 x 0.24), j11 target 0.56 (= 2.4 x 0.235).
+
+우리 asset 의 관절 한계도 실물과 다르다 (`g1_29dof_inspire_hand.usd`, USD 는 도 단위):
+
+    R_thumb_proximal_pitch  0 ~ 28.648 deg = 0 ~ 0.500 rad   (URDF 0 ~ 0.6)
+    R_thumb_intermediate   -9.167 ~ 55.004 = -0.160 ~ 0.960  (URDF 0 ~ 0.8)
+    R_thumb_distal        -13.751 ~ 82.506 = -0.240 ~ 1.440  (URDF 0 ~ 0.4)
+
+배수 1.6 / 2.4 는 우리 asset 의 한계(0.96 / 1.44)에 비례해 뽑힌 값이라 그 자체로 틀린
+설정은 아니다. 다만 실물 손의 비율은 1.334 / 0.667 이고, 우리 엄지 말단은 실물보다
+3.6 배 더 말린다(한계 1.44 rad vs 0.4 rad).
+
+v20 에서 엄지 접촉이 R_thumb_intermediate -> R_thumb_distal 로 옮겨간 것과 방향이 맞는다.
+말단이 과하게 말리면 물체를 손아귀 안쪽이 아니라 바깥쪽으로 밀어낸다. 다만 이것이
+원인이라는 증거는 아직 없다 — 접촉 링크 이동은 물체가 굴러 나간 결과일 수도 있다.
+
+v21 이 실패하면 v22 후보: `_MIMIC` 배수를 URDF 값 1.334 / 0.667 로. 페이블 파일은 건드리지
+않고 `play_in_cell_opus.py` 에서 `build_reach_reference._MIMIC` 을 import 후 치환한다.
