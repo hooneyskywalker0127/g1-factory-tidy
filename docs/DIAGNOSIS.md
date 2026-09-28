@@ -661,3 +661,7 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   walk clip -- the planner stands AND strides at once (pelvis 0.45 -> 0.78 m while covering 1.1 m in 30 frames).
   walk_clip.py gets --rise-first S: stand up in place (IDLE, target = start) for S s before walking. Drill v1:
   tester 1/40 (#63), render LOST -> verify_render queued. The v5 room camera sat inside the desk; head/wrist fine.
+- 11:08 Re-verify results (stiffness 10, object awake): HAMMER ranked nearer the head (HANDLE_AT 0.2) + slide reach:
+  #138 re-verified 2/2 (rendering -> 260928/hammer/v2); #91, #64 1/2; #104 0/2. DRILL: #63 2/2 (+147/+138 mm,
+  rendering -> drill/v2). Screwdriver slide reach: 1/40 (#98), re-verify 0/2. Crate carry with --rise-first 1.5:
+  walk 184 frames, place solved (3.1 mm), rendering -> crate/v6. Four Isaac renders at once: 13.4 GB GPU -- watch.
