@@ -737,3 +737,11 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   orderings -- GraspGen-X confidence vs the handle heuristic -- and compare; he expects the handle to score high.
   Drill with the decomposition: 13/40 held in the head-order run (re-verify running); confidence-order runs for
   hammer, drill, screwdriver are queued behind it.
+- 13:10 Crate by GraspGen-X pairs (gg1, candidates from the 1.4 m look): 16 pairs solved (5-7 mm) but 0/16 held --
+  the hands closed on air. Mapped candidates put the palms 7-10 cm inside the walls with fingers pointing
+  inward-down; the closing pads sweep ~2 cm above the rim and 8 cm inside. Either the far, see-through-honeycomb
+  cloud biased the candidates or the wall is not where GraspGen's sweep volume expects it. Two better clouds are
+  queued: the kneel look relabelled by the far look's footprint (grasp/relabel_by_footprint.py; the language mask
+  fails at that range) and a whole-crate look from 1.0 m; each gets GraspGen-X + the pair chain (gg2, gg3).
+  Hand-designed grips: carry B (outside pinch, 2x slower stand-up) LOST, slot3 LOST (crate levered up at the
+  close), rim3 LOST (IK 16 mm from 0.20 m). Parked for good; the crate now goes only through the model's candidates.
