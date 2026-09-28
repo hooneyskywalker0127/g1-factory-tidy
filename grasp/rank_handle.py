@@ -62,10 +62,17 @@ for k in range(len(W)):
         below = pts[:, 2] < head[:, 2].max() + 0.01          # the point ends up level with the bulk
         hit = float(np.sum((dxy < CLEAR) & below))
     rows.append((k, off, frac, err[k], hit))
-order = sorted(rows, key=lambda r: (r[1] > 0.03, r[4] > 0, abs(r[2] - target) if r[1] <= 0.03 else 9, r[3]))
+# RANK_BY=conf (default now, Sehoon 2026-09-28: "확률 기반 아님? 더 높은 걸 하는 거지"): GraspGen-X's own confidence
+# decides the order; this script only keeps the language condition (the pinch on the handle's axis) and the
+# open-hand-over-bulk veto. RANK_BY=head restores the hand-made "35 % from the head" preference.
+conf_all = d["conf"] if "conf" in d.files else np.zeros(len(W))
+if os.environ.get("RANK_BY", "conf") == "conf":
+    order = sorted(rows, key=lambda r: (r[1] > 0.03, r[4] > 0, -float(conf_all[r[0]]), r[3]))
+else:
+    order = sorted(rows, key=lambda r: (r[1] > 0.03, r[4] > 0, abs(r[2] - target) if r[1] <= 0.03 else 9, r[3]))
 print(f"[rank] open-hand footprint on the bulk ({len(head)} pts): {sum(r[4] > 0 for r in rows)} of {len(rows)} candidates flagged, ordered last")
 with open(out, "w") as f:
     f.write(",".join(str(r[0]) for r in order))
-print(f"[rank] handle {t1 - t0:.2f} m; {sum(r[1] <= 0.03 for r in rows)} of {len(rows)} candidates on the axis; first: "
-      + ", ".join(f"#{r[0]}({r[2]*100:.0f}% from head, {r[3]*1000:.0f} mm)" for r in order[:6]))
+print(f"[rank] by {os.environ.get('RANK_BY', 'conf')}: handle {t1 - t0:.2f} m; {sum(r[1] <= 0.03 for r in rows)} of {len(rows)} candidates on the axis; first: "
+      + ", ".join(f"#{r[0]}(conf {float(conf_all[r[0]]):.2f}, {r[2]*100:.0f}% from head, {r[3]*1000:.0f} mm)" for r in order[:6]))
 print(f"[rank] wrote {out}")
