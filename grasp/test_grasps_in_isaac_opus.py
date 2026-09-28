@@ -115,6 +115,27 @@ cfg.init_state = cfg.init_state.replace(pos=tuple(float(v) for v in p0),
                                         rot=(float(q0[3]), float(q0[0]), float(q0[1]), float(q0[2])))
 robot = Articulation(cfg)
 stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_reference.py)
+# FINGER_COACD: the same block play_in_cell_opus.py applies to the render. The USD ships
+# every finger collider as convexHull, which fills the concave curl of the finger solid;
+# the render has run with it decomposed since hammer v15, the screen never has.
+_coacd = os.environ.get("FINGER_COACD", "")
+if _coacd:
+    from pxr import Usd as _Usd2, UsdPhysics as _UsdPh2
+    _kw = tuple(k for k in _coacd.split(",") if k)
+    _nmesh = 0
+    for _link in stage.GetPrimAtPath("/World/G1").GetChildren():
+        if not (_link.GetName().startswith("R_") and any(k in _link.GetName() for k in _kw)):
+            continue
+        _col = stage.GetPrimAtPath(_link.GetPath().AppendChild("collisions"))
+        if not (_col and _col.IsValid()):
+            continue
+        _col.SetInstanceable(False)
+        for _m in _Usd2.PrimRange(_col):
+            if _m.HasAPI(_UsdPh2.CollisionAPI):
+                _UsdPh2.MeshCollisionAPI.Apply(_m).CreateApproximationAttr("convexDecomposition")
+                _nmesh += 1
+    print(f"[hand] finger colliders -> convexDecomposition on {_kw}: {_nmesh} meshes "
+          f"(GraspGenX coacd_link_keywords)")
 if os.environ.get("BODY_COLLISION", "0") == "0":
     _kept = keep_only_hand_collisions(stage, keep=HAND_KEEP)
     print(f"[test] body does not collide with the cell; hand links kept: {len(_kept)} ({_kept[:2]}...)")

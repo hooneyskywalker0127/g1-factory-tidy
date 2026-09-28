@@ -336,3 +336,66 @@ finger_effort_limit 기본값을 200.0 으로 올린다(:689). g1_inspire_arm.ya
 v16 은 v15 에서 effort 만 20 -> 200 으로 바꾼다. close 방식은 position 그대로 둔다(한 번에 하나).
 엄지가 물체를 밀면서 0.5 에 도달하면 원인이 확정된다. 도달하고도 물체가 튕기면 그때 velocity close
 (CLOSE_MODE=velocity, CLOSE_VEL=0.25, CLOSE_KD=800)를 시험한다.
+
+---
+
+## v16 결과와, 세훈님이 되돌아가라고 한 지점 (260928 21:00)
+
+**1) v16 은 LOST 다. effort 20 -> 200 은 절반만 맞았다.**
+엄지는 풀렸다. 엄지 pitch(목표 0.5)가 450: 0.01 -> 480: 0.41 -> (하중에 0.25 로 눌렸다가) 530: 0.50 으로
+올라와 유지된다. v15 의 평평한 -0.00 과 다르다. 2.04 m/s 의 튕김도 사라졌다(최대 0.245 m/s).
+그런데도 물체는 한 번도 잡히지 않았다.
+- 프레임 560 이후 손가락 12 축의 q 가 target 과 잔차 0 으로 일치한다. 접촉이 없다는 뜻이다(빈손).
+- 손목은 물체 기준 z 0.01(560) -> 0.62(840) 로 61 cm 올라가는데 물체는 책상 높이에 정지해 있다.
+- 닫는 동안 가장 가까운 손가락 링크 원점이 물체 중심에서 최소 6.4 cm(480), 닫힌 뒤 9.5 cm.
+- 프레임 880 에 걸어가는 로봇이 물체를 5.6 m/s 로 찬다. 바닥에 떨어진 건 이것 때문이고, 파지 실패의
+  결과이지 원인이 아니다.
+게인은 이제 충분하다. 남은 원인은 파지 자세다. (drill v13 도 LOST: dxy 1.4693 m, dz -0.0029 — 들린 적이
+없고 1.47 m 밀렸다. v12 와 같은 접근 중 타격이며 닫힘 실패가 아니다.)
+
+**2) 세훈님 지적이 맞다. 성공했던 구간이 있고, 나는 그 뒤로 계속 나빠졌다.**
+vN 폴더 전체를 읽어 HELD/LOST 를 세었다.
+
+| 성공(HELD) | 손 설정 |
+|---|---|
+| hammer v3 (dz +0.1109), v6 (+0.1109, v3 와 동일 클립), v8 (+0.0907) | 기본 actuator: kp 40, kd 0.4, effort 30, solver 12/4 |
+| drill v3, v5 (+0.1044) | 〃 |
+| crate v1 (+0.0656), v4 (+0.0847) | 〃 |
+
+hammer v9 / drill v6 / crate v5 이후는 전부 LOST 다. v10 부터 내가 손가락 게인을 GraspGenX 의
+position-mode 숫자(kp 2000, kd 200, effort 200, armature 0.001)로 올렸다. v10 자신의 note 가
+"kp 2000 은 잡는 게 아니라 밀어내는 힘이었다" 로 끝난다. v10~v16 은 이미 답이 나온 방향을 계속 판 것이다.
+
+**3) 그래서 원래 풀어야 했던 문제는 이것이다 — hammer/v9 의 note 에 이미 적혀 있다.**
+"the pick holds, the stand-up drops it." v4, v5, drill v4 와 같은 실패다. v9 는 프레임 700 에 물체
+z 0.2516(+0.10 m, 들려 있음), 800 에 0.1541(바닥)을 쟀고 상승은 749 에 시작하므로 780 근처에서 빠졌다.
+v9 가 지정한 다음 측정(팔 기준 좌표계에서의 물체 위치)은 끝내 실행되지 않았다.
+
+**4) 오픈소스 재독 (GraspGenX end2end) — velocity close 는 들어올리는 내내 유지되는 설계다.**
+- `dynamic_playback.py:641-661` velocity 모드: `joint_target_ke = 0`, `joint_target_kd = 800`
+  (`newton_grasp_eval.py` 의 FINGER_KD 와 맞춤), mode = VELOCITY. position 모드 주석: "snaps the fingers
+  to the closed angles and they bat the object away".
+- `dynamic_playback.py:1686 drive_segments` 는 궤적의 **매 프레임** velocity target 을 다시 넣는다.
+  판정은 `is_open = abs(target - open_v) < 1e-6` 하나뿐이라, 스케줄이 open 이 아닌 동안에는 접근·닫힘·
+  **들어올림·이송** 전 구간에서 손가락이 계속 닫는 쪽으로 구동된다. 즉 쥐는 힘이 각도 오차에 비례하지
+  않고, 되밀림을 kd 800 의 댐퍼가 상수로 막는다. 이것이 "일어설 때 풀린다"에 정확히 대응하는 기구다.
+- `dynamic_playback.py:685-691` URDF 의 effort=20 을 finger_effort_limit(기본 200, 우리 yaml 은 1000)으로
+  덮는다.
+- `end2end/robots/g1_inspire_arm.yaml:39-51` `gripper_control_mode: velocity`, thumb_0 은 **0.0**(구동하지
+  않음), thumb_1/2 는 -0.25, 네 손가락은 +0.25.
+
+우리 구현은 이 설계에 충실하다. `play_in_cell_opus.py:797-805, 828-829` 는 프레임마다 그리고 substep
+마다 velocity target 을 다시 넣고, `test_grasps_in_isaac_opus.py` 의 `put()`(:289)도 SQUEEZING 인 동안
+substep 마다 다시 넣으며 `squeeze(True)` 는 꺼지지 않는다. 다만 **우리 기본값 CLOSE_KD 는 8.0 으로
+GraspGenX 의 800 보다 100 배 작다.**
+
+스케줄 쪽은 원인이 아님을 쟀다. pick 클립(fable40v2 749 프레임, fable42p 734)은 449/434 프레임부터
+끝까지 open 에서 떨어져 있고, place 클립만 1128/1113 에서 놓는다. v9 의 780 프레임 이탈은 쥐라고
+명령한 구간 한가운데다.
+
+**5) 지금 도는 것: v9 가 지정한 측정을, 세훈님이 되돌아가라고 한 그 설정에서.**
+`scratchpad/rise_ab.sh` — A = hammer v3/v6/v8 의 손 그대로(HAND_KP=40, HAND_KD 미설정 -> kd 0.4/effort 30,
+position close), B = A 에서 **오직 한 가지**, GraspGenX 자신의 velocity close(CLOSE_MODE=velocity,
+CLOSE_VEL=0.25, CLOSE_KD=800)만 바꾼 것. 확정된 파지(hammer #138, drill #57)와 각자의 carry 클립으로
+일어서는 동안 5 지점에서 물체를 **손바닥 자신의 좌표계**에서 읽는다. 손가락 축을 따라 빠지면 손끝
+집기가 손잡이를 놓치는 것이고, 손바닥 면에서 멀어지면 상승 가속도에 접촉을 잃는 것이다. 처방이 다르다.
