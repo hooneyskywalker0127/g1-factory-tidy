@@ -54,13 +54,25 @@ def build():
     # became a one-legged stand (frame 1320 of the first replay). The guide's
     # split: legs and pelvis matter for balance, the reaching arm's own
     # shoulder and elbow can go where the wrist needs them, the rest stays put.
-    w_body = float(os.environ.get("BODY_W", "0.3"))    # pelvis, hips, knees, torso
+    w_body = float(os.environ.get("BODY_W", "0.3"))    # hips, knees
     w_left = float(os.environ.get("LEFT_W", "0.1"))    # the other arm
     w_arm = float(os.environ.get("ARM_W", "0.02"))     # right shoulder, elbow
+    # PELVIS_W splits the pelvis and torso out of w_body. Measured, not guessed:
+    # at BODY_W 0.1 cuRobo's own per-frame residual at the close/hold frames is
+    # 14.7-23.9 mm on all eight w10 candidates (reach_w10.npz "err"), and Isaac
+    # reproduces cuRobo's FK of that plan to 1.4 mm -- the plan, not the tracking,
+    # is what misses the handle, whose graspable band is ~20 mm. The docstring above
+    # records both ends of this knob: at 0.3 the wrist stayed 17 mm off, and at 0.005
+    # for the WHOLE body it reached 9 mm but the kneel became a one-legged stand.
+    # So loosen only the two links the docstring credits with the last few
+    # centimetres -- the pelvis and the torso leaning over the hand -- and leave the
+    # hips and knees at w_body, which is what held the kneel together.
+    w_pelvis = float(os.environ.get("PELVIS_W", str(w_body)))
     for n in loose:
         lw = (w_arm if n.startswith("right_") and "hip" not in n and "knee" not in n
               else (w_arm if os.environ.get("BIMANUAL") == "1" else w_left)
               if n.startswith("left_") and ("shoulder" in n or "elbow" in n or "wrist" in n)
+              else w_pelvis if n in ("pelvis", "torso_link")
               else w_body)
         crit[n] = ToolPoseCriteria.track_position_and_orientation(
             xyz=[lw] * 3, rpy=[lw * 0.07] * 3)

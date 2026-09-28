@@ -414,6 +414,31 @@ for k in order:
                 f"{n.replace('waist_','').replace('_joint',''):5s} cmd{_c[j]:+.4f} got{_q[j]:+.4f}"
                 f" d{(_q[j]-_c[j])*1000:+7.1f} vel{_v[j]:+7.2f} tau{_t[j]:+7.1f}"
                 for j, n in enumerate(_wn)), flush=True)
+        if os.environ.get("ARM_HISTORY") and i >= 120 and i % 5 == 0:
+            # The waist tracks to 1 mrad and the root is pinned, yet the wrist link lands 17-21 mm
+            # high (v37, candidate 3). Over a 0.7 m arm that is ~8 mrad spread across the arm joints
+            # -- exactly the residual _jtrace already reports. A steady-state droop is either the
+            # drive running out of torque or running out of stiffness, and those want opposite
+            # fixes, so print both: the torque PhysX applied and the ceiling it was clamped to.
+            _an = [n for n in names if n.startswith("right_") and ("shoulder" in n or "elbow" in n or "wrist" in n)]
+            _ai = [names.index(n) for n in _an]; _aj = [body_ids[j] for j in _ai]
+            _c = np.asarray(dofs[i], float)[_ai]
+            _q = robot.data.joint_pos[0, _aj].cpu().numpy()
+            _v = robot.data.joint_vel[0, _aj].cpu().numpy()
+            _tt = getattr(robot.data, "applied_torque", None)
+            _t = _tt[0, _aj].cpu().numpy() if _tt is not None else np.full(len(_aj), np.nan)
+            _el = None
+            for _src in ("joint_effort_limits", "joint_effort_limit", "default_joint_effort_limits"):
+                _e = getattr(robot.data, _src, None)
+                if _e is not None:
+                    _el = _e[0, _aj].cpu().numpy(); break
+            if _el is None:
+                try: _el = robot.root_physx_view.get_dof_max_forces().cpu().numpy()[0][_aj]
+                except Exception: _el = np.full(len(_aj), np.nan)
+            print("[opus] armh f%3d  " % i + "   ".join(
+                f"{n.replace('right_','').replace('_joint',''):14s} cmd{_c[j]:+.4f} got{_q[j]:+.4f}"
+                f" d{(_q[j]-_c[j])*1000:+7.1f} vel{_v[j]:+6.2f} tau{_t[j]:+7.1f}/{_el[j]:.0f}"
+                for j, n in enumerate(_an)), flush=True)
         if MARKS and (i + 1) in MARKS:                        # end of a scheduled phase (assist wrap): a picture and the object's pose
             _ph = MARKS[i + 1]; snap(f"{int(k)}_{_ph}")
             _o = obj_centre(); _bq = box.data.root_quat_w[0].cpu().numpy()
