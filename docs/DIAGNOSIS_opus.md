@@ -864,3 +864,31 @@ USD 스테이지 편집은 인스턴스 프록시가 읽기 전용이라 조용�
 
 아직 원인이라는 증명은 아니다. 중간마디를 -0.16 에 붙들고 있던 힘이 무엇인지는 측정하지 않았다
 (구동 토크는 오차 0.16 rad x kp 40 = 6.4 Nm 로 0 쪽으로 밀고 있었는데도 움직이지 않았다).
+
+## 미믹 종동 관절을 주동과 같은 세기로 구동하고 있다 (NVIDIA 는 1:40)
+
+GraspGenX `end2end/dynamic_playback.py`:
+
+```
+ 70  FINGER_KP_DEFAULT = 2000.0      79  MIMIC_KP = 50.0
+ 71  FINGER_KD_DEFAULT = 200.0       80  MIMIC_KD = 10.0
+664  builder.joint_target_ke[q_off] = finger_kp    # 주동(gripper_drives)
+673  builder.joint_target_ke[q_off] = MIMIC_KP     # 종동(mimic_drives)
+```
+
+즉 종동은 주동의 **1/40** 세기로만 구동되고, 실제 결합은 `add_constraint_mimic` 의 강체 제약이 맡는다
+(575-580 줄 주석: 제약이 없으면 "한쪽은 접촉에 멈추고 다른 쪽은 빈 공간을 지나 닫힌다").
+
+우리는 `build_reach_reference.robot_cfg()` 에서 주동과 종동을 한 액추에이터 그룹에 넣는다:
+
+```
+expr = [".*_proximal_joint", ".*_thumb_proximal_(yaw|pitch)_joint"]
+if SOFT_MIMIC: expr += [".*_intermediate_joint", ".*_thumb_distal_joint"]
+```
+
+하나의 kp 로 전부 구동되므로 비율이 1:1 이다. 네 손가락은 기어비가 1.0 이라 주동과 종동의 목표가
+같아 문제가 드러나지 않고, 기어비가 1.6 / 2.4 인 엄지에서만 드러난다 — v21 에서 막힌 것이 엄지뿐인 것과
+일치한다. 다만 이것이 중간마디를 -0.16 에 붙들어 둔 힘이라는 측정은 아직 없다.
+
+순서: v23 이 하한 정정(측정된 사실에 직접 대응)을 먼저 시험하고, 실패하면 v24 에서 종동을 별도
+액추에이터 그룹으로 분리해 NVIDIA 의 1:40 비율을 준다.
