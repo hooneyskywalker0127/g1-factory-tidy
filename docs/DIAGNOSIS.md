@@ -652,3 +652,8 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   stage is re-queued with stiffness 10. New verify_render.sh: top-40, every HELD re-verified twice, the most
   repeatable rendered (screwdriver v2 running). Crate: outside grip v3 tester HELD +87 mm, render running (-> v4);
   the v1-plan carry (crate/v3) dropped the crate before standing.
+- 10:32 CRATE OUTSIDE GRIP v4 (260928/crate/v4): render HELD +85 mm, both hands outside the walls, 8.5 of 12 cm,
+  7 cm drift toward the robot, 12 deg tilt -- best crate lift so far; carry to the desk queued on this plan.
+  Hammer #93 awake: flipped at the close again. Screwdriver verify (stiffness 10, awake): 0/40 today (yesterday
+  1/40, #99 2/3 an hour ago) -- the floor pinch is at the noise floor. Next: hammer ranked nearer the head
+  (HANDLE_AT 0.2) + re-verify; screwdriver with the lateral-slide reach + re-verify.
