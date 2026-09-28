@@ -647,3 +647,8 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   thumb over the rim) -> PINCH_OUTSIDE=1. v2: tester held +75 mm but in the render the right hand hit the near corner
   on its way out and turned the crate 18 deg; v3 rises 32 cm first, then travels out (PINCH_OVER, bent path).
   Screwdriver #99 with stiffness 40 + object awake: 0/3 (yesterday 1/1 with stiffness 10) -> factor test queued.
+- 10:18 Screwdriver #99 factor test (3 runs each): stiffness 10 + object awake 2/3, stiffness 10 asleep 1/3,
+  stiffness 40 0/3 (awake or asleep). So HAND_KP stays 10 (NVIDIA's value) and OBJECT_NO_SLEEP=1 stays. The drill
+  stage is re-queued with stiffness 10. New verify_render.sh: top-40, every HELD re-verified twice, the most
+  repeatable rendered (screwdriver v2 running). Crate: outside grip v3 tester HELD +87 mm, render running (-> v4);
+  the v1-plan carry (crate/v3) dropped the crate before standing.
