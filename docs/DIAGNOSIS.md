@@ -745,3 +745,6 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   fails at that range) and a whole-crate look from 1.0 m; each gets GraspGen-X + the pair chain (gg2, gg3).
   Hand-designed grips: carry B (outside pinch, 2x slower stand-up) LOST, slot3 LOST (crate levered up at the
   close), rim3 LOST (IK 16 mm from 0.20 m). Parked for good; the crate now goes only through the model's candidates.
+- 13:25 Sehoon: crate on hold; focus on carrying the hammer and the drill to the desk crate. Drill hold test (13 s
+  idle, 3 s hold after the lift, stiffness 40): #87 2/2, #55 2/2, #57 1/2, #58 1/2. Carry chain on #55 running
+  (drill/v4). Hammer: confidence-order top-40 with the same test running; the carry follows on its best.
