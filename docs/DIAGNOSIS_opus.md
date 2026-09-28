@@ -1114,3 +1114,73 @@ v22 의 실패가 이 가설을 기각하지는 못한다. 다음에는 두 관�
 - GraspGenX `end2end/robot_profiles.py` UR10eInspireHandProfile: 엄지 yaw
   **1.308 고정(open=close)**, 엄지 pitch 0 → **0.6**, 네 손가락 0 → **1.47**.
   우리는 yaw 1.308, 손가락 1.47 로 이미 일치하고 pitch 만 0.5 (마스터 상한은 0.6).
+
+## 손은 0.5 rad/s 로 닫히고 있었다 (v24 에서 측정, 결론)
+
+**결론:** Inspire 손의 12 관절 전부가 PhysX 에서 **0.5 rad/s** 로 제한돼 있다.
+`robot_cfg()` 가 주는 `velocity_limit=10.0` 은 시뮬레이터에 도달하지 않는다. 그래서
+지금까지의 모든 파지 시도는 손이 다 닫히기 전에 일어서기 구간에 들어갔다.
+
+측정 (`grasp/thumb_free_opus.py`, 자유공간·물체 없음·루트 고정, 20 s/설정):
+
+- `robot.data.joint_velocity_limits` → **0.500 rad/s** (12 관절 전부).
+- 실측 `joint_vel` 이 구동 6 관절에서 정확히 +0.50 에 포화. 종동절은
+  +0.67 / +0.33 = 0.5 × URDF 배율 1.334 / 0.667 로 마스터의 제한된 속도를 따라간다.
+- `SUB=1` 로도 같은 0.50 → 서브스텝 아티팩트가 아니다.
+
+오픈소스가 말하는 이유 (`IsaacLab`):
+
+| 위치 | 내용 |
+|---|---|
+| `actuators/actuator_pd.py:81-91` | ImplicitActuator 는 `velocity_limit` 을 **쓰지 않는다**: "we continue to not use it … please use `velocity_limit_sim` instead" → `cfg.velocity_limit = None` |
+| `assets/articulation/articulation.py:1773` | PhysX 로 가는 것은 `actuator.velocity_limit_sim` 뿐 |
+| `actuators/actuator_base_cfg.py:91-97`, `actuator_base.py:183` | `velocity_limit_sim=None` → **USD prim 의 값**(0.5)이 남는다 |
+
+올릴 값도 감이 아니라 제조사 숫자다: GraspGenX
+`ext/gripper_descriptions/.../x_grippers/inspire_hand/gripper_spherical_dof.urdf`
+의 Inspire 12 관절 전부가 `<limit … velocity="5.0"/>` (131~422 행).
+
+자유공간 A/B (같은 게인·같은 `MIMIC_URDF_RATIO`, `hammer/v24/evidence/free_air_vel_ab.log`):
+
+| | 0.5 rad/s (에셋) | 5.0 rad/s (URDF) |
+|---|---|---|
+| thumb_proximal_pitch 0.500 도달 | 1.50 s | **0.67 s** |
+| index_proximal 1.47 도달 | 2.33 s 후 1.173 — **미완** | **0.67 s** (1.467) |
+| thumb_proximal_yaw 1.300 도달 | 2.83 s | **0.57 s** |
+| 종동절 | 0.667 / 0.333 정확 | 0.667 / 0.333 정확, 불안정 없음 |
+
+산수로 확인: proximal 전폐 1.47 rad 에 ≥ 2.94 s, 엄지 0.5 rad 에 ≥ 1.0 s. v24 의
+파지 창은 f460~f760 = 10 s, 접촉을 밀며 닫는 데 걸린 시간은 f460~f840 = **12.7 s**.
+
+`HAND_VEL` (내 `play_in_cell_opus.py`, `thumb_free_opus.py`)이
+`velocity_limit_sim` 을 설정한다. `velocity_limit=None` 을 함께 넘겨야 한다 —
+ImplicitActuator 는 두 값이 다르면 `ValueError` 를 던진다(`actuator_pd.py:96-101`).
+
+### v24 판정과 기각한 가설
+
+`[eval] dxy 1.1593 m  dz −0.0090 m → LOST`. 놓친 것이 아니라 **때려낸** 것이다:
+f530→f540 에 첫 조임이 해머를 0.33 s 동안 z −0.117 / x −0.108 로 밀어냈고(접촉
+1273 N → 0 N), f550~f770 은 바닥에서 끌었고, f770→f780 에 1.42 m 사출됐다. 그
+사출의 최고점(+0.5271 m)은 상승 기준 (d) 를 **거짓 합격**시켰다.
+유지 구간 접촉은 `R_thumb_proximal` 1117.51 N / `R_thumb_intermediate` 684.73 N 이고
+**엄지 패드(distal)는 한 번도 닿지 않았다**. `dexsuite_good=True` 가 25 프레임
+떴는데도 놓쳤다 — best-opposing 힘만으로 "충분히 쥐었다"를 판정할 수 없다.
+
+URDF 배율 교정(v24 의 변경)은 효과가 있었다: `thumb_intermediate` 가 v23 의 하한
+−0.160 고정에서 −0.160 … **+0.160** 으로 풀렸다. 다만 마스터는 최대 +0.100 (목표
+0.500 의 20 %) 에 머물렀다 — 이제 그 이유가 속도 한계로 설명된다.
+
+측정으로 기각한 가설 (추측을 사실로 쓰지 않기 위해):
+
+1. mimic `offset` ≠ 0 → USD 덤프: 엄지 네 관절 모두 **0.0**. 기각.
+2. mimic 부호가 종동절을 음으로 끈다 → 자유공간 설정 B(제약 단독): 마스터 0.500 →
+   종동 **+0.656 / +0.312**. 부호는 양. 기각.
+3. 1/33 서브스텝 적분 문제 → `SUB=1` 도 같은 0.50. 기각.
+4. 손바닥/엄지 자기충돌 → `enabled_self_collisions=False`. 기각.
+5. 엄지 하한을 URDF 대로 0 으로 잡기(이전 절의 "다음 후보") → v22 가 실제로 한
+   변경이고 접촉이 23,366 N 으로 튀었다. 속도 한계가 원인으로 측정된 지금은
+   **후보에서 내린다**.
+
+USD 한계는 도(degree)로 저작돼 있다: `thumb_proximal_pitch 0..28.6479 deg = 0..0.500 rad`
+(URDF 0..0.6) — 즉 우리가 마스터에 주는 0.5 는 **정확히 하드스톱**이고,
+`thumb_proximal_yaw` 상한은 1.300 인데 1.308 을 명령한다.

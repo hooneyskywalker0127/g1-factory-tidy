@@ -181,6 +181,32 @@ if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_KD"):
           f"kd {_rep['damping']} effort {_rep['effort_limit']} "
           f"armature {_rep.get('armature', getattr(_hz, 'armature', None))}")
 
+# --- the hand's simulated velocity limit: the asset says 0.5 rad/s -------------
+# Measured in free air (grasp/thumb_free_opus.py): robot.data.joint_velocity_limits prints
+# 0.500 rad/s on every Inspire joint and joint_vel saturates exactly there -- +0.50 on the
+# six masters, +0.67/+0.33 on thumb_intermediate/distal (= 0.5 x the URDF's 1.334/0.667
+# through the mimic gearing). SUB=1 saturates at the same 0.50, so it is a real limit, not
+# a substep artifact. A full proximal close (1.47 rad) therefore needs >= 2.94 s and the
+# thumb's 0.5 rad >= 1.0 s at best; hammer v24 took f460->f840 = 12.7 s against contact
+# while the grasp window is only f460->f760 = 10 s.
+# robot_cfg() already asks for 10.0 rad/s -- but through `velocity_limit`, which Isaac Lab
+# discards for implicit actuators. actuators/actuator_pd.py:81-91, ImplicitActuator.__init__:
+#   "Previously, although this value was specified, it was not getting used by implicit
+#    actuators. ... we continue to not use it. ... please use 'velocity_limit_sim' instead."
+#   -> it sets cfg.velocity_limit = None.
+# articulation.py:1773 writes only actuator.velocity_limit_sim to PhysX, and with
+# cfg.velocity_limit_sim None that resolves to the USD prim's value (actuator_base_cfg.py:91-97,
+# actuator_base.py:183). So the hand has closed at 0.5 rad/s in every attempt so far.
+# HAND_VEL sets velocity_limit_sim. The manufacturer's own number is 5.0 rad/s: all 12 Inspire
+# joints in GraspGenX ext/gripper_descriptions/.../inspire_hand/gripper_spherical_dof.urdf
+# carry <limit ... velocity="5.0"/> (lines 131-422).
+if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_VEL"):
+    _hv = cfg.actuators["hands"]
+    cfg.actuators["hands"] = _hv.replace(velocity_limit=None,
+                                         velocity_limit_sim=float(os.environ["HAND_VEL"]))
+    print(f"[hand] velocity_limit_sim {os.environ['HAND_VEL']} rad/s "
+          f"(asset 0.5, manufacturer URDF 5.0; cfg velocity_limit {_hv.velocity_limit} is discarded)")
+
 # --- mimic followers at NVIDIA's ratio, not the master's stiffness -------------
 # Measured, hammer v21/v22: R_thumb_intermediate_joint parked at -0.160 rad -- exactly
 # our USD's lower limit -- for f530..f750 while its master R_thumb_proximal_pitch_joint
