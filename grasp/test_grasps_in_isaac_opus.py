@@ -316,6 +316,53 @@ if "--pkl" in sys.argv:
     _bp = obj_centre(); _dz = float(_bp[2] - z_ref)
     print(f"[test] pkl replay: after {len(_dof)} frames dz {_dz:+.3f} m -> {'HELD' if _dz > 0.05 else 'LOST'}")
     raise SystemExit(0)
+def _jtrace(_i):
+    """Commanded vs achieved at planned frame _i: joints, then the root, then the wrist
+    in the root frame. At frame 254 (held) cuRobo FK and Isaac agree to 1.4 mm; at 195
+    (the grasp dwell) they differ by 35.2 mm, so the disagreement is posture-dependent
+    and has to be read at the posture that matters. Read-only."""
+    # v35 measured a 19.7 mm gap in z (and 27-48 mm in x) between cuRobo's FK of the
+    # commanded joints and where Isaac actually put right_wrist_yaw_link -- present in
+    # free space before any contact. Print commanded vs achieved for every body joint
+    # at the pose held through the close, so the joint that does not follow is a number
+    # instead of a guess. Read-only: nothing here changes what is commanded.
+    _cmd = np.asarray(dofs[_i], float)
+    _ach = robot.data.joint_pos[0, body_ids].cpu().numpy()
+    _lim = getattr(robot.data, "soft_joint_pos_limits", None)
+    if _lim is None:
+        _lim = getattr(robot.data, "joint_pos_limits", None)
+    if _lim is None:
+        _lo = np.full(len(names), -np.inf); _hi = np.full(len(names), np.inf)
+    else:
+        _lo = _lim[0, body_ids, 0].cpu().numpy(); _hi = _lim[0, body_ids, 1].cpu().numpy()
+    _rows = sorted(range(len(names)), key=lambda j: -abs(_ach[j] - _cmd[j]))
+    print("[opus] commanded vs achieved at the close pose (rad), worst first:")
+    for j in _rows[:12]:
+        _at = "  AT LIMIT" if min(abs(_cmd[j] - _lo[j]), abs(_cmd[j] - _hi[j])) < 0.02 else ""
+        print(f"[opus]   {names[j]:<30s} cmd {_cmd[j]:+.4f}  got {_ach[j]:+.4f}  "
+              f"d {(_ach[j]-_cmd[j])*1000:+7.1f} mrad  limits [{_lo[j]:+.3f} {_hi[j]:+.3f}]{_at}")
+    _clamped = [names[j] for j in range(len(names)) if _cmd[j] < _lo[j] - 1e-4 or _cmd[j] > _hi[j] + 1e-4]
+    print(f"[opus]   commanded OUTSIDE Isaac's limits: {_clamped if _clamped else 'none'}")
+    print(f"[opus]   total |d| {abs(_ach - _cmd).sum()*1000:.1f} mrad over {len(names)} joints")
+    # The arms track to <8 mrad while the wrist link is 20-50 mm off, so the error is
+    # not in the arm chain's joints. Two candidates remain: the pelvis is not where the
+    # plan put it (fix_root_link=True may make write_root_state_to_sim a no-op), or the
+    # link geometry differs between cuRobo's yml and the Isaac USD. Comparing the root
+    # and then the wrist IN THE ROOT FRAME separates them. Read-only.
+    _rc = np.asarray(roots[_i], float)
+    _rp = robot.data.root_pos_w[0].cpu().numpy(); _rqw = robot.data.root_quat_w[0].cpu().numpy()
+    _Ri = R.from_quat(_rqw[[1, 2, 3, 0]]); _Rc = R.from_quat(_rc[[4, 5, 6, 3]])
+    print(f"[opus]   root commanded pos {np.round(_rc[:3], 4)} quat {np.round(_rc[3:7], 4)}")
+    print(f"[opus]   root Isaac     pos {np.round(_rp, 4)} quat {np.round(_rqw, 4)}")
+    print(f"[opus]   root d pos {np.round((_rp - _rc[:3]) * 1000, 1)} mm  orientation "
+          f"{np.degrees((_Ri * _Rc.inv()).magnitude()):.2f} deg")
+    _wb = robot.find_bodies(["right_wrist_yaw_link"])[0][0]
+    _ww = robot.data.body_pos_w[0, _wb].cpu().numpy()
+    print(f"[opus]   right_wrist_yaw_link world {np.round(_ww, 4)}  in Isaac root frame "
+          f"{np.round(_Ri.inv().apply(_ww - _rp), 4)}  in commanded root frame "
+          f"{np.round(_Rc.inv().apply(_ww - _rc[:3]), 4)}")
+
+
 results = []
 for k in order:
     q = d["q"][k]
@@ -348,6 +395,8 @@ for k in order:
         print(f"[test]    object settled: rotated {_rot:.1f} deg from where it was placed; quat now {np.round(_bq, 3)} placed {np.round(_pq, 3)}")
     for i in range(n_go):
         put(roots[i], dofs[i], HAND_OPEN if HS is None else HS[i])
+        if os.environ.get("TRACE_FRAME") and i == int(os.environ["TRACE_FRAME"]):
+            _jtrace(i)
         if MARKS and (i + 1) in MARKS:                        # end of a scheduled phase (assist wrap): a picture and the object's pose
             _ph = MARKS[i + 1]; snap(f"{int(k)}_{_ph}")
             _o = obj_centre(); _bq = box.data.root_quat_w[0].cpu().numpy()
@@ -462,29 +511,7 @@ for k in order:
     snap(f"{int(k)}_close")
     bz_closed = float(obj_centre()[2])
     if os.environ.get("JOINT_TRACE"):
-        # v35 measured a 19.7 mm gap in z (and 27-48 mm in x) between cuRobo's FK of the
-        # commanded joints and where Isaac actually put right_wrist_yaw_link -- present in
-        # free space before any contact. Print commanded vs achieved for every body joint
-        # at the pose held through the close, so the joint that does not follow is a number
-        # instead of a guess. Read-only: nothing here changes what is commanded.
-        _cmd = np.asarray(dofs[n_go - 1], float)
-        _ach = robot.data.joint_pos[0, body_ids].cpu().numpy()
-        _lim = getattr(robot.data, "soft_joint_pos_limits", None)
-        if _lim is None:
-            _lim = getattr(robot.data, "joint_pos_limits", None)
-        if _lim is None:
-            _lo = np.full(len(names), -np.inf); _hi = np.full(len(names), np.inf)
-        else:
-            _lo = _lim[0, body_ids, 0].cpu().numpy(); _hi = _lim[0, body_ids, 1].cpu().numpy()
-        _rows = sorted(range(len(names)), key=lambda j: -abs(_ach[j] - _cmd[j]))
-        print("[opus] commanded vs achieved at the close pose (rad), worst first:")
-        for j in _rows[:12]:
-            _at = "  AT LIMIT" if min(abs(_cmd[j] - _lo[j]), abs(_cmd[j] - _hi[j])) < 0.02 else ""
-            print(f"[opus]   {names[j]:<30s} cmd {_cmd[j]:+.4f}  got {_ach[j]:+.4f}  "
-                  f"d {(_ach[j]-_cmd[j])*1000:+7.1f} mrad  limits [{_lo[j]:+.3f} {_hi[j]:+.3f}]{_at}")
-        _clamped = [names[j] for j in range(len(names)) if _cmd[j] < _lo[j] - 1e-4 or _cmd[j] > _hi[j] + 1e-4]
-        print(f"[opus]   commanded OUTSIDE Isaac's limits: {_clamped if _clamped else 'none'}")
-        print(f"[opus]   total |d| {abs(_ach - _cmd).sum()*1000:.1f} mrad over {len(names)} joints")
+        _jtrace(n_go - 1)
     if os.environ.get("TEST_VERBOSE"):
         _bp = box.data.root_pos_w[0].cpu().numpy()
         _hq = robot.data.joint_pos[0, hand_ids[7:]].cpu().numpy()
