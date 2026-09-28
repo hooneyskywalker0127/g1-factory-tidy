@@ -633,3 +633,12 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   SETTLE_IDLE=300 tester run to check the converse. The first no-sleep render died at start: GPU buffer creation
   failed with 14.6 of 16.3 GB in use (six Isaac processes) -- re-queued behind the crate renders. Crate carry chain
   dry run: walk + two-hand place solved and the 936-frame reference built; render pending.
+
+## 2026-09-28 09:45 — the session died at 17:49 yesterday and took every queue with it
+
+- Last results before the death: crate v10 (rim pinch, 12 cm lift) tester HELD +66 mm -- the first tester-side crate
+  hold; its render was cut off. Crate carry dry run (v9 plan) rendered to frame 700 then died. Hammer #93 slide:
+  tester 1/3 on rerun (#95 +22 mm), render lost; the no-sleep render crashed on GPU memory (six Isaac processes).
+  Drill re-reach: tester 1/40, render not reached. Pliers/screwdriver/hammer2 not reached.
+- Restarted as ONE sequential queue (morning_queue.sh): crate v10 -> crate carry (v10 plan) -> hammer #93 no-sleep
+  render -> drill, pliers, screwdriver, hammer2 re-reach + render (outputs under 260928/5지/).
