@@ -461,6 +461,30 @@ for k in order:
                   f"vel {np.round(robot.data.joint_vel[0, _rh].cpu().numpy(), 2)} object {np.round(_bp, 3)}")
     snap(f"{int(k)}_close")
     bz_closed = float(obj_centre()[2])
+    if os.environ.get("JOINT_TRACE"):
+        # v35 measured a 19.7 mm gap in z (and 27-48 mm in x) between cuRobo's FK of the
+        # commanded joints and where Isaac actually put right_wrist_yaw_link -- present in
+        # free space before any contact. Print commanded vs achieved for every body joint
+        # at the pose held through the close, so the joint that does not follow is a number
+        # instead of a guess. Read-only: nothing here changes what is commanded.
+        _cmd = np.asarray(dofs[n_go - 1], float)
+        _ach = robot.data.joint_pos[0, body_ids].cpu().numpy()
+        _lim = getattr(robot.data, "soft_joint_pos_limits", None)
+        if _lim is None:
+            _lim = getattr(robot.data, "joint_pos_limits", None)
+        if _lim is None:
+            _lo = np.full(len(names), -np.inf); _hi = np.full(len(names), np.inf)
+        else:
+            _lo = _lim[0, body_ids, 0].cpu().numpy(); _hi = _lim[0, body_ids, 1].cpu().numpy()
+        _rows = sorted(range(len(names)), key=lambda j: -abs(_ach[j] - _cmd[j]))
+        print("[opus] commanded vs achieved at the close pose (rad), worst first:")
+        for j in _rows[:12]:
+            _at = "  AT LIMIT" if min(abs(_cmd[j] - _lo[j]), abs(_cmd[j] - _hi[j])) < 0.02 else ""
+            print(f"[opus]   {names[j]:<30s} cmd {_cmd[j]:+.4f}  got {_ach[j]:+.4f}  "
+                  f"d {(_ach[j]-_cmd[j])*1000:+7.1f} mrad  limits [{_lo[j]:+.3f} {_hi[j]:+.3f}]{_at}")
+        _clamped = [names[j] for j in range(len(names)) if _cmd[j] < _lo[j] - 1e-4 or _cmd[j] > _hi[j] + 1e-4]
+        print(f"[opus]   commanded OUTSIDE Isaac's limits: {_clamped if _clamped else 'none'}")
+        print(f"[opus]   total |d| {abs(_ach - _cmd).sum()*1000:.1f} mrad over {len(names)} joints")
     if os.environ.get("TEST_VERBOSE"):
         _bp = box.data.root_pos_w[0].cpu().numpy()
         _hq = robot.data.joint_pos[0, hand_ids[7:]].cpu().numpy()
