@@ -388,9 +388,14 @@ def main():
                 T0 = np.eye(4); T0[:3, 3] = pos0[k]; T0[:3, :3] = quat_to_mat(quat0[k])
                 Gd = G.copy(); Gd[:3, 3] += slide * uin                       # the descent's target: deeper inside
                 pre_p = Gd.copy(); pre_p[:3, 3] -= pre * u
-                over = pre_p.copy(); over[2, 3] = over_z if not pinch else Gd[2, 3] + 0.20
+                # PINCH_OVER (default 0.20): how high above the grasp the hands travel out over the crate. With the
+                # outside grip the right hand's straight path from the kneel pose to its (wider) over point crossed
+                # the crate's near corner and turned the crate 18 deg before the descent (260928/5지/crate/v2).
+                over = pre_p.copy(); over[2, 3] = over_z if not pinch else Gd[2, 3] + float(os.environ.get("PINCH_OVER", "0.20"))
                 if i < n_over:
-                    a = (i + 1) / n_over; M = over.copy(); M[:3, 3] = T0[:3, 3] + (over[:3, 3] - T0[:3, 3]) * a
+                    a = (i + 1) / n_over; M = over.copy()
+                    # rise first (the first third goes mostly up), then travel out: a bent path, not the straight line
+                    au = min(1.0, a * 3.0); M[:3, 3] = T0[:3, 3] + (over[:3, 3] - T0[:3, 3]) * a; M[2, 3] = T0[2, 3] + (over[2, 3] - T0[2, 3]) * max(a, au)
                     if a < 0.34: M[:3, :3] = T0[:3, :3]
                 elif i < n_over + n_down:
                     a = (i + 1 - n_over) / n_down; M = pre_p.copy(); M[:3, 3] = over[:3, 3] + (pre_p[:3, 3] - over[:3, 3]) * a
