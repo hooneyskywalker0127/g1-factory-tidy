@@ -50,48 +50,17 @@ for _ in range(3):
     app.update()
 spawn_props(stage, app)
 cfg = robot_cfg(G1_29DOF_CFG.replace(prim_path="/World/G1"), sim_utils, ImplicitActuatorCfg)
-
-# --- squeeze: GraspGenX's own position-mode finger drive -----------------------
-# Read from the open source rather than guessed (Sehoon 2026-09-28: "그립이지? 그럼
-# graspgenx 코드를 읽어"). NVIDIA GraspGenX end2end/dynamic_playback.py:68-71 and :689
-#   FINGER_KP_DEFAULT = 2000.0, FINGER_KD_DEFAULT = 200.0, finger_effort_limit = 200.0
-# and end2end/robot_profiles.py UR10eInspireHandProfile: POSITION mode, closing to
-# thumb_proximal_pitch 0.6 / four proximals 1.47, no gripper armature, CoACD on the
-# intermediate/distal links, mu 3.0 on the fingertip pads.
-# Our robot_cfg() default is kp 10 / kd 0.2*(kp/10)**0.5 / effort 30. The close target
-# and the fingertip friction already matched NVIDIA's; only the squeeze was 50x softer,
-# and kd 0.2 leaves nothing resisting back-drive when the stand-up loads the contact --
-# which is the grip visibly loosening around 25 s in hammer/v9 and drill/v6.
-if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_KD"):
-    _hz = cfg.actuators["hands"]
-    _rep = dict(damping=float(os.environ["HAND_KD"]),
-                effort_limit=float(os.environ.get("HAND_EFFORT", "200")))
-    if os.environ.get("HAND_ARMATURE"):
-        _rep["armature"] = float(os.environ["HAND_ARMATURE"])
-    cfg.actuators["hands"] = _hz.replace(**_rep)
-    print(f"[hand] squeeze (GraspGenX position-mode gains): kp {_hz.stiffness} "
-          f"kd {_rep['damping']} effort {_rep['effort_limit']} "
-          f"armature {_rep.get('armature', getattr(_hz, 'armature', None))}")
-# ------------------------------------------------------------------------------
-
 cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
     contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
-# --- contact solver: GraspGenX's own iteration counts --------------------------
-# NVIDIA GraspGenX end2end/dynamic_playback.py:91-98:
-#   SOLVER_ITERATIONS = 100, SOLVER_LS_ITERATIONS = 50, with the comment
-#   "With only 10 iterations the constraint solver doesn't fully converge and
-#    grasps slip during the lift segment."
-# Their object mass (0.2 kg) and friction (object mu 10, finger mu 3) we already
-# match; the iteration count is the one setting we never did (12/4 here).
-SOLVER_IT = int(os.environ.get("SOLVER_IT", "12"))
-SOLVER_VIT = int(os.environ.get("SOLVER_VIT", "4"))
-if os.environ.get("SOLVER_IT"):
-    print(f"[solver] articulation iterations {SOLVER_IT}/{SOLVER_VIT} (GraspGenX 100/50)")
-# ------------------------------------------------------------------------------
-
+# SOLVER_IT/SOLVER_VIT: GraspGenX end2end/dynamic_playback.py:91-98 runs 100/50
+# ("with only 10 iterations the constraint solver doesn't fully converge and grasps
+# slip during the lift segment"). Fable's tester is fixed at 12/4, so every candidate
+# it judged was judged under a solver NVIDIA calls too loose to hold a lift.
+_SIT = int(os.environ.get("SOLVER_IT", "12")); _SVIT = int(os.environ.get("SOLVER_VIT", "4"))
 cfg.spawn = cfg.spawn.replace(articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-    enabled_self_collisions=False, solver_position_iteration_count=SOLVER_IT,
-    solver_velocity_iteration_count=SOLVER_VIT, fix_root_link=(os.environ.get("FIX_ROOT", "0") == "1")))
+    enabled_self_collisions=False, solver_position_iteration_count=_SIT,
+    solver_velocity_iteration_count=_SVIT, fix_root_link=(os.environ.get("FIX_ROOT", "0") == "1")))
+if os.environ.get("SOLVER_IT"): print(f"[solver] articulation iterations {_SIT}/{_SVIT} (GraspGenX 100/50)")
 # ARM_KP_SCALE: with the body on its PD drives (PD_BODY) the stock arm gains let an
 # outstretched arm sag -- measured on the crate approach, the left palm 10 cm under
 # its reference while the IK was within 24 mm -- and the sagging hand dragged the crate.
@@ -113,29 +82,37 @@ clip = list(joblib.load(CLIP).values())[0]
 p0, q0 = np.asarray(clip["root_trans_offset"])[0], np.asarray(clip["root_rot"])[0]
 cfg.init_state = cfg.init_state.replace(pos=tuple(float(v) for v in p0),
                                         rot=(float(q0[3]), float(q0[0]), float(q0[1]), float(q0[2])))
+# --- finger squeeze: the gains measured stable in hammer/v20 (kp 40 / kd 4.0 / effort 30)
+# robot_cfg() sets damping = 0.2*(kp/10)**0.5, so at kp 40 it hands back kd 0.4 -- the
+# ratio 0.01 that rang 0<->1571.78 N and spiked to 24,588 N in v19. GraspGenX's own
+# ratio is kd/kp = 200/2000 = 0.1 (end2end/dynamic_playback.py:70-71).
+if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_KD"):
+    _hz = cfg.actuators["hands"]
+    _rep = dict(damping=float(os.environ["HAND_KD"]),
+                effort_limit=float(os.environ.get("HAND_EFFORT", "200")))
+    if os.environ.get("HAND_ARMATURE"): _rep["armature"] = float(os.environ["HAND_ARMATURE"])
+    cfg.actuators["hands"] = _hz.replace(**_rep)
+    print(f"[hand] squeeze (GraspGenX position-mode gains): kp {_hz.stiffness} "
+          f"kd {_rep['damping']} effort {_rep['effort_limit']} armature {_rep.get('armature')}")
 robot = Articulation(cfg)
 stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_reference.py)
-# FINGER_COACD: the same block play_in_cell_opus.py applies to the render. The USD ships
-# every finger collider as convexHull, which fills the concave curl of the finger solid;
-# the render has run with it decomposed since hammer v15, the screen never has.
+# --- finger colliders: GraspGenX end2end/robot_profiles.py UR10eInspireHandProfile
+#     coacd_link_keywords = ("intermediate", "distal")
+# Our asset ships every finger collider as a convex HULL, which rounds the phalanges
+# the object is meant to sit between.
 _coacd = os.environ.get("FINGER_COACD", "")
 if _coacd:
     from pxr import Usd as _Usd2, UsdPhysics as _UsdPh2
-    _kw = tuple(k for k in _coacd.split(",") if k)
-    _nmesh = 0
+    _kw = tuple(k for k in _coacd.split(",") if k); _nmesh = 0
     for _link in stage.GetPrimAtPath("/World/G1").GetChildren():
-        if not (_link.GetName().startswith("R_") and any(k in _link.GetName() for k in _kw)):
-            continue
+        if not (_link.GetName().startswith("R_") and any(k in _link.GetName() for k in _kw)): continue
         _col = stage.GetPrimAtPath(_link.GetPath().AppendChild("collisions"))
-        if not (_col and _col.IsValid()):
-            continue
+        if not (_col and _col.IsValid()): continue
         _col.SetInstanceable(False)
         for _m in _Usd2.PrimRange(_col):
             if _m.HasAPI(_UsdPh2.CollisionAPI):
-                _UsdPh2.MeshCollisionAPI.Apply(_m).CreateApproximationAttr("convexDecomposition")
-                _nmesh += 1
-    print(f"[hand] finger colliders -> convexDecomposition on {_kw}: {_nmesh} meshes "
-          f"(GraspGenX coacd_link_keywords)")
+                _UsdPh2.MeshCollisionAPI.Apply(_m).CreateApproximationAttr("convexDecomposition"); _nmesh += 1
+    print(f"[hand] finger colliders -> convexDecomposition on {_kw}: {_nmesh} meshes (GraspGenX coacd_link_keywords)")
 if os.environ.get("BODY_COLLISION", "0") == "0":
     _kept = keep_only_hand_collisions(stage, keep=HAND_KEEP)
     print(f"[test] body does not collide with the cell; hand links kept: {len(_kept)} ({_kept[:2]}...)")
@@ -143,19 +120,6 @@ _fm = sim_utils.RigidBodyMaterialCfg(static_friction=FINGER_MU, friction_combine
 _fm.func("/World/G1/FingerMaterial", _fm)
 sim_utils.bind_physics_material("/World/G1", "/World/G1/FingerMaterial")
 build_plan_scene(stage, app, meta, torso_pose((-1.30, -0.60, SPAWN_Z), math.radians(-90.0)))
-
-# --- contact solver on the object body, same source ---------------------------
-_oit = int(os.environ.get("OBJ_SOLVER_IT", os.environ.get("SOLVER_IT", "0")))
-if _oit:
-    from pxr import PhysxSchema as _PxS
-    _tp = stage.GetPrimAtPath(os.environ.get("TARGET_PRIM", "/World/GraspTarget"))
-    if _tp and _tp.IsValid():
-        _ovit = int(os.environ.get("OBJ_SOLVER_VIT", str(SOLVER_VIT)))
-        _api = _PxS.PhysxRigidBodyAPI.Apply(_tp)
-        _api.CreateSolverPositionIterationCountAttr(_oit)
-        _api.CreateSolverVelocityIterationCountAttr(_ovit)
-        print(f"[solver] object {_tp.GetPath()} iterations {_oit}/{_ovit}")
-# ------------------------------------------------------------------------------
 floor_slab(stage)
 box = RigidObject(RigidObjectCfg(prim_path=os.environ.get("TARGET_PRIM", "/World/GraspTarget"), spawn=None))
 # The rigid body's origin is the mesh origin, which for the lying tools sits
@@ -529,50 +493,13 @@ for k in order:
             _arm = [j for j, n in enumerate(names) if n.startswith("right_")]
             _R0 = R.from_quat(_rq[0]); _Rl = R.from_quat(roots[-1][[4, 5, 6, 3]])
             _frames = np.arange(0, _n_end, 1.0 / _slow)
-            # RISE_PROBE: where the object sits IN THE PALM'S OWN FRAME through the stand-up. A pinch that slides off
-            # the fingertips moves out along the finger axis; one that falls out of the cage moves away from the palm
-            # face. Without this the only datum was "it is gone by the end".
-            _pb = robot.find_bodies([PALM_LINK["right"]])[0][0]
-            _seq = list(_frames) + [float(_n_end)] * 30
-            # The first checkpoint has to be the rise's FIRST frame. With (0.001, ...) it evaluated to
-            # int(round(N*0.001)) - 1 == -1 for every real N and never fired, so the earliest observation
-            # was 24% of the stand-up -- by which point hammer #138 was already 304 mm out of the palm and
-            # static. The loss happens inside the first quarter, so sample that quarter densely.
-            _checks = {max(0, int(round(len(_seq) * _fr)) - 1)
-                       for _fr in (0.0, 0.04, 0.08, 0.12, 0.16, 0.20, 0.25, 0.5, 0.75, 1.0)}
-
-            def _rise_probe(_tag):
-                box.update(sim.get_physics_dt())
-                _o = box.data.root_pos_w[0].cpu().numpy().copy()
-                _bq = box.data.root_quat_w[0].cpu().numpy()
-                _tl = np.degrees(np.arccos(np.clip(1 - 2 * (_bq[1] ** 2 + _bq[2] ** 2), -1, 1)))
-                _pp = robot.data.body_pos_w[0, _pb].cpu().numpy()
-                _pqw = robot.data.body_quat_w[0, _pb].cpu().numpy()
-                _loc = R.from_quat(_pqw[[1, 2, 3, 0]]).inv().apply(_o - _pp)
-                # The discriminator: object sliding in the palm frame vs the fingers themselves
-                # backing off their commanded target. q - target > 0 means the finger was pushed
-                # open by the contact (back-drive, a damping question); ~0 with the object sliding
-                # means friction/geometry; both still means the wrist reference moved.
-                _rhi = hand_ids[len(hand_ids) // 2:]
-                _q = robot.data.joint_pos[0, _rhi].cpu().numpy()
-                _tg = np.asarray(_hc)[len(hand_ids) // 2:] if np.asarray(_hc).size == len(hand_ids) else np.full(len(_rhi), np.nan)
-                print(f"[test]    rise {_tag:>4s}: object {np.round(_o, 3)} tilt {_tl:5.1f} deg  "
-                      f"in palm frame {np.round(_loc * 1000, 1)} mm  palm z-axis {np.round(R.from_quat(_pqw[[1, 2, 3, 0]]).apply([0, 0, 1]), 2)}")
-                print(f"[test]    rise {_tag:>4s}: right finger q {np.round(_q, 3)}")
-                print(f"[test]    rise {_tag:>4s}: q - target    {np.round(_q - _tg, 3)}  (>0 = pushed open by the object)")
-                sys.stdout.flush()
-                if SNAP:
-                    snap(f"{int(k)}_rise{_tag}")
-
-            for _n, _f in enumerate(_seq):
+            for _f in list(_frames) + [float(_n_end)] * 30:
                 _j = int(_f); _a = _f - _j; _j1 = min(_j + 1, _n_end)
                 _t = (1 - _a) * _rt[_j] + _a * _rt[_j1]; _d = (1 - _a) * _rd[_j] + _a * _rd[_j1]
                 _Ri = R.from_quat(_rq[_j]) * _R0.inv() * _Rl
                 _r = roots[-1].copy(); _r[:3] = roots[-1][:3] + (_t - _rt[0]); _r[3:7] = _Ri.as_quat()[[3, 0, 1, 2]]
                 _dd = _d.copy(); _dd[_arm] = dofs[-1][_arm]
                 put(_r, _dd, _hc)
-                if _n in _checks:
-                    _rise_probe(f"{100 * (_n + 1) // len(_seq)}%")
         else:
             for _i in range(_nr + 30):
                 _r = roots[-1].copy(); _r[2] += _rise * min(1.0, (_i + 1) / _nr)
