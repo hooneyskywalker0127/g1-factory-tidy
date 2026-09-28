@@ -427,6 +427,69 @@ def main():
     # 하는 거지"). Candidates are split into the robot's left/right side of the crate, kept if they sit on the
     # upper part (z > CRATE_GRASP_ZMIN * top), ranked by confidence, and the top PAIRS are solved for both hands
     # (rise first, descend, hold, lift); every pair is written so the physics tester can pick the one that holds.
+    # --power-grasp PART_CAP: a POWER grasp of the handle instead of GraspGen-X's fingertip pinch. Sehoon (13:41):
+    # "손가락 두세 개로만 잡고 있어. 손바닥에 쥐는 게 아니라 ... 이건 잡는 게 아니라 집는 거잖아" -- every Inspire candidate
+    # GraspGen-X proposes for this hand puts the object at the fingertips (its sweep volume sits 11.8-13.5 cm from
+    # the hand base) and 0 of 156 hammer candidates have all four fingers on the object; the drill and the hammer
+    # both slid out of two-finger pinches during the stand-up. A person lays the palm on the handle and wraps the
+    # fingers round it. Here: the handle axis comes from the language part (find_part), the palm faces DOWN
+    # (palm +y = -z world), the fingers point horizontally ACROSS the handle (palm +x perpendicular to the axis),
+    # the spread (palm z) runs along the handle, and the palm's finger base sits POWER_X along the fingers above the
+    # handle centre with the handle POWER_Y below the palm face. Candidates: POWER_FRACS along the handle x two
+    # finger directions; approach straight down from 12 cm, hold, lift. Written in the reach_all format.
+    if "--power-grasp" in sys.argv:
+        from PIL import Image as _Im
+        cap_dir = sys.argv[sys.argv.index("--power-grasp") + 1]
+        meta = json.load(open(os.path.join(cap_dir, "meta_data.json")))
+        seg = np.asarray(_Im.open(os.path.join(cap_dir, "seg.png")), dtype=np.int32); depth = np.load(os.path.join(cap_dir, "depth.npy"))
+        sys.path.insert(0, "/home/sehoon/Projects/GraspGenX")
+        from graspgenx.utils.scene_loaders import depth_to_camera_xyz, transform_xyz
+        xyz = transform_xyz(depth_to_camera_xyz(depth, np.asarray(meta["intrinsics"])), np.asarray(meta["camera_pose"]))
+        part = xyz[seg == meta["label_map"].get("obj_part", meta["label_map"]["obj_lang"])]
+        whole = xyz[seg == meta["label_map"]["obj_lang"]]
+        pc = part.mean(0); hax = np.linalg.svd(part[:, :2] - pc[:2], full_matrices=False)[2][0]; hax3 = np.array([hax[0], hax[1], 0.0])
+        t = (part[:, :2] - pc[:2]) @ hax; t0, t1 = float(t.min()), float(t.max())
+        if (whole.mean(0)[:2] - pc[:2]) @ hax > 0:                 # +hax runs from the head to the free end
+            hax3, t0, t1 = -hax3, -t1, -t0
+        top = float(np.percentile(part[:, 2], 90))                  # the handle's upper surface
+        radius = float(os.environ.get("POWER_RADIUS", "0.016"))
+        px, py = float(os.environ.get("POWER_X", "0.10")), float(os.environ.get("POWER_Y", "0.035"))
+        fracs = [float(v) for v in os.environ.get("POWER_FRACS", "0.35,0.45,0.55,0.65").split(",")]
+        wrists, conf = [], []
+        for fr in fracs:
+            centre = np.array([pc[0], pc[1], top - radius]) + hax3 * (t0 + fr * (t1 - t0))
+            for sgn in (1.0, -1.0):
+                y_ax = np.array([0.0, 0.0, -1.0])                      # palm face down
+                x_ax = sgn * np.array([-hax3[1], hax3[0], 0.0])        # fingers across the handle
+                z_ax = np.cross(x_ax, y_ax)
+                T = np.eye(4); T[:3, 0], T[:3, 1], T[:3, 2] = x_ax, y_ax, z_ax
+                T[:3, 3] = centre - px * x_ax - py * y_ax               # handle under the finger base, py below the palm face
+                P = np.eye(4); P[:3, 3] = -WRIST_TO_PALM
+                wrists.append(T @ P); conf.append(1.0 - abs(fr - 0.5))
+        wrists = np.array(wrists); conf = np.array(conf)
+        print(f"[reach] power grasp: handle axis {np.round(hax3[:2], 2)}, length {t1 - t0:.2f} m, top z {top:.3f}; {len(wrists)} palm-down wraps, palm z {wrists[:, 2, 3].min():.3f}..{wrists[:, 2, 3].max():.3f}")
+        n_pre, n_in, n_lift = int(os.environ.get("APPROACH_FRAMES", "60")), int(os.environ.get("GRASP_FRAMES", "60")), 30
+        n_go = n_pre + n_in
+        T0 = np.eye(4); T0[:3, 3] = pos0[wi]; T0[:3, :3] = quat_to_mat(quat0[wi])
+        seqs, errs = [], []
+        for k, Tg in enumerate(wrists):
+            pre = Tg.copy(); pre[2, 3] += 0.12
+            up = Tg.copy(); up[2, 3] += 0.15
+            targets = []
+            for i in range(n_pre):
+                a = (i + 1) / n_pre; M = Tg.copy(); M[:3, 3] = T0[:3, 3] + (pre[:3, 3] - T0[:3, 3]) * a; targets.append(M)
+            for i in range(n_in):
+                a = (i + 1) / n_in; M = Tg.copy(); M[:3, 3] = pre[:3, 3] + (Tg[:3, 3] - pre[:3, 3]) * a; targets.append(M)
+            for i in range(n_lift):
+                a = (i + 1) / n_lift; M = Tg.copy(); M[:3, 3] = Tg[:3, 3] + (up[:3, 3] - Tg[:3, 3]) * a; targets.append(M)
+            sol, err = solve(targets, from_here=True)
+            seqs.append(sol); errs.append(err)
+            print(f"[reach] power #{k}: at grasp {err[n_go-1]*1000:5.1f} mm, lift {err[n_go:].mean()*1000:5.1f} mm")
+        out = sys.argv[sys.argv.index("--out") + 1]
+        np.savez(out, q=np.stack(seqs), err=np.stack(errs), joint_names=np.array(jn), n_go=n_go, n_lift=n_lift, grasps=wrists, conf=conf)
+        print(f"[reach] wrote {out}")
+        return
+
     if "--crate-grasps" in sys.argv:
         cj = json.load(open(sys.argv[sys.argv.index("--crate-grasps") + 1]))
         c = np.array(cj["centre"][:2]); ax = np.array(cj["long_axis"]); side = np.array([-ax[1], ax[0]])

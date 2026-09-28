@@ -67,8 +67,20 @@ for k in range(len(W)):
     # four fingers land on the handle.
     spread = G[:3, 2]; align = abs(float(spread[0] * ax[0] + spread[1] * ax[1]))
     end_ok = (tp - t0) >= float(os.environ.get("END_MARGIN", "0.04")) and (t1 - tp) >= float(os.environ.get("END_MARGIN", "0.04"))
-    wrap_ok = align >= float(os.environ.get("ALIGN_MIN", "0.8")) and end_ok
-    rows.append((k, off, frac, err[k], hit, wrap_ok))
+    # ... and the spread axis must be LEVEL (|z| <= SPREAD_Z_MAX): a handle lying on the floor is level, so a
+    # tilted spread puts the index low on it and the pinky in the air -- the two-finger grips of #138 and #55.
+    level_ok = abs(float(spread[2])) <= float(os.environ.get("SPREAD_Z_MAX", "0.3"))
+    # ... and every finger must have object points where its pad closes: the pads sweep 9-15 cm along the fingers
+    # (GraspGen-X's own sweep volume for this hand: 11.8-13.5 cm) toward the palm's +y; a finger with no object
+    # points within FINGER_R of that sweep closes on air. #55 (drill) and #138 (hammer) passed every axis test
+    # and still held with two fingers -- the part mask's extent is not the handle's.
+    fr = float(os.environ.get("FINGER_R", "0.025")); fingers_on = 0
+    for zf in (0.032, 0.011, -0.010, -0.031):                      # index, middle, ring, pinky spread offsets
+        seg = np.array([(G @ np.array([xx, yy, zf, 1.0]))[:3] for xx in (0.09, 0.12, 0.15) for yy in (0.0, 0.02, 0.04)])
+        dmin = np.linalg.norm(whole[None, :, :] - seg[:, None, :], axis=2).min()
+        fingers_on += int(dmin < fr)
+    wrap_ok = align >= float(os.environ.get("ALIGN_MIN", "0.8")) and end_ok and level_ok and fingers_on >= int(os.environ.get("FINGERS_MIN", "4"))
+    rows.append((k, off, frac, err[k], hit, wrap_ok, fingers_on))
 # RANK_BY=conf (default now, Sehoon 2026-09-28: "확률 기반 아님? 더 높은 걸 하는 거지"): GraspGen-X's own confidence
 # decides the order; this script only keeps the language condition (the pinch on the handle's axis) and the
 # open-hand-over-bulk veto. RANK_BY=head restores the hand-made "35 % from the head" preference.
@@ -77,7 +89,7 @@ if os.environ.get("RANK_BY", "conf") == "conf":
     order = sorted(rows, key=lambda r: (r[1] > 0.03, not r[5], r[4] > 0, -float(conf_all[r[0]]), r[3]))
 else:
     order = sorted(rows, key=lambda r: (r[1] > 0.03, not r[5], r[4] > 0, abs(r[2] - target) if r[1] <= 0.03 else 9, r[3]))
-print(f"[rank] full-hand wraps (spread axis along the handle, >= {float(os.environ.get('END_MARGIN', '0.04'))*100:.0f} cm from both ends): {sum(r[5] for r in rows)} of {len(rows)}")
+print(f"[rank] full-hand wraps (spread level along the handle, >= {float(os.environ.get('END_MARGIN', '0.04'))*100:.0f} cm from the ends, all 4 fingers on object points): {sum(r[5] for r in rows)} of {len(rows)}; fingers-on histogram {np.bincount([r[6] for r in rows], minlength=5).tolist()}")
 print(f"[rank] open-hand footprint on the bulk ({len(head)} pts): {sum(r[4] > 0 for r in rows)} of {len(rows)} candidates flagged, ordered last")
 with open(out, "w") as f:
     f.write(",".join(str(r[0]) for r in order))
