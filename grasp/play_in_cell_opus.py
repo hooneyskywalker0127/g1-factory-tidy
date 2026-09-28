@@ -386,6 +386,40 @@ else:
         rot=(math.cos(_y / 2.0), 0.0, 0.0, math.sin(_y / 2.0)))
 robot = Articulation(cfg)
 stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_reference.py)
+
+# --- finger colliders: GraspGenX decomposes the intermediate/distal links ------
+# end2end/robot_profiles.py UR10eInspireHandProfile:
+#     coacd_link_keywords = ("intermediate", "distal")
+#     "The thumb tip / distal and the *_intermediate links have the concavity
+#      that matters for object contact."
+# Our IsaacLab G1+Inspire asset ships every finger collider as a convex HULL
+# (measured on assets/g1_inspire/g1_29dof_inspire_hand.usd: 50 collider meshes,
+# all physics:approximation = convexHull, none authored otherwise), so the
+# concave curl of each finger is filled in solid in physics. Measured in hammer
+# v14: R_thumb_proximal_pitch held 0.000 rad against its 0.5 rad target for 290
+# frames (480-770) and reached 0.5 within 30 frames once the object was gone.
+# The USD is instanceable, so each link's "collisions" scope is de-instanced
+# first (plan_scene.keep_only_hand_collisions:266 documents that constraint).
+# Unset -> nothing is touched and the run is unchanged.
+_coacd = os.environ.get("FINGER_COACD", "")
+if _coacd:
+    from pxr import Usd as _Usd2, UsdPhysics as _UsdPh2
+    _kw = tuple(k for k in _coacd.split(",") if k)
+    _nmesh = 0
+    for _link in stage.GetPrimAtPath("/World/G1").GetChildren():
+        if not (_link.GetName().startswith("R_") and any(k in _link.GetName() for k in _kw)):
+            continue
+        _col = stage.GetPrimAtPath(_link.GetPath().AppendChild("collisions"))
+        if not (_col and _col.IsValid()):
+            continue
+        _col.SetInstanceable(False)
+        for _m in _Usd2.PrimRange(_col):
+            if _m.HasAPI(_UsdPh2.CollisionAPI):
+                _UsdPh2.MeshCollisionAPI.Apply(_m).CreateApproximationAttr("convexDecomposition")
+                _nmesh += 1
+    print(f"[hand] finger colliders -> convexDecomposition on {_kw}: {_nmesh} meshes "
+          f"(GraspGenX coacd_link_keywords)")
+# ------------------------------------------------------------------------------
 if os.environ.get("BODY_COLLISION", "0") == "0" and "--hands" in sys.argv:
     from plan_scene import keep_only_hand_collisions
     print(f"[walk] body does not collide with the cell; hand links kept: {len(keep_only_hand_collisions(stage, keep=HAND_KEEP))}")

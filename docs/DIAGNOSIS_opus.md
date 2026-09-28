@@ -222,3 +222,31 @@ v13 = v12 에서 armature 만 0.5 -> 0.001. 결과는 개선이 아니라 파지
   만드는 속도의 모양이다. 유일한 임펄스 출처가 손이라는 위 사실과 맞는다.
 - 구현은 `grasp/play_in_cell_opus.py` 의 `OBJ_MAX_DEPEN_VEL`(미설정이면 속성을 쓰지 않아 기존과 동일).
   물체 로그는 10 프레임마다 남겨 사출 시점을 10 프레임 안으로 좁힌다.
+
+## 20:05 — 손가락 콜라이더가 전부 볼록껍질이었다 (해머 v14 / 드릴 v11)
+
+두 렌더 모두 LOST. 해머 dxy 0.8714 m, 드릴 dxy 0.9881 m (dz -0.0029 m).
+maxDepenetrationVelocity 5 m/s 는 어느 쪽도 지키지 못했다. 해머에서 이탈 속도의 모양은 바뀌었다
+(v12 약 6 m/s / 5 프레임 -> v14 약 2.9 m/s / 10 프레임). 이것만으로 원인 여부를 단정하지 않는다.
+
+**측정된 결정적 사실.** 오른손 R_thumb_proximal_pitch 는 목표 0.5 rad 를 프레임 500 부터 받고 있는데,
+해머 v14 에서 프레임 480~770 (290 프레임, 약 9.7 s) 동안 q = 0.00 rad 였고, 물체가 손을 떠난 뒤
+30 프레임 만에 0.50 에 도달했다. 드릴 v11 은 같은 신호의 약한 형태로 480~760 동안 0.12~0.22 rad 였다.
+네 손가락 proximal 도 목표 1.47 에 대해 해머 1.29~1.35 / 드릴 0.89~1.06 에서 멈췄다.
+[near] 로 본 물체 무게중심과 가장 가까운 손 링크의 거리는 캐리 내내 6.0~7.4 cm 였다.
+즉 엄지는 명령을 받고 자유공간에서는 움직일 수 있는데, 물체를 잡는 동안에만 막혀 있었다.
+
+**원인 (추정 아님, USD 실측).** assets/g1_inspire/g1_29dof_inspire_hand.usd 를 열어 세었더니
+손가락 콜라이더 50 개가 전부 physics:approximation = convexHull 이다
+(R_thumb_intermediate, R_thumb_distal, R_*_intermediate 포함, 다른 값으로 저작된 것은 없음).
+GraspGenX end2end/robot_profiles.py UR10eInspireHandProfile 은 같은 손에 대해
+coacd_link_keywords = ("intermediate", "distal") 을 지정하고, 주석에
+"The thumb tip / distal and the *_intermediate links have the concavity that matters for object contact."
+라고 적는다. 손가락 안쪽의 오목한 면이 물리에서는 통째로 채워져 있었던 것이다.
+물체 콜라이더가 볼록껍질이었던 것과 같은 종류의 문제가 접촉의 반대편(손)에 남아 있었다.
+
+**다음 (v15 / v12).** 바꾸는 값은 하나: R_*_intermediate / R_*_distal 링크의 콜라이더를
+convexDecomposition 으로 (play_in_cell_opus.py 의 FINGER_COACD, 기본값 없음 -> 끄면 종전과 동일).
+USD 가 instanceable 이라 각 링크의 collisions 스코프를 먼저 de-instance 한다
+(plan_scene.py:266 이 그 제약을 적어 두었다). 나머지는 v14/v11 그대로:
+kp 650 kd 100 effort 20 armature 0.5, solver 100/50, maxDepenetrationVelocity 5.
