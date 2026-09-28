@@ -716,3 +716,6 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   walk) HELD +111 mm -- the first floor grasp the render has ever held. Queue: #138 full render with the walk
   (hammer/v3), then drill and screwdriver re-verified + rendered with the new collider; the hammer -> desk crate
   carry (place_v2) and the crate slot hook v8 follow once the GPU frees.
+- 12:29 HAMMER v3 (260928/5지/hammer/v3): the full render -- walk, kneel, handle, wrap, lift -- HELD +111 mm.
+  First floor pick that holds in the render. Carry to the desk crate (place_v2) and the crate slot hook v8 are
+  rendering; drill and screwdriver re-verification with the decomposition collider follow.
