@@ -150,6 +150,12 @@ jn = [str(n) for n in d["joint_names"]]
 col = [jn.index(n) for n in names]
 bcol = [jn.index(f"base_j_{a}") for a in ("x", "y", "z", "xtheta", "ytheta", "ztheta")]
 n_go, n_lift = int(d["n_go"]), int(d["n_lift"])
+HANDS_SEQ = d["hands"] if "hands" in d.files else None
+MARKS = {}
+if "marks" in d.files:                                        # phase name -> first frame; keyed here by the frame each phase ENDS on
+    import json as _json
+    _m = _json.loads(str(d["marks"])); _ends = sorted(_m.items(), key=lambda kv: kv[1])
+    MARKS = {(_ends[j + 1][1] if j + 1 < len(_ends) else n_go): nm for j, (nm, _) in enumerate(_ends)}       # per-frame finger targets (assist wrap: two hands on different clocks)
 order = np.argsort(d["err"][:, n_go - 1])[:TOP]
 if "--only" in sys.argv:
     order = [int(v) for v in sys.argv[sys.argv.index("--only") + 1].split(",")]
@@ -280,7 +286,13 @@ for k in order:
     if os.environ.get("TEST_VERBOSE"):
         print(f"[test]    object after the reset to the kneel: {np.round(obj_centre(), 3)} (placed at {np.round(box0[0, :3].cpu().numpy(), 3)})")
     for i in range(n_go):
-        put(roots[i], dofs[i], HAND_OPEN)
+        put(roots[i], dofs[i], HAND_OPEN if HANDS_SEQ is None else HANDS_SEQ[i])
+        if MARKS and (i + 1) in MARKS:                        # end of a scheduled phase (assist wrap): a picture and the object's pose
+            _ph = MARKS[i + 1]; snap(f"{int(k)}_{_ph}")
+            _o = obj_centre(); _bq = box.data.root_quat_w[0].cpu().numpy()
+            _tilt = np.degrees(np.arccos(np.clip(1 - 2 * (_bq[1] ** 2 + _bq[2] ** 2), -1, 1)))
+            _lb = robot.find_bodies([PALM_LINK["left"]])[0][0]; _rb = robot.find_bodies([PALM_LINK["right"]])[0][0]
+            print(f"[test]    after {_ph:6s} (frame {i + 1:3d}): object {np.round(_o, 3)} tilt {_tilt:4.1f} deg  left palm {np.round(robot.data.body_pos_w[0, _lb].cpu().numpy(), 3)}  right palm {np.round(robot.data.body_pos_w[0, _rb].cpu().numpy(), 3)}")
         if os.environ.get("TEST_VERBOSE") and i % 15 == 14:
             _o = obj_centre(); _b = robot.find_bodies([PALM_LINK["right"]])[0][0]; _l = robot.find_bodies([PALM_LINK["left"]])[0][0]
             print(f"[test]    approach frame {i:3d}: object {np.round(_o, 3)}  right palm {np.round(robot.data.body_pos_w[0, _b].cpu().numpy(), 2)}  left palm {np.round(robot.data.body_pos_w[0, _l].cpu().numpy(), 2)}")
@@ -369,7 +381,8 @@ for k in order:
             robot.set_joint_velocity_target(torch.zeros_like(_vel), joint_ids=_vel_ids)
     if velocity_mode:
         squeeze(True)
-    for i in range(n_ramp + n_settle):
+    _hc = HAND_CLOSED if HANDS_SEQ is None else HANDS_SEQ[-1]       # what "closed" means after the sequence
+    for i in range(0 if HANDS_SEQ is not None else n_ramp + n_settle):
         a = 0.0 if os.environ.get("NO_CLOSE") else min(1.0, (i + 1) / n_ramp)
         if order == "together":
             at, af = a, a
@@ -414,12 +427,12 @@ for k in order:
         f = _l0 + i / lift_x
         j, a = int(f), f - int(f)
         j1 = min(j + 1, _l0 + n_lift - 1)
-        put((1 - a) * roots[j] + a * roots[j1], (1 - a) * dofs[j] + a * dofs[j1], HAND_OPEN if os.environ.get("NO_CLOSE") else HAND_CLOSED)
+        put((1 - a) * roots[j] + a * roots[j1], (1 - a) * dofs[j] + a * dofs[j1], HAND_OPEN if os.environ.get("NO_CLOSE") else _hc)
     # TEST_HOLD_AFTER (frames, default 90): hold still after the lift before judging. GraspGen-X's player holds
     # after the lift for the same reason ("preventing premature-lift slip"); hammer #138 read HELD at the top of the
     # lift and slid out of a two-finger grip during the next second (260928/5지/hammer/v4, v5).
     for _ in range(int(os.environ.get("TEST_HOLD_AFTER", "90"))):
-        put(roots[-1], dofs[-1], HAND_OPEN if os.environ.get("NO_CLOSE") else HAND_CLOSED)
+        put(roots[-1], dofs[-1], HAND_OPEN if os.environ.get("NO_CLOSE") else _hc)
     # TEST_RISE (m, default 0.35): after the hold, raise the whole body like the stand-up (pelvis 0.42 -> 0.79 m in
     # ~1.4 s of the planner's clip, here over TEST_RISE_FRAMES) -- the hammer and the drill both passed the static
     # hold and slid out of two-finger grips during exactly this (260928/5지/hammer/v5, drill/v4).
@@ -428,11 +441,11 @@ for k in order:
         _z0 = float(obj_centre()[2])
         for _i in range(_nr + 30):
             _r = roots[-1].copy(); _r[2] += _rise * min(1.0, (_i + 1) / _nr)
-            put(_r, dofs[-1], HAND_CLOSED)
+            put(_r, dofs[-1], _hc)
         _dz_r = float(obj_centre()[2]) - _z0
         print(f"[test]    stand-up test: body up {_rise:.2f} m, object followed {_dz_r:+.3f} m")
         if _dz_r < 0.5 * _rise:
-            print(f"[test] grasp #{int(k):2d} conf {float(d['conf'][k]):.3f} cuRobo {float(d['err'][k, n_go - 1])*1000:5.1f} mm  held the lift but slipped in the stand-up ({_dz_r:+.3f} of {_rise:.2f} m)  -> LOST")
+            print(f"[test] grasp #{int(k):2d} conf {float(d['conf'][k]):.3f} cuRobo {float(d['err'][k, n_go - 1])*1000:5.1f} mm  slipped in the stand-up ({_dz_r:+.3f} of {_rise:.2f} m)  -> LOST")
             results.append((int(k), 0.0, False)); continue
     snap(f"{int(k)}_lift")
     if velocity_mode:

@@ -763,3 +763,24 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   from the hand base = the fingertips). New --power-grasp mode (reach_from_pose.py): palm laid face-down on the
   language-found handle, fingers across it, spread along it, 8 candidates along the handle; tester with the 13 s
   idle + 3 s hold + 0.35 m stand-up; hammer power reach solved (12-14 mm), tester running, drill next.
+
+## 2026-09-28 14:00-15:10 — power grasp: what is physically possible, and what GraspGen-X can express
+
+- **Palm-down wrap (power_chain, 8 candidates x2): 16/16 LOST.** Snapshots (`results/fable40/power3_grid.png`): the fingers curl
+  past the handle and land on the floor beside it; at the lift the hammer stays. Measured from the near captures: the hammer's
+  handle has 0-0.6 cm of air under it, the drill's 0-1.9 cm. No finger fits under either. The tester's "held the lift but slipped
+  in the stand-up" wording was wrong (the stand-up runs before the lift is judged) — fixed to "slipped in the stand-up".
+- **Two-hand assisted wrap (left pinch lifts the free end, right wraps the raised handle): LOST, hammer/v7.** Wrong turn:
+  the left pinch pose was too low and pressed the hammer through the floor (render end z -0.088). Sehoon: 파워 그랩을 하기로 했는데
+  왜 양손이냐 — abandoned. Code kept (`--assist-wrap`, per-frame `hands` schedule in the npz, tester `MARKS` snapshots) but not used.
+- **Terminology (Sehoon: 내가 만든 말 쓰지 말 것):** power grasp / precision grasp are Napier 1956 and Cutkosky 1989 terms
+  (power = fingers AND palm in contact; precision = fingertips). In Feix et al. 2016 the hammer-handle hold is "medium wrap".
+  Our fingertip pinches (hammer #138, drill #57) are precision grasps.
+- **GraspGen-X study (paper 2606.00998, repo, issues):** no power/precision notion anywhere (one caption in App. A6). The only
+  hand knob is the 12-number sweep volume (inner finger volume at open and half-open). NVIDIA's shipped `inspire_hand/config.json`
+  annotates it at the fingertips only (z 9.5-17.5 cm along the fingers; the knuckles are at 8.5 cm), so every candidate it
+  gives is a fingertip pinch. Their own onboarding instruction is "enclose the inner finger volume at the open state".
+  -> `inspire_hand_palm`: same URDF, sweep boxes from the palm face to the fingertips (open: 5x7.7x10 cm centred at z 10;
+  half-open: 4x7.7x7 cm at z 9.5). `end2end/robots/g1_inspire_palm_arm.yaml` points at it. `palm_chain.sh`: grasps from both
+  planners -> handle-depth statistic (old vs new) -> reach -> confidence order -> tester with stand-up -> render -> carry.
+- Room camera: Sehoon wants the robot's FRONT in the full view (the current one is from behind). Front-view candidates rendering.

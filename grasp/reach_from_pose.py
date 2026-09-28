@@ -490,6 +490,121 @@ def main():
         print(f"[reach] wrote {out}")
         return
 
+    # --assist-wrap PART_CAP: a POWER grasp that is physically possible for a handle lying ON the floor. Measured
+    # (fable40/fable42 near captures): the hammer's handle has 0-0.6 cm under it, the drill's 0-1.9 cm -- no finger
+    # fits under either, so every palm-down wrap closed its fingers on the floor beside the handle and the tool stayed
+    # down (power_chain, 16/16 LOST). A person lifts the free end first. Here the LEFT hand pinches the handle's free
+    # end from above (the verified fingertip pinch, palm-down) and raises it ASSIST_LIFT along an arc about the head,
+    # which stays on the floor; the RIGHT palm then comes down on the raised, tilted handle at ASSIST_WRAP_FRAC,
+    # fingers across it and under it, thumb opposing; the left opens and lifts away; the right lifts. The finger
+    # schedule is written per frame ("hands", HAND_NAMES order, left 12 then right 12) because the two hands close
+    # and open at different times. Output in the reach_all format with n_go = every frame.
+    if "--assist-wrap" in sys.argv:
+        from PIL import Image as _Im
+        cap_dir = sys.argv[sys.argv.index("--assist-wrap") + 1]
+        meta = json.load(open(os.path.join(cap_dir, "meta_data.json")))
+        seg = np.asarray(_Im.open(os.path.join(cap_dir, "seg.png")), dtype=np.int32); depth = np.load(os.path.join(cap_dir, "depth.npy"))
+        sys.path.insert(0, "/home/sehoon/Projects/GraspGenX")
+        from graspgenx.utils.scene_loaders import depth_to_camera_xyz, transform_xyz
+        xyz = transform_xyz(depth_to_camera_xyz(depth, np.asarray(meta["intrinsics"])), np.asarray(meta["camera_pose"]))
+        part = xyz[seg == meta["label_map"].get("obj_part", meta["label_map"]["obj_lang"])]
+        whole = xyz[seg == meta["label_map"]["obj_lang"]]
+        pc = part.mean(0); hax = np.linalg.svd(part[:, :2] - pc[:2], full_matrices=False)[2][0]; hax3 = np.array([hax[0], hax[1], 0.0])
+        t = (part[:, :2] - pc[:2]) @ hax; t0, t1 = float(t.min()), float(t.max())
+        if (whole.mean(0)[:2] - pc[:2]) @ hax > 0:                 # +hax runs from the head to the free end
+            hax3, t0, t1 = -hax3, -t1, -t0
+        L = t1 - t0
+        top = float(np.percentile(part[:, 2], 90)); radius = float(os.environ.get("POWER_RADIUS", "0.016"))
+        rest = np.array([pc[0], pc[1], top - radius])                # the handle's centre line at rest
+        pivot = rest + hax3 * t0                                      # the head end stays down
+        perp = np.array([-hax3[1], hax3[0], 0.0]); up = np.array([0.0, 0.0, 1.0])
+        fr_l, fr_r = float(os.environ.get("ASSIST_PINCH_FRAC", "0.88")), float(os.environ.get("ASSIST_WRAP_FRAC", "0.45"))
+        h_tip = float(os.environ.get("ASSIST_LIFT", "0.10")); theta = math.asin(min(0.9, h_tip / (fr_l * L)))
+        px, py = float(os.environ.get("POWER_X", "0.10")), float(os.environ.get("POWER_Y", "0.03"))
+        li = list(cfg.tool_frames).index("left_wrist_yaw_link"); ri = list(cfg.tool_frames).index("right_wrist_yaw_link")
+        P = np.eye(4); P[:3, 3] = -WRIST_TO_PALM
+        def rot_about(axis, ang):
+            axis = axis / np.linalg.norm(axis); K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+            return np.eye(3) + math.sin(ang) * K + (1 - math.cos(ang)) * K @ K
+        tilt_axis = np.cross(hax3, up)                                # rotating hax3 about it raises the free end
+        def handle_point(fr, ang):                                    # centre line point at fraction fr with the tip raised by ang
+            return pivot + rot_about(tilt_axis, ang) @ (hax3 * fr * L)
+        # LEFT: palm-down fingertip pinch at fr_l. The left Inspire curls toward its palm's -y (mirrored in y only),
+        # so palm +y points UP and the pinch point is 0.15 along the fingers, 0.06 on the -y side (rank_handle's
+        # right-hand [0.15, 0.06, 0] mirrored). Fingers cross the handle horizontally, pointing away from the hand.
+        sgn_l = 1.0 if perp @ (handle_point(fr_l, 0) - pos0[li]) > 0 else -1.0
+        xl, yl = sgn_l * perp, up.copy(); zl = np.cross(xl, yl)
+        Rl0 = np.stack([xl, yl, zl], axis=1); pc_l = np.array([0.15, -0.06, 0.0])
+        def T_left(ang):
+            Rt = rot_about(tilt_axis, ang) @ Rl0
+            T = np.eye(4); T[:3, :3] = Rt; T[:3, 3] = handle_point(fr_l, ang) - Rt @ pc_l
+            return T @ P
+        # RIGHT: palm on the raised handle at fr_r. Palm +y (its face) looks at the handle from above, perpendicular
+        # to the tilted axis; the spread (palm z) runs along the handle; the fingers (+x) cross it, pointing away
+        # from the hand; the handle sits px along the fingers and py below the palm face.
+        hax_t = rot_about(tilt_axis, theta) @ hax3
+        yr = -(up - (up @ hax_t) * hax_t); yr /= np.linalg.norm(yr)
+        cr = handle_point(fr_r, theta)
+        best = None
+        for sz in (1.0, -1.0):
+            zr = sz * hax_t; xr = np.cross(yr, zr)
+            if best is None or xr @ (cr - pos0[ri]) > best[0]:
+                best = (xr @ (cr - pos0[ri]), xr, zr)
+        _, xr, zr = best
+        Tr = np.eye(4); Tr[:3, 0], Tr[:3, 1], Tr[:3, 2] = xr, yr, zr; Tr[:3, 3] = cr - px * xr - py * yr
+        Tr = Tr @ P
+        print(f"[reach] assist wrap: handle axis {np.round(hax3[:2], 2)}, length {L:.2f} m, top z {top:.3f}; left pinch at {fr_l:.2f}, "
+              f"tip raised {h_tip:.2f} m ({math.degrees(theta):.0f} deg), right palm on the handle at {fr_r:.2f} (z {cr[2]:.3f}, clearance {cr[2]-radius:.3f})")
+        n = dict(over=45, downL=60, closeL=30, liftL=45, downR=60, closeR=30, openL=20, upL=30, lift=45)
+        T0l = np.eye(4); T0l[:3, 3] = pos0[li]; T0l[:3, :3] = quat_to_mat(quat0[li])
+        T0r = np.eye(4); T0r[:3, 3] = pos0[ri]; T0r[:3, :3] = quat_to_mat(quat0[ri])
+        Tl_flat, Tl_up = T_left(0.0), T_left(theta)
+        over_l = Tl_flat.copy(); over_l[2, 3] += 0.12
+        over_r = Tr.copy(); over_r[2, 3] += 0.15
+        def lerp(A, B, a):
+            M = B.copy(); M[:3, 3] = A[:3, 3] + (B[:3, 3] - A[:3, 3]) * a; return M
+        steps, hands_seq, marks = [], [], {}
+        _open = np.array([0, 0, 0, 0, 1.308, 0, 0, 0, 0, 0, 0, 0], float)
+        _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.5, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)
+        _th = np.array([False, False, False, False, True, True, False, False, False, False, True, True])
+        def ramp(a_th, a_f):
+            h = _open.copy(); h[_th] = (1 - a_th) * _open[_th] + a_th * _closed[_th]; h[~_th] = (1 - a_f) * _open[~_th] + a_f * _closed[~_th]; return h
+        cur_l, cur_r = T0l, T0r
+        for phase, nf in n.items():
+            marks[phase] = len(steps)
+            for i in range(nf):
+                a = (i + 1) / nf
+                if phase == "over":
+                    Ml = lerp(T0l, over_l, a); Mr = lerp(T0r, over_r, a)
+                    if a < 0.34: Ml[:3, :3] = T0l[:3, :3]; Mr[:3, :3] = T0r[:3, :3]
+                    hl, hr = _open, _open
+                elif phase == "downL":
+                    Ml = lerp(over_l, Tl_flat, a); Mr = over_r; hl, hr = _open, _open
+                elif phase == "closeL":
+                    Ml = Tl_flat; Mr = over_r
+                    hl = ramp(min(1.0, a * 2), max(0.0, min(1.0, a * 2 - 1))); hr = _open     # thumb first, the pinch that held
+                elif phase == "liftL":
+                    Ml = T_left(theta * a); Mr = over_r; hl, hr = _closed, _open
+                elif phase == "downR":
+                    Ml = Tl_up; Mr = lerp(over_r, Tr, a); hl, hr = _closed, _open
+                elif phase == "closeR":
+                    Ml = Tl_up; Mr = Tr; hl = _closed; hr = ramp(a, a)
+                elif phase == "openL":
+                    Ml = Tl_up; Mr = Tr; hl = ramp(1 - a, 1 - a); hr = _closed
+                elif phase == "upL":
+                    Ml = Tl_up.copy(); Ml[2, 3] += 0.10 * a; Mr = Tr; hl, hr = _open, _closed
+                else:
+                    Ml = Tl_up.copy(); Ml[2, 3] += 0.10; Mr = Tr.copy(); Mr[2, 3] += 0.15 * a; hl, hr = _open, _closed
+                steps.append({li: Ml, ri: Mr}); hands_seq.append(np.concatenate([hl, hr]))
+        sol, err = solve_multi(steps)
+        T = len(steps)
+        print(f"[reach] assist wrap: {T} frames; error at the left pinch {err[marks['closeL']-1]*1000:.1f} mm, at the right wrap {err[marks['closeR']-1]*1000:.1f} mm, lift {err[marks['lift']:].mean()*1000:.1f} mm")
+        out = sys.argv[sys.argv.index("--out") + 1]
+        np.savez(out, q=sol[None], err=err[None], joint_names=np.array(jn), n_go=T, n_lift=0, grasps=Tr[None], conf=np.array([1.0]),
+                 close_from=marks["closeR"], lift_from=marks["lift"], hands=np.array(hands_seq), marks=json.dumps(marks))
+        print(f"[reach] wrote {out}")
+        return
+
     if "--crate-grasps" in sys.argv:
         cj = json.load(open(sys.argv[sys.argv.index("--crate-grasps") + 1]))
         c = np.array(cj["centre"][:2]); ax = np.array(cj["long_axis"]); side = np.array([-ax[1], ax[0]])

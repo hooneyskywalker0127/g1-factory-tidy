@@ -225,6 +225,9 @@ def main():
         else:
             hands[close_at + k] = (1 - a) * np.array(HAND_OPEN) + a * np.array(HAND_CLOSED)
     hands[close_at + ramp:] = HAND_CLOSED
+    if "hands" in d.files:                       # the reach wrote its own per-frame schedule (assist wrap: two hands, two clocks)
+        _hs = np.asarray(d["hands"], np.float32); _n0 = len(qpos_w)
+        hands[:_n0] = HAND_OPEN; hands[_n0:_n0 + len(_hs)] = _hs; hands[_n0 + len(_hs):] = _hs[-1]
     if os.environ.get("NO_CLOSE"):               # a crate is carried between open palms
         hands[:] = HAND_OPEN
     hp = os.path.join("results", "motion", f"{name}_hands.npy")
