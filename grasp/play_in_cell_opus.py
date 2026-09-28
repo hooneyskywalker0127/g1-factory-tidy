@@ -611,8 +611,7 @@ sim.reset()
 # Our asset authors them -0.160 ~ 0.960 and -0.240 ~ 1.440. Raise the lower bounds to
 # the URDF's 0 and leave the upper bounds and the gearing alone.
 if os.environ.get("THUMB_LIMIT_URDF") == "1":
-    _tn = [n for n in ("R_thumb_intermediate_joint", "R_thumb_distal_joint") if n in robot.joint_names]
-    _tid, _ = robot.find_joints(_tn)
+    _tid, _tn = robot.find_joints(["R_thumb_intermediate_joint", "R_thumb_distal_joint"])
     _lim = robot.data.joint_pos_limits[:, _tid, :].clone()
     for _i, _n in enumerate(_tn):
         print(f"[hand] {_n} limits {_lim[0, _i, 0]:.3f} .. {_lim[0, _i, 1]:.3f} rad -> "
