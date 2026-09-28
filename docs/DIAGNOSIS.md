@@ -672,3 +672,12 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   (2.8 GB GPU): GPU 14.3 of 16.3 GB, RAM 1 GB free -- the state that crashed a render yesterday. Stopped the
   screwdriver reference render (#98, re-verified 0/2, least value) and re-queued it behind the others; 11.4 GB /
   5 GB free now. Rule: never more than three Isaac processes, and check for other users' GPU jobs first.
+- 11:48 Hammer #138 (tester 3/3) LOST in the render: flung 21 cm at the close. Drill #63 (tester 3/3) LOST twice with
+  identical numbers. The render loses exactly what the tester holds -> a systematic replay difference remains.
+  Experiments: A = same reference replayed with --no-video; B = same reach after a 60-frame kneel hold instead of the
+  12 s walk. Whichever holds names the culprit.
+- 11:52 Crate carry v6 (rise-first worked: 1.3 s stand-up in place, no step): the crate slipped out of the rim pinch
+  during the stand-up. -> hand-slot HOOK (crate_inspire.sh MODE=slot), the form-closure grip Sehoon asked for.
+- 11:44-11:58 The repo was on `main` (checked out by hand) for 14 min: grasp/ absent there, so the idle test, the A/B
+  experiments and the slot hook all died with "file not found". main reset to origin/main, back on the work branch,
+  everything relaunched.
