@@ -354,7 +354,11 @@ def main():
                     # 4 cm INSIDE the wall. Left palm (+y turned inward, LEFT_Y_IN): its thumb side -y is
                     # outward, centre 4 cm inside as well. Open, the thumb tip is 9.3 cm on its side -- 5 cm
                     # outside the wall on the way down; the fingers (y 0) 4 cm inside.
-                    T[:3, 3] += (-1.0 if outside else 1.0) * float(os.environ.get("PINCH_IN", "0.04")) * u
+                    # PINCH_IN_LEFT / PINCH_IN_RIGHT override PINCH_IN per hand: measured on the outside pinch (v4 plan)
+                    # the left fingers sat 4.8 cm inside their wall, the right only 2.7 cm, and the right hand held
+                    # the crate by one finger (Sehoon, 260928/5지/crate/v10 screenshot)
+                    _pin = float(os.environ.get(f"PINCH_IN_{name.upper()}", os.environ.get("PINCH_IN", "0.04")))
+                    T[:3, 3] += (-1.0 if outside else 1.0) * _pin * u
                 else:
                     # the pinch point sits 4.3 cm from the palm centre on the THUMB
                     # side (+y of the right palm). For the mirrored left palm with
