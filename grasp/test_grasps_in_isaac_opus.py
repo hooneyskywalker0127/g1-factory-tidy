@@ -50,6 +50,30 @@ for _ in range(3):
     app.update()
 spawn_props(stage, app)
 cfg = robot_cfg(G1_29DOF_CFG.replace(prim_path="/World/G1"), sim_utils, ImplicitActuatorCfg)
+
+# --- squeeze: GraspGenX's own position-mode finger drive -----------------------
+# Read from the open source rather than guessed (Sehoon 2026-09-28: "그립이지? 그럼
+# graspgenx 코드를 읽어"). NVIDIA GraspGenX end2end/dynamic_playback.py:68-71 and :689
+#   FINGER_KP_DEFAULT = 2000.0, FINGER_KD_DEFAULT = 200.0, finger_effort_limit = 200.0
+# and end2end/robot_profiles.py UR10eInspireHandProfile: POSITION mode, closing to
+# thumb_proximal_pitch 0.6 / four proximals 1.47, no gripper armature, CoACD on the
+# intermediate/distal links, mu 3.0 on the fingertip pads.
+# Our robot_cfg() default is kp 10 / kd 0.2*(kp/10)**0.5 / effort 30. The close target
+# and the fingertip friction already matched NVIDIA's; only the squeeze was 50x softer,
+# and kd 0.2 leaves nothing resisting back-drive when the stand-up loads the contact --
+# which is the grip visibly loosening around 25 s in hammer/v9 and drill/v6.
+if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_KD"):
+    _hz = cfg.actuators["hands"]
+    _rep = dict(damping=float(os.environ["HAND_KD"]),
+                effort_limit=float(os.environ.get("HAND_EFFORT", "200")))
+    if os.environ.get("HAND_ARMATURE"):
+        _rep["armature"] = float(os.environ["HAND_ARMATURE"])
+    cfg.actuators["hands"] = _hz.replace(**_rep)
+    print(f"[hand] squeeze (GraspGenX position-mode gains): kp {_hz.stiffness} "
+          f"kd {_rep['damping']} effort {_rep['effort_limit']} "
+          f"armature {_rep.get('armature', getattr(_hz, 'armature', None))}")
+# ------------------------------------------------------------------------------
+
 cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
     contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
 cfg.spawn = cfg.spawn.replace(articulation_props=sim_utils.ArticulationRootPropertiesCfg(
