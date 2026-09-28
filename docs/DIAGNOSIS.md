@@ -712,3 +712,7 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   GraspGenX plans on the true point cloud; the physics must collide with the same shape.
 - Fix: plan_scene.py object collider = convexDecomposition (32 hulls, 500k voxels, 1 % error; OBJECT_COLLISION env
   restores the hull). Test running (decomp_test.sh): #138 tester short/13 s idle x3 and render B.
+- 12:15 WITH THE DECOMPOSITION: hammer #138 tester 3/3 (+120 mm), 2/3 under the 13 s idle, and play_in_cell (no
+  walk) HELD +111 mm -- the first floor grasp the render has ever held. Queue: #138 full render with the walk
+  (hammer/v3), then drill and screwdriver re-verified + rendered with the new collider; the hammer -> desk crate
+  carry (place_v2) and the crate slot hook v8 follow once the GPU frees.
