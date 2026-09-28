@@ -437,3 +437,54 @@ which at 60 fps plays in 0.7 sec — too fast for the gripper to keep grip on th
 우리 일어서기는 플래너 ~1.4 초를 `build_place_reference.py:66-69` 의 RISE_SLOW=2 로 늘린 ~2.8 초다.
 RISE_SLOW 는 환경변수이므로 페이블 파일을 고치지 않고 올릴 수 있다. probe 결과가 "상승 가속도에 접촉을
 잃는다"로 나오면 이것이 다음 한 가지다.
+
+## "충분히 꽉 쥐었다"를 판정하는 오픈소스는 IsaacLab 안에 있다 (260928 21:40)
+
+세훈님: "드릴 13 보면 이미 잘 잡은 상태같은데 계속 더 조이다가 날아가는듯. 엔비디아 오픈소스 중
+tactile 관련 없나. 어느정도면 충분히 꽉쥐었다를 판단할 수 있으면 좋겠다."
+
+### 먼저, 세훈님 판독이 맞고 내 기록이 틀렸다 (측정)
+| | 들린 높이 | 사출 순간 | 사출 속도 |
+|---|---|---|---|
+| drill v13 | z 0.1695 -> 0.3138 (+0.144 m) | frame 740 -> 750 | 4.2 m/s (vel [-3.02 1.08 -2.70]) |
+| hammer v14 | z 0.1768 -> 0.3215 (+0.165 m) | frame 770 -> 780, 0.66 m / 10 frame | 약 4 m/s |
+
+두 건 다 GraspGenX 의 성공 기준(end2end/clutter_task.py:64 `LIFT_SUCCESS_DZ = 0.05`) 의 약 3 배를
+들어 올린 뒤에 터졌다. 미끄러짐이 아니라 사출이다. drill v13 을 "접근 중 타격, 들리지 않음"이라고
+적었던 것은 틀렸고 vN note.txt 두 개에 정정해 넣었다.
+들고 있는 동안에도 위치는 고정인데 속도만 튄다(v14 frame 680: 2.007 m/s). 매 스텝 관통 복구
+임펄스가 들어갔다 감쇠되는 모양이며, 이것이 쌓이다 마지막에 터진 것으로 보인다(이 인과는 아직 미측정).
+
+### GraspGenX 에는 없다
+`grep -rl "tactile|contact_force|net_contact|force_closure|grasp_quality|ContactSensor" --include=*.py`
+전체 0 건. 성공 판정은 `LIFT_SUCCESS_DZ = 0.05` 하나뿐(:603, :845)이다. 그래서 언제 그만 조여야
+하는지를 판단하는 장치가 설계상 없다 — `dynamic_playback.py:1686` 은 궤적 전 프레임에 손가락 속도
+목표를 다시 찍는다.
+
+### IsaacLab 에는 세 갈래가 있고, 우리에게 맞는 것은 DexSuite 다
+1. **DexSuite (Kuka + Allegro, 다지 손 파지)** — 우리 문제와 같은 모양.
+   `manager_based/manipulation/dexsuite/config/kuka_allegro/dexsuite_kuka_allegro_env_cfg.py:43-56`
+   손끝 링크마다 `ContactSensorCfg(prim_path=.../<tip>, filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"])`
+   를 달아 **그 손끝이 그 물체에 주는 힘**만 뽑는다. 관측은 `clip=(-20.0, 20.0)` 이고 주석이
+   `# contact force in finger tips is under 20N normally` 다.
+   판정식은 `mdp/rewards.py:50-71`:
+   ```python
+   good_contact = (thumb_mag > threshold) & ((index_mag > threshold) | (middle_mag > threshold) | (ring_mag > threshold))
+   ```
+   호출부 `mdp/rewards.py:111` 의 threshold 는 **1.0 N**. 즉 NVIDIA 의 "제대로 쥐었다" 정의는
+   *엄지 1 N 이상 + 마주보는 손가락 중 하나 1 N 이상*(대향 접촉쌍)이고, 정상 범위 상한은 20 N 이다.
+2. **Forge (조립, 힘 제어)** — `direct/forge/forge_env.py:95-104` 가
+   `root_physx_view.get_link_incoming_joint_force()` 로 6 축 FT 를 읽어 EMA 로 평활하고,
+   `:242-243` 에서 `relu(|F| - threshold)` 를 페널티로 준다. 임계는
+   `forge_tasks_cfg.py:18 contact_penalty_threshold_range = [5.0, 10.0]` N.
+3. **TacSL (진짜 촉각)** — `isaaclab_contrib/sensors/tacsl_sensor/`, GelSight 영상형 촉각 센서
+   (`isaaclab_assets/sensors/gelsight.py`, demo `scripts/demos/sensors/tacsl_sensor.py`).
+   손끝에 젤시트를 붙여 변형 영상을 렌더하는 방식이라 우리 5지 손에는 자산부터 새로 필요하다.
+
+### 우리 코드에 붙는가
+`grasp/play_in_cell_opus.py:84` 는 이미 `from isaaclab.sensors import Camera, CameraCfg` 를 쓴다.
+같은 패키지의 `ContactSensorCfg` 를 손끝 링크마다 `filter_prim_paths_expr=["/World/GraspTarget"]`
+로 달면 `data.force_matrix_w` 가 나온다. 새 의존성은 없다.
+다음 한 걸음은 게인을 또 만지는 것이 아니라 **힘을 계측하는 것**이다: 사출 직전 구간(v14 frame
+600~780) 에서 손끝별 접촉력이 실제로 몇 N 인지 찍고, DexSuite 의 1 N / 20 N 과 비교한다.
+그 숫자가 나오기 전에는 "과압이 원인"도 아직 가설이다.
