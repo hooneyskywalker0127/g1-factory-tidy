@@ -688,3 +688,7 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   "held" means held under the render's conditions; (2) GraspGenX's own timing adopted -- 2 s approach + 2 s run-in
   (APPROACH_FRAMES/GRASP_FRAMES, were 1.0/0.67 s; their tasks.py says 0.7 s bumps the object before the close).
   Hammer and drill re-reached with both, one at a time (slow_approach_queue.sh).
+- 11:58 Study (GraspGenX end2end): their dynamic playback closes the fingers in VELOCITY mode (0.25 rad/s, finger
+  kd 800, effort limit 1000 N; robots/g1_right_arm.yaml: "position mode snaps the fingers to the closed angles and
+  they bat the object away"), arm kp 2000 / kd 100, approach 2 s + run-in 2 s + lift 4 s. We close in position mode
+  at stiffness 10. Queued: drill #63 under the 13 s idle with velocity close, kd 8 and 40, x3 (vel_idle_test.sh).
