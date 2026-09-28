@@ -397,6 +397,23 @@ for k in order:
         put(roots[i], dofs[i], HAND_OPEN if HS is None else HS[i])
         if os.environ.get("TRACE_FRAME") and i == int(os.environ["TRACE_FRAME"]):
             _jtrace(i)
+        if os.environ.get("WAIST_HISTORY") and i >= 120 and i % 5 == 0:
+            # One snapshot of the waist cannot tell a joint pinned by its effort ceiling from a
+            # joint oscillating around its command: stiffness 5000 with damping 5 is zeta ~ 0.02.
+            # Capping the plan by 78 mrad made the achieved value 155 mrad worse, which a static
+            # equilibrium cannot do, so read the whole dwell: position, velocity and the torque
+            # PhysX actually applied (clamped at effort_limit 50). Read-only.
+            _wn = [n for n in names if n.startswith("waist_")]
+            _wi = [names.index(n) for n in _wn]; _wj = [body_ids[j] for j in _wi]
+            _c = np.asarray(dofs[i], float)[_wi]
+            _q = robot.data.joint_pos[0, _wj].cpu().numpy()
+            _v = robot.data.joint_vel[0, _wj].cpu().numpy()
+            _tt = getattr(robot.data, "applied_torque", None)
+            _t = _tt[0, _wj].cpu().numpy() if _tt is not None else np.full(len(_wj), np.nan)
+            print("[opus] waisth f%3d  " % i + "   ".join(
+                f"{n.replace('waist_','').replace('_joint',''):5s} cmd{_c[j]:+.4f} got{_q[j]:+.4f}"
+                f" d{(_q[j]-_c[j])*1000:+7.1f} vel{_v[j]:+7.2f} tau{_t[j]:+7.1f}"
+                for j, n in enumerate(_wn)), flush=True)
         if MARKS and (i + 1) in MARKS:                        # end of a scheduled phase (assist wrap): a picture and the object's pose
             _ph = MARKS[i + 1]; snap(f"{int(k)}_{_ph}")
             _o = obj_centre(); _bq = box.data.root_quat_w[0].cpu().numpy()
