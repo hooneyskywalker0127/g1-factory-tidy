@@ -938,24 +938,48 @@ if walk is not None:
         if target_body is not None:
             target_body.update(sim.get_physics_dt())
             print(f"[obj ] idle {_i} pos {np.round(target_body.data.root_pos_w[0].cpu().numpy(), 4)}  vel {np.round(target_body.data.root_lin_vel_w[0].cpu().numpy(), 3)}")
-    for i in range(min(len(walk["dof"]), int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
+    # --- settle before the stand-up: GraspGenX's settle_frames, on the clip -------
+    # GraspGenX end2end/dynamic_playback.py:1049 `settle_frames: int = 30`, :1310-1312
+    # "Stepping %d trajectory frames + %d settle frames": the demo steps extra frames
+    # with the trajectory held before it judges the grasp, because the close only
+    # reaches its contact equilibrium after the motion stops (:128-129 "physics
+    # naturally limits how far the close actually goes when there's contact").
+    # Measured, hammer v25: the clip already holds still at f720..f750 (palm z 0.3090,
+    # root z 0.4210, object z 0.2680 constant for 40 frames) and the hammer survives it
+    # with continuous contact; the stand-up starts between f750 and f760 (root z 0.4210
+    # -> 0.4280 -> 0.4680) and the object is lost at f760, the stand-up's first frame,
+    # with thumb_proximal_pitch still rising (0.350 of its 0.500 target, max at f760).
+    # SETTLE_AT/SETTLE_FRAMES repeat one clip frame so the close keeps pressing while
+    # the body stays where the grasp was formed. Diagnostics keep counting i, so the
+    # settle shows up as the stretch where the body does not move.
+    _settle_at = int(os.environ.get("SETTLE_AT", "-1"))
+    _settle_n = max(0, int(os.environ.get("SETTLE_FRAMES", "0")))
+    if _settle_at >= 0 and _settle_n:
+        print(f"[walk] settle: clip frame {_settle_at} held for {_settle_n} extra frames "
+              f"(GraspGenX dynamic_playback.py:1049 settle_frames=30, :1310)")
+    def _clip_i(_i):
+        if _settle_at < 0 or not _settle_n or _i <= _settle_at:
+            return _i
+        return _settle_at if _i <= _settle_at + _settle_n else _i - _settle_n
+    for i in range(min(len(walk["dof"]) + _settle_n, int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
+        ci = _clip_i(i)
         for k, jid in enumerate(walk_ids):
-            tgt_q[0, jid] = float(walk["dof"][i, k])
+            tgt_q[0, jid] = float(walk["dof"][ci, k])
         if not CLIP_ARMS:
             for k, jid in enumerate(ids):
                 tgt_q[0, jid] = _plan_q[k]
         if _hands is not None:
             for k, jid in enumerate(_hand_ids):
-                tgt_q[0, jid] = float(_hands[min(i, len(_hands) - 1), k])
-        if i >= _waist_from and not CLIP_ARMS:
-            a = (i - _waist_from + 1) / _waist_n
+                tgt_q[0, jid] = float(_hands[min(ci, len(_hands) - 1), k])
+        if ci >= _waist_from and not CLIP_ARMS:
+            a = (ci - _waist_from + 1) / _waist_n
             for j in _waist:
                 tgt_q[0, j] = ((1.0 - a) * float(tgt_q[0, j])
                                + a * float(robot.data.default_joint_pos[0, j]))
-        q = walk["quat"][i]
+        q = walk["quat"][ci]
         robot.write_root_state_to_sim(torch.tensor(
-            [[float(walk["pos"][i][0]), float(walk["pos"][i][1]),
-              float(walk["pos"][i][2]), float(q[3]), float(q[0]),
+            [[float(walk["pos"][ci][0]), float(walk["pos"][ci][1]),
+              float(walk["pos"][ci][2]), float(q[3]), float(q[0]),
               float(q[1]), float(q[2]), 0, 0, 0, 0, 0, 0]],
             dtype=torch.float32, device=sim.device))
         if _hands is not None:
@@ -975,7 +999,7 @@ if walk is not None:
                                                joint_ids=_body_ids)
             robot.set_joint_position_target(tgt_q)
             if _vmode:
-                _want = bool(np.abs(_hands[min(i, len(_hands) - 1), len(_hand_names) // 2:] - _open_r).max() > 1e-6)
+                _want = bool(np.abs(_hands[min(ci, len(_hands) - 1), len(_hand_names) // 2:] - _open_r).max() > 1e-6)
                 if _want != _squeezing:
                     _squeezing = _want
                     print(f"[walk] frame {i}: fingers {'squeeze (velocity)' if _want else 'release (position)'}")
@@ -984,8 +1008,8 @@ if walk is not None:
                                                      joint_ids=_vel_ids)
                 robot.set_joint_velocity_target(_vel if _squeezing else torch.zeros_like(_vel), joint_ids=_vel_ids)
             _root = torch.tensor(
-                [[float(walk["pos"][i][0]), float(walk["pos"][i][1]),
-                  float(walk["pos"][i][2]), float(q[3]), float(q[0]),
+                [[float(walk["pos"][ci][0]), float(walk["pos"][ci][1]),
+                  float(walk["pos"][ci][2]), float(q[3]), float(q[0]),
                   float(q[1]), float(q[2]), 0, 0, 0, 0, 0, 0]],
                 dtype=torch.float32, device=sim.device)
             # PD_BODY (default 1, as in test_grasps_in_isaac.py): the joints
