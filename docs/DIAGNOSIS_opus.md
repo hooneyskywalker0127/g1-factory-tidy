@@ -278,3 +278,16 @@ v15 의 0.55 rad/s 는 그들의 0.25 rad/s 의 2.2 배다.
 정지 상태의 쥐는 힘은 같다: 200 x 0.25 = 50 N.m 요구 -> effort 20 N.m 로 잘리므로
 position mode 에서 잘리던 20 N.m 과 동일하다. 달라지는 것은 접근 속도뿐이다.
 나머지(FINGER_COACD, kp 650, effort 20, armature 0.5, solver 100/50, depenetration 5)는 v15 그대로.
+
+**정정 (20:20): velocity mode 의 kd 는 800 이다.**
+위에 CLOSE_KD=200 이라고 적었던 것은 틀렸다. dynamic_playback.py:71 의 FINGER_KD_DEFAULT = 200.0 은
+position mode 의 kd 이고, velocity mode 는 :642-650 에서 `joint_target_ke = 0.0`,
+`joint_target_kd = finger_velocity_kd` 기본값 **800.0** 을 쓴다("Match newton_grasp_eval.py's FINGER_KD=800").
+v16 은 CLOSE_KD=800 으로 실행한다.
+
+같은 파일을 읽다가 나온 것 하나 더 (다음 단계의 근거): dynamic_playback.py:685-691 주석이
+URDF 의 `effort=20` 을 지목하며 "caps the PD force so the fingers can't close against gravity / contact"
+라고 쓰고 finger_effort_limit 기본값을 200 으로 올린다. g1_inspire_arm.yaml 은 1000.0 이다.
+우리는 EFF=20 으로 돌리고 있다 — 소스가 이름을 들어 지목한 값이다.
+v15 에서 손가락이 1.47 까지 닫힌 것은 빈손일 때였으므로, 20 N.m 로 물체를 실제로 쥘 수 있는지는 측정된 바 없다.
+한 번에 하나만 바꾸므로 v16 은 effort 20 을 유지하고, 접근을 견디고 쥐는 데서 미끄러지면 v17 에서 200 으로 올린다.
