@@ -784,3 +784,22 @@ pliers v1, screwdriver v2(v1은 씨앗 55 px로 크래시). 파지 검증 결과
   half-open: 4x7.7x7 cm at z 9.5). `end2end/robots/g1_inspire_palm_arm.yaml` points at it. `palm_chain.sh`: grasps from both
   planners -> handle-depth statistic (old vs new) -> reach -> confidence order -> tester with stand-up -> render -> carry.
 - Room camera: Sehoon wants the robot's FRONT in the full view (the current one is from behind). Front-view candidates rendering.
+
+## 2026-09-28 17:00 — 모델이 Fable → Opus로 바뀜; 페이블 코드 보존, 운반으로 이동
+
+- **세훈님: 페이블 코드는 건드리지 말고 보존하고, 복사해서 작업하라.** 커밋되지 않은 채 남아 있던 페이블의 마지막 작업
+  트리(`grasp/reach_from_pose.py` +121줄, `grasp/test_grasps_in_isaac.py` +33줄: 실제 기립 재생 `TEST_RISE_PKL`,
+  `--regrasp-wrap`, `--assist-wrap`)를 그대로 커밋(`162c21d`)하고 태그 `fable-260928-preserved`를 달았다. 이후 내가
+  바꾸는 것은 `grasp/*_opus.py` 복사본에만 한다(`test_grasps_in_isaac_opus.py`, `build_place_reference_opus.py`,
+  `reach_from_pose_opus.py`).
+- **세훈님: 되는지 안 되는지 사실 모른다 — 랜더로 확인을 못 했다. 페이블이 한참 공부하고 시험은 안 해봤을 수 있다.**
+  맞는 지적이다. 14:00~17:00 사이에 납품된 영상은 hammer/v8 하나뿐이고, 그 사이 파워 그립 변형(팜다운 감싸기, 양손
+  보조, GraspGen-X 팜 주석, 그리드 24개, 스쿱, 공중 재파지)은 전부 테스터에서만 LOST로 끝나 영상이 없다.
+- **세훈님: 드는 것까지는 확인했고, 그 다음은 크레이트로 옮기는 것.** 그래서 파지 반복은 중단한다. 세훈님이 영상으로
+  HELD를 확인한 두 파지 — hammer #138(`fable40v2`, v3·v6), drill #57(`fable42p`, v3·v5) — 를 그대로 써서 크레이트까지
+  운반을 렌더한다(`carry_both.sh` → `place_any.sh`: 집기 → 제자리에서 2배 느리게 기립 → 언어로 찾은 데스크 크레이트까지
+  보행 → 크레이트 위에서 손 열기). 운반 카메라는 정면 eye(-0.2, -3.4, 1.9)에 look-at을 공구와 크레이트 중간
+  (-0.9, -0.5, 0.7)으로 두어 경로 전체가 프레임에 들어오게 했다.
+- 진단용으로 만들어 둔 것(지금은 쓰지 않음): `test_grasps_in_isaac_opus.py`의 `RISE_PROBE` — 기립 5지점에서 물체를
+  **손바닥 자신의 좌표계**로 찍어 어느 방향으로 빠지는지(손가락 축 방향 = 손끝에서 미끄러짐, 손바닥 법선 방향 = 케이지
+  밖으로 떨어짐) 구분한다. 세훈님이 운반을 먼저 보자고 해서 큐에서 내렸다.
