@@ -1324,3 +1324,60 @@ thumb_intermediate 0 ~ 0.8, thumb_distal 0 ~ 0.4, master thumb_proximal_pitch 0 
 그 두 교란 요인은 v24(기어비)와 v25(속도)에서 각각 고쳤다. 따라서
 `THUMB_LIMIT_URDF=1` + `MIMIC_URDF_RATIO=1` + `HAND_VEL=5.0` 조합은 **아직 한 번도 돌지 않았다.**
 v27 판정을 기록한 뒤 이것을 v28 의 단일 변경으로 넣는다.
+
+## 정착은 성공했고, 그래서 원인이 특정됐다 — 우리는 접촉을 수백 N 으로 눌러 두고 있었다 (v27)
+
+**v27 판정: `[eval] dxy 0.3881 m dz −0.0079 m → LOST`.** 그런데 이 렌더는 실패로서보다
+**분리 실험으로서** 값이 있다.
+
+클립 f750 을 150 프레임(5.0 s) 붙들었더니:
+
+| 정착 구간 f750~f900 | 값 |
+|---|---|
+| 물체 z | **0.268 고정 (150 프레임 내내)** |
+| root z / palm z | 0.421 / 0.310 고정 |
+| 접촉 합 / 엄지 패드 | 751 → 774 N / 377 → **387 N**, 끊김 없음 |
+| T.pitch / T.int / 검지 | **−0.000 / −0.160 / +1.00** 내내 (목표 0.500 / 0.000 / 1.47) |
+
+**정적으로는 5 초를 버틴다.** 그리고 **내 외삽은 반박됐다**: "엄지가 남은 0.150 rad 를 닫는 데
+약 128 프레임 필요"라고 적었지만, 완전 정지 상태로 150 프레임을 더 줬는데 엄지는 0.000 rad 에서
+전혀 움직이지 않았다. **엄지는 느린 것이 아니라 388 N 접촉 평형에 막혀 있다.**
+
+놓치는 순간은 시간이 아니라 **클립이 다시 움직이는 프레임**이다:
+
+| | f900 | f910 |
+|---|---|---|
+| 물체 | [−0.2311 0.0116 0.2680] | [−0.3377 0.2735 0.0391] |
+| 물체 속도 | ~0 | **[−0.296 0.863 −0.631] = 0.86 m/s** |
+| 접촉 | 774 N (엄지 387 N) | **0 N** |
+| 손 q (검지 / T.pitch / T.int) | 1.00 / −0.00 / −0.16 | **1.43 / 0.38 / 0.49** |
+| palm z / root z | 0.310 / 0.421 | 0.315 / 0.428 |
+
+**0.007 m 의 몸통 상승이 물체에 0.86 m/s 를 줄 수는 없다.** 수백 N 으로 눌려 있던 접촉이
+풀리면서 물체가 사출되고, 자유가 된 12 개 관절이 한꺼번에 0.4 rad 목표로 튀었다. v25 의 f760 과
+같은 사건이고, 정착으로 그 시점만 150 프레임 미룰 수 있었다. 덧붙여 f900 의 기하는
+물체 [−0.231 0.011 0.268] / palm [−0.139 0.044 0.310] — 해머는 손바닥에서 **9.2 cm** 떨어진
+손끝 집기이며 파워 그립이 아니다.
+
+## v28: 힘 상한을 제조사 값으로 — 이 수정은 5지 손에 한 번도 들어간 적이 없다
+
+진단은 이 저장소에 **이미** 적혀 있었다. `play_in_cell_opus.py:267-273`:
+
+> Dex3-1 finger torque, from Unitree's own URDF: every hand joint … is `effort="1.4"`.
+> IsaacLab's G1_29DOF_CFG leaves the hands at effort_limit=300, 214x the real actuator,
+> **so the closing fingers drive straight through the object and PhysX ejects it instead of
+> stalling them on contact.** The trajectory commands the fingers all the way to their joint
+> limits …, so **what stops them has to be the actuator, not the command.**
+
+그리고 바로 그 아래가 `if os.environ.get("HAND") == "inspire": pass` 다 — **5지 손은 이 수정을
+받은 적이 없다.** Dex3 는 1.4 N·m 로 내렸고, Inspire 는 `HAND_EFFORT` 기본 200 / 우리 실행값
+30 으로 돌아왔다. 제조사 URDF(`x_grippers/inspire_hand/gripper_spherical_dof.urdf`)는
+**12 개 회전 관절 전부 `effort="10" velocity="5.0"`** 이다(그 외: spherical 1000, prismatic 200 —
+손가락 관절이 아니다). GraspGenX 도 같은 말을 한다(`dynamic_playback.py:685-690`): URDF 의
+effort 가 PD 힘을 상한하며, **닫기를 멈추는 것은 힘 상한이다.**
+
+**v28 = v27 + `EFF=10`** (정착은 같은 창 비교를 위해 유지). 측정된 환산: EFF=30 에서 엄지 패드
+387 N → N·m 당 약 12.9 N, 따라서 EFF=10 은 약 130 N 을 예상한다(측정 기반 외삽).
+기준: (a) 정착 구간 엄지 패드 < 200 N (b) 정착 구간 물체 z 변동 < 5 mm (c) f901~f920 물체 속도
+< 0.3 m/s (d) 재개 시 관절 점프 < 0.15 rad/10프레임 (e) `dz > +0.05` → HELD.
+그래도 사출이 남으면 다음 값은 Dex3 규모의 1.4 N·m(예상 패드 약 18 N)이다.
