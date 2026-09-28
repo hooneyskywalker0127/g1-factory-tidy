@@ -285,6 +285,10 @@ for k in order:
     z_ref = float(obj_centre()[2])                 # where it rests before this candidate's reach
     if os.environ.get("TEST_VERBOSE"):
         print(f"[test]    object after the reset to the kneel: {np.round(obj_centre(), 3)} (placed at {np.round(box0[0, :3].cpu().numpy(), 3)})")
+        _bq = box.data.root_quat_w[0].cpu().numpy(); _pq = box0[0, 3:7].cpu().numpy()
+        _rot = np.degrees(2 * np.arccos(np.clip(abs(float(np.dot(_bq, _pq))), -1, 1)))
+        _lo = float(box.data.body_pos_w[0, :, 2].min()) if hasattr(box.data, "body_pos_w") else float("nan")
+        print(f"[test]    object settled: rotated {_rot:.1f} deg from where it was placed; quat now {np.round(_bq, 3)} placed {np.round(_pq, 3)}")
     for i in range(n_go):
         put(roots[i], dofs[i], HAND_OPEN if HANDS_SEQ is None else HANDS_SEQ[i])
         if MARKS and (i + 1) in MARKS:                        # end of a scheduled phase (assist wrap): a picture and the object's pose

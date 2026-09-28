@@ -453,10 +453,15 @@ def main():
             hax3, t0, t1 = -hax3, -t1, -t0
         top = float(np.percentile(part[:, 2], 90))                  # the handle's upper surface
         radius = float(os.environ.get("POWER_RADIUS", "0.016"))
-        px, py = float(os.environ.get("POWER_X", "0.10")), float(os.environ.get("POWER_Y", "0.035"))
+        # POWER_X / POWER_Y may be comma lists (a grid of finger-base offsets and palm heights). Measured 2026-09-28 on the
+        # settled hammer (tester probe + mesh): the handle's underside is 1.5-1.8 cm off the floor, the Inspire fingertip is
+        # 1.2-1.5 cm thick, so a finger CAN curl under it -- if the handle sits under the finger base (knuckles at x 0.127),
+        # not under the palm heel (x 0.10 put the fingertips on the floor beyond the handle: power_chain, 16/16 LOST).
+        pxs = [float(v) for v in str(os.environ.get("POWER_X", "0.10")).split(",")]
+        pys = [float(v) for v in str(os.environ.get("POWER_Y", "0.035")).split(",")]
         fracs = [float(v) for v in os.environ.get("POWER_FRACS", "0.35,0.45,0.55,0.65").split(",")]
         wrists, conf = [], []
-        for fr in fracs:
+        for fr, px, py in [(f, x, y) for f in fracs for x in pxs for y in pys]:
             centre = np.array([pc[0], pc[1], top - radius]) + hax3 * (t0 + fr * (t1 - t0))
             for sgn in (1.0, -1.0):
                 y_ax = np.array([0.0, 0.0, -1.0])                      # palm face down
