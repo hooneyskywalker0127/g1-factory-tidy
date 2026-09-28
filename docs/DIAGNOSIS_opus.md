@@ -892,3 +892,111 @@ if SOFT_MIMIC: expr += [".*_intermediate_joint", ".*_thumb_distal_joint"]
 
 순서: v23 이 하한 정정(측정된 사실에 직접 대응)을 먼저 시험하고, 실패하면 v24 에서 종동을 별도
 액추에이터 그룹으로 분리해 NVIDIA 의 1:40 비율을 준다.
+
+## v23 실험 결과: 하한 정정은 원인이 아니었다 (디스크 폴더 hammer/v22)
+
+폴더 이름 주의. 체인의 `next_v()` 가 렌더 시각에 폴더를 잡으므로, 위에서 "v23" 이라 부른 하한
+정정 실험은 디스크에 `영상보관/.../5지/hammer/v22` 로 떨어졌다. 아래 번호는 디스크 기준이다.
+
+한계 변경은 실제로 걸렸다 (`results/fable40/g.log`):
+
+```
+[hand] R_thumb_intermediate_joint limits -0.160 .. 0.960 rad -> 0.000 .. 0.960
+[hand] R_thumb_distal_joint       limits -0.240 .. 1.440 rad -> 0.000 .. 1.440
+```
+
+그런데 더 나빠졌다. `[eval] dxy 0.0892 m  dz -0.2497 m -> LOST` (v21 은 dz -0.0090).
+사전 등록 기준 4개 중 통과 0개다.
+
+측정된 엄지 관절각 (`right finger q`, 목표는 pitch 0.5 rad):
+
+```
+frame   480   520   560   600   640   680   720   760  |  800
+pitch -0.00 -0.00 -0.00  0.00 -0.00  0.02 -0.00  0.00  |  0.49
+inter -0.00 -0.00 -0.00  0.00 -0.00  0.00 -0.00 -0.00  |  0.79
+dist  -0.00 -0.00 -0.00  0.01 -0.00  0.06  0.00  0.00  |  1.18
+```
+
+**마스터가 한 번도 움직이지 않았다.** 그러므로 v21 에서 중간마디를 -0.160 에 붙들고 있던 것은
+관절 한계가 아니다 — 한계를 0 으로 열어 주었는데도 사슬 전체가 0 에 그대로 머물렀고, 박히는
+자리만 -0.160 에서 0 으로 옮겨갔을 뿐이다. 위에 적어 둔 "하한 정정" 가설은 기각한다.
+
+f800 이 결정적이다. 물체가 f780 에 빠져나간 **직후** 세 관절이 전부 목표까지 간다(0.49 / 0.79 / 1.18).
+즉 사슬을 붙들고 있던 것은 물체와의 접촉이고, 접촉이 걸린 링크는 전 구간에서 엄지 패드가 아니라
+종동 링크였다:
+
+```
+f520 sum  1409 N  max  628 N  R_thumb_intermediate
+f600 sum  1448 N  max  703 N  R_thumb_intermediate
+f740 sum  1009 N  max  514 N  R_thumb_intermediate
+f760 sum 30779 N  max 23366 N R_thumb_distal        <- v21 최대 1855 N
+f780 sum     0 N  물체 이탈
+```
+
+종동 관절이 마스터와 같은 kp 40 으로 "기어비 x 마스터 q = 0" 을 500~700 N 으로 지켜내면, 엄지는
+굽는 사슬이 아니라 곧은 기둥이 된다. 그 기둥을 pitch 로 자루에 밀어 넣으려다 기하학적으로 막힌다.
+v21 에서는 기둥이 -0.160 에 눌러앉아 있었고, v22 에서 그 자리를 없애자 두 제어기(PhysX mimic 구속과
+kp 40 위치 드라이브)가 경계에서 충돌해 23 kN 이 터졌다. 머리뷰 f780 프레임에서 손가락이 곧게 펴진
+채 망치가 바닥에 놓인 것이 보인다 (`hammer/v22/evidence/head_f780.png`).
+
+`dexsuite_good` 은 f760 까지 True 였다. NVIDIA DexSuite 접촉 기준이 낙하를 예측하지 못한 것이
+v19~v22 네 번 연속이다.
+
+## 마찰은 한 번도 한계가 아니었다 (마찰 계열 노브 전부 제외)
+
+`play_in_cell_opus.py:441` 의 손 재질은 `friction_combine_mode="max"`, 물체 재질
+(`plan_scene.py:116`)은 조합 모드를 설정하지 않아 기본 `"average"` 다. PhysX 조합 우선순위는
+average < min < multiply < **max** 이므로 max 가 이겨 접촉 마찰계수는 `max(10, 3) = 10` 이다.
+0.2 kg 물체를 들기 위한 접선력은 ~2 N 인데 측정된 수직력은 300~800 N 이었다. 마찰 용량은 필요량의
+수천 배였다. `FINGER_MU`/`OBJECT_MU`/조합 모드는 더 이상 후보가 아니다.
+
+참고로 IsaacLab `RigidBodyMaterialCfg` 에는 torsional/rolling 마찰 필드가 없다. NVIDIA 가
+`dynamic_playback.py:186-197` 에서 쓰는 `condim 6` / `mu_torsional` / `mu_rolling` 은 Newton 쪽
+개념이고 PhysX 재질에 대응물이 없으므로, 그 오버라이드를 그대로 옮길 수는 없다.
+
+## 기어비가 제조사 URDF 와 다르다 (부호가 아니라 크기)
+
+`gripper_descriptions/assets/x_grippers/inspire_hand/gripper_spherical_dof.urdf` 의 mimic 태그와
+우리 `build_reach_reference.py:105-109` 를 맞대면:
+
+| 종동 관절 | 제조사 URDF | 우리 에셋 |
+|---|---|---|
+| thumb_intermediate ← thumb_proximal_pitch | x1.334 | x1.6 |
+| thumb_distal ← thumb_proximal_pitch | **x0.667** | **x2.4 (3.6배)** |
+| 네 손가락 intermediate ← proximal | x1.06399, offset -0.04545 | x1.0, offset 없음 |
+
+부호는 문제가 아니다. `build_reach_reference.py:107` 의 주석 "(physxMimicJoint:rotZ, gearing
+negated)" 는 저장된 값이 이미 양수임을 뜻한다. 크기만 다르다. 다만 v22 에서 마스터가 0 을 떠나지
+못한 이상 기어비는 아직 발현되지도 않았으므로, 이것을 지금 고치는 것은 순서가 아니다.
+
+## v24 = 종동 게인만 NVIDIA 비율로 (디스크 폴더는 hammer/v23 이 된다)
+
+`grasp/play_in_cell_opus.py` 에 `MIMIC_SPLIT` 을 넣었다. `HAND=inspire` 이고 `MIMIC_SPLIT=1` 일 때
+`.*_intermediate_joint` / `.*_thumb_distal_joint` 를 `hands` 그룹에서 떼어 `hands_mimic` 그룹으로
+옮기고, 게인만 GraspGenX 비율로 내린다:
+
+```
+종동 kp = 40 x (MIMIC_KP 50 / FINGER_KP 2000) = 40 x 0.025 = 1.0
+종동 kd = 4.0 x (MIMIC_KD 10 / FINGER_KD 200) = 4.0 x 0.05  = 0.2
+```
+
+`soft_mimic()` 의 서브스텝 목표값 재작성(NVIDIA `_set_joint_targets` 에 해당)과 기어비는 건드리지
+않는다. `THUMB_LIMIT_URDF` 는 되돌려 단일 변수로 만든다. 나머지는 v21 과 동일
+(kp 40 / kd 4.0 / effort 30 / armature 0.001, solver 100/50, CoACD intermediate+distal).
+
+사전 등록 합격 기준: (a) f520~f760 에 thumb_proximal_pitch q > 0.1 rad (v21 0.07, v22 0.02)
+(b) 같은 구간에 thumb_intermediate q > 0.1 rad — 종동이 마스터를 따라 굽는다
+(c) 최대 접촉력 < 2000 N (v21 1855, v22 23366) (d) 최고 상승 >= +0.1193 m 이고 dz > -0.05 m.
+
+## 손바닥 접근 후보 재선별 결과: 40개 중 진짜 성공 0개
+
+`test_grasps_in_isaac_opus.py --top 40 --order order_palm.txt` (solver 100/50, kp 40 / kd 4.0):
+
+```
+[test] 1/40 grasps held: #46 (589067 mm)
+[test] grasp #46 conf 0.994 cuRobo 6.7 mm  box at close +0.036  after lift dz +589.067 m -> HELD
+```
+
+`dz +589 m` 는 수치 폭발이지 파지가 아니다. 진짜 유지는 0/40 이고, v19 조건에서 기록한 0/40 과
+같다. 손바닥 접근으로 후보를 갈아 끼워도 결과가 같다는 것은, 지금의 병목이 파지 후보 선택이
+아니라 손이 닫히는 방식에 있다는 뜻이다 — v24 의 우선순위를 뒷받침한다.

@@ -180,6 +180,42 @@ if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_KD"):
     print(f"[hand] squeeze (GraspGenX position-mode gains): kp {_hz.stiffness} "
           f"kd {_rep['damping']} effort {_rep['effort_limit']} "
           f"armature {_rep.get('armature', getattr(_hz, 'armature', None))}")
+
+# --- mimic followers at NVIDIA's ratio, not the master's stiffness -------------
+# Measured, hammer v21/v22: R_thumb_intermediate_joint parked at -0.160 rad -- exactly
+# our USD's lower limit -- for f530..f750 while its master R_thumb_proximal_pitch_joint
+# never left 0.00 against a 0.5 rad target. Raising that lower bound to the URDF's 0
+# (v22, THUMB_LIMIT_URDF) did not free the joint: the thumb contact spiked to 23,366 N
+# at f760 (v21 peak 1,854 N) and the hammer ended 0.2497 m below its start. Two
+# controllers act on one joint -- the asset's PhysX mimic constraint and, because
+# SOFT_MIMIC puts .*_intermediate_joint / .*_thumb_distal_joint in the same actuator
+# group, a position drive at the master's own stiffness. build_reach_reference.py:89-91
+# records the same symptom ("driven as well, they ran to their -0.34 limit while the
+# proximals closed to 1.1").
+# GraspGenX end2end/dynamic_playback.py:69-80 drives followers far softer than masters:
+#     FINGER_KP 2000 / FINGER_KD 200   (masters)
+#     MIMIC_KP    50 / MIMIC_KD    10  (followers)  -> kp x0.025, kd x0.05
+# with the reason stated there: "Keep these gentle so the PD doesn't fight Newton's
+# mimic constraint". MIMIC_SPLIT=1 applies that ratio to the follower joints only and
+# leaves soft_mimic()'s per-substep target rewriting untouched.
+if os.environ.get("HAND") == "inspire" and os.environ.get("MIMIC_SPLIT") == "1":
+    from isaaclab.actuators import ImplicitActuatorCfg as _IAC
+    _h = cfg.actuators["hands"]
+    _foll = [".*_intermediate_joint", ".*_thumb_distal_joint"]
+    _mast = [e for e in _h.joint_names_expr if e not in _foll]
+    if len(_mast) == len(_h.joint_names_expr):
+        print("[hand] MIMIC_SPLIT: no follower joints in the hands group (SOFT_MIMIC off?) -- nothing to split")
+    else:
+        _fkp = float(_h.stiffness) * float(os.environ.get("MIMIC_KP_RATIO", "0.025"))
+        _fkd = float(_h.damping) * float(os.environ.get("MIMIC_KD_RATIO", "0.05"))
+        cfg.actuators["hands"] = _h.replace(joint_names_expr=_mast)
+        cfg.actuators["hands_mimic"] = _IAC(
+            joint_names_expr=_foll, effort_limit=_h.effort_limit,
+            velocity_limit=_h.velocity_limit, stiffness=_fkp, damping=_fkd,
+            armature=_h.armature)
+        print(f"[hand] MIMIC_SPLIT: masters {_mast} kp {_h.stiffness} kd {_h.damping}; "
+              f"followers {_foll} kp {_fkp} kd {_fkd} "
+              f"(GraspGenX MIMIC_KP 50 / FINGER_KP 2000 = 0.025, MIMIC_KD 10 / FINGER_KD 200 = 0.05)")
 # ------------------------------------------------------------------------------
 
 # --- contact solver: GraspGenX's own iteration counts --------------------------
