@@ -2937,3 +2937,37 @@ The fingers are:
 and the render's nearest hand link at the close is 6.9-8.1 cm from the object
 centroid. Why one contacts and the other does not is not yet closed by
 measurement, and is not guessed at here.
+
+## v48 is void: one dropped export line ran the wrong hand (09-29 11:29)
+
+`rg48_chain.sh` was written fresh instead of copied from `rg47_chain.sh`, and lost
+
+```
+export HAND=inspire TIDY_NO_FLOOR_CARTON=1 TIDY_CRATE_ON_DESK="-1.530,..." \
+       OMP_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+```
+
+so the tester fell back to the Dex3 3-finger default while replaying an Inspire
+12-dof hand schedule:
+
+| | v47 (Inspire) | v48 (what actually ran) |
+|---|---|---|
+| hand links kept | 15 | 4 |
+| right finger q | 12 values | 7 values |
+| closed reference | (Inspire) | `[1.57 1.75 1.57 1.75 0 -1.05 -1.5]` |
+| fingertip names | `R_index_intermediate`, `R_thumb_distal` | `index_1`, `middle_1`, `thumb_2` |
+| palm − object | `[0.143 0.054 0.012]` | `[0.122 -0.053 0.256]` |
+
+The object sat at `[-0.295 0.097 0.032]` tilt 6.8° through every phase, including
+the lift that moved it to z 0.218 in v47. So `object followed -0.000 of 0.33 m` is
+not a stand-up measurement — the hand never reached the hammer. `TIDY_*` was lost
+too, so the scene differed as well.
+
+Two further defects in the same script: `build_reach_reference.py` was called with
+the npz first, but `:156` reads `walk_pkl, reach_npz, name = sys.argv[1:4]`, so
+joblib tried to unpickle an npz and died; the render then received a `--walk` path
+that did not exist and exited after 8 s with no mp4. `render exit 0` was not a pass.
+
+**v47's `-0.262 of 0.35 m` remains the only stand-up measurement taken.** v49 is
+`rg47_chain.sh` copied, with exactly two edits: reuse `reach_rg47.npz`, and the
+stand-up (`TEST_RISE_PKL` for the test, `rise_reference.py` so it is in the video).
