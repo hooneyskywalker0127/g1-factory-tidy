@@ -1003,6 +1003,13 @@ if walk is not None:
         if _vmode:
             print(f"[walk] velocity-mode close: kd {os.environ.get('CLOSE_KD', '8.0')}, "
                   f"{_vel[0].cpu().numpy()} rad/s")
+    if os.environ.get("ROOT_SUB", "0") == "1":
+        _ps = np.asarray(walk["pos"], dtype=np.float64)
+        _st = np.linalg.norm(np.diff(_ps, axis=0), axis=1) * 1000.0
+        _ns = max(1, round((1.0 / FPS) / sim.get_physics_dt()))
+        print(f"[walk] ROOT_SUB: the pelvis moves across {_ns} substeps, not in one jump. "
+              f"biggest frame step {_st.max():.2f} mm at frame {int(_st.argmax()) + 1} "
+              f"-> {_st.max() / _ns:.2f} mm per substep (finger contact offset 2.00 mm)")
     if os.environ.get("ROOT_VEL", "0") == "1":
         _ps = np.asarray(walk["pos"], dtype=np.float64)
         _sp = np.linalg.norm(np.diff(_ps, axis=0), axis=1) * FPS
@@ -1038,6 +1045,7 @@ if walk is not None:
         if _settle_at < 0 or not _settle_n or _i <= _settle_at:
             return _i
         return _settle_at if _i <= _settle_at + _settle_n else _i - _settle_n
+    _root_prev = None          # ROOT_SUB: last frame's root, to interpolate from
     for i in range(min(len(walk["dof"]) + _settle_n, int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
         ci = _clip_i(i)
         for k, jid in enumerate(walk_ids):
@@ -1127,9 +1135,23 @@ if walk is not None:
             # a hand that sat a few mm away from where the PD-driven arm had
             # held the clamp (render: the clamp never moved; tester: +79 mm).
             _pd_body = os.environ.get("PD_BODY", "1") == "1"
-            if _pd_body and os.environ.get("SKIP_ROOT_WRITE") != "1":   # SKIP_ROOT_WRITE: diagnostic only
+            # ROOT_SUB: move the pelvis across the frame's substeps instead of
+            # in one jump.  Physics runs at dt = 1/1000 (:109), so a 30 fps
+            # frame is 33 substeps, and the root was written once -- the pelvis
+            # crossed the whole frame's distance inside a single 1 ms step and
+            # then stood still for 32 ms.  Measured in v55/v56 (identical runs):
+            #   hold f700-900 (stable)   1.07 mm/frame -> object rotates 0.1-3 deg
+            #   rise f925-930 (ejected) 14.53 mm/frame -> 94 deg, object at 420 m/s
+            # 14.53 mm in 1 ms is 14.5 m/s, and the finger contact offset is
+            # 2 mm (:261): one step buries the fingers 7x past the contact
+            # margin.  Spread over 33 substeps it is 0.44 mm per step -- the
+            # clip's true speed, and inside the margin.  Joints stay on PD.
+            _nsub = max(1, round((1.0 / FPS) / sim.get_physics_dt()))
+            _root_sub = (os.environ.get("ROOT_SUB", "0") == "1" and _root_prev is not None
+                         and _pd_body and os.environ.get("SKIP_ROOT_WRITE") != "1")
+            if _pd_body and not _root_sub and os.environ.get("SKIP_ROOT_WRITE") != "1":   # SKIP_ROOT_WRITE: diagnostic only
                 robot.write_root_state_to_sim(_root)
-            for _ss in range(max(1, round((1.0 / FPS) / sim.get_physics_dt()))):
+            for _ss in range(_nsub):
                 # write_joint_state_to_sim with a subset pushes the whole joint
                 # buffer to PhysX (articulation.py:616, 646): refreshed once a
                 # frame, it reset the simulated fingers every substep and they
@@ -1139,12 +1161,21 @@ if walk is not None:
                 robot.set_joint_position_target(tgt_q)
                 if _vmode:
                     robot.set_joint_velocity_target(_vel if _squeezing else torch.zeros_like(_vel), joint_ids=_vel_ids)
+                if _root_sub:
+                    _a = float(_ss + 1) / _nsub
+                    _ri = _root_prev * (1.0 - _a) + _root * _a
+                    _q0, _q1 = _root_prev[0, 3:7], _root[0, 3:7]
+                    if float((_q0 * _q1).sum()) < 0.0:      # shortest arc
+                        _ri[0, 3:7] = _q0 * (_a - 1.0) + _q1 * _a
+                    _ri[0, 3:7] = _ri[0, 3:7] / _ri[0, 3:7].norm()
+                    robot.write_root_state_to_sim(_ri)
                 if not _pd_body:
                     robot.write_root_state_to_sim(_root)
                     robot.write_joint_state_to_sim(tgt_q[:, _body_ids], zero[:, _body_ids],
                                                    joint_ids=_body_ids)
                 robot.write_data_to_sim()
                 sim.step()
+            _root_prev = _root.clone()
             robot.update(sim.get_physics_dt())
             _every = int(os.environ.get("OBJ_EVERY", "100"))
             if i % _every == 0 and target_body is not None:
