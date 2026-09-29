@@ -2774,3 +2774,54 @@ the floor, not around the handle, which is one cause for three symptoms:
   SOLVER_IT=100/50, OBJ_MAX_DEPEN_VEL=5) + WAIST_EFFORT=1000, rendering c2 not c0.
   Criterion: does a non-thumb link register force, or best-opposing leave 0.00 N.
 - v47 (queued): POWER_Y 0.035 -> 0.069, pre-compensating the measured 34 mm.
+
+## 260929 v46: the render stalled at frame 70; the only chain that ever raised solver iterations
+
+The v46 render produced no verdict. It is worth writing down because the failure was
+in my own chain, not in the grasp.
+
+Measured:
+
+    render start        10:02:52  (pid 1579885)
+    last log write      10:04:38  = frame 70 of 669, 41191 bytes
+    checked             10:22:01  -> 1043 s with no log growth
+    process             ELAPSED 19:07, CPU TIME 24:28, 127% CPU, STAT Rl, no WCHAN
+    GPU                 2808 MiB, 47% utilisation
+
+Frames 0-70 came out in about 106 s -- normal speed -- and then the process kept
+burning CPU without emitting a single frame. So it is neither deadlocked nor
+uniformly slow; it stopped at one point while still computing. My first reading
+("0.097 frames/s, 103 min for the remaining 599") assumed uniform slowness and was
+wrong; the log mtime refutes that assumption.
+
+What this render alone had:
+
+    play_in_cell_opus.py:254-255   SOLVER_IT defaults to 12, SOLVER_VIT to 4
+    mix46_chain.sh:71-75 exports at script scope, so the render at :102 inherited
+    SOLVER_IT=100 SOLVER_VIT=50 -- 8.3x the position iterations, 12.5x the velocity
+    iterations.
+
+Every render that has ever finished -- 13 of them, v33 through v45 including th44 and
+wf45 -- left SOLVER_IT unset. Grepping every chain still in the scratchpad, mix46 is
+the only one that set it. Those 13 finished 669 frames in 7.5-8 min.
+
+100/50 is not in itself fatal: the same setting ran the tester at 76 s per candidate
+(10:00:18 -> 10:01:36 -> 10:02:52). All that is established is that it broke the
+render, not why.
+
+Action: killed by pid at the 25-min threshold, then re-ran the render with the plan,
+the candidate, the pkl and every other physics setting untouched and only the solver
+iterations back at the default 12/4 ($S/mix46b_chain.sh). The pre-registered
+criterion requires this anyway -- it compares against "0 in all 12 previous renders",
+so the solver condition has to match the renders it is compared with. The v47 chain
+carried the same bug by construction (it was sed-derived from mix46); it was killed
+in its wait loop and requeued with SOLVER_IT confined to the tester command line.
+
+The tester half of v46 did complete and stands:
+
+    c2  cuRobo 18.0 mm  slipped in the stand-up (-0.000 of 0.35 m)  -> LOST
+    c4  cuRobo 18.8 mm  slipped in the stand-up (-0.000 of 0.35 m)  -> LOST
+
+and FINGER_COACD fired for the first time since v32, on both candidates:
+"finger colliders -> convexDecomposition on ('intermediate', 'distal'): 6 meshes
+(GraspGenX coacd_link_keywords)".
