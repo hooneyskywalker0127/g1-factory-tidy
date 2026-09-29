@@ -507,10 +507,25 @@ def main():
         # from f520 to the loss -- the wrap never forms. KEEP=none was the other end and is recorded above as
         # losing the hammer "the moment all fingers and the thumb opened (hammer: at the cradle)", i.e. the
         # thumb is the one that must not open. This is the remaining combination.
+        # REGRASP_KEEP=open (v66): the cradle IS the schedule's open row, every right-hand joint.
+        # Measured reason, from rg64c0.log / rg65c0.log: under CLOSE_MODE=velocity the render puts the
+        # right fingers at stiffness 0 and a constant closing velocity and only restores position control
+        # when the schedule returns to open -- play_in_cell_opus.py:1111 tests
+        #   max|hands[frame] - hands[0]| > 1e-6.
+        # v65's deepest cradle is 1.20 rad away from open, so that test never flips: both logs contain one
+        # transition, "[walk] frame 519: fingers squeeze (velocity)", and no release line. With stiffness 0
+        # the position targets the cradle writes reach no actuator, which is why v64 (KEEP=pinch) and v65
+        # (KEEP=thumb) recorded byte-identical finger q, contact force and object trajectory at every frame
+        # and the same [eval]. A partial open cannot work: the release test is one flag over the whole right
+        # hand, so any joint left closed keeps velocity mode engaged. This is the only cradle the render's
+        # controller can execute.
         _keep = os.environ.get("REGRASP_KEEP", "pinch")
-        _opens = [1, 2, 3] if _keep == "pinch" else [0, 1, 2, 3]
-        for j in _opens: _cradle[j] = cradle; _cradle[j + 6] = 1.064 * cradle - 0.045
-        if _keep == "none": _cradle[[4, 5, 10, 11]] = _open[[4, 5, 10, 11]]
+        if _keep == "open":
+            _cradle = _open.copy()
+        else:
+            _opens = [1, 2, 3] if _keep == "pinch" else [0, 1, 2, 3]
+            for j in _opens: _cradle[j] = cradle; _cradle[j + 6] = 1.064 * cradle - 0.045
+            if _keep == "none": _cradle[[4, 5, 10, 11]] = _open[[4, 5, 10, 11]]
         _th = np.array([False, False, False, False, True, True, False, False, False, False, True, True])
         def ramp(A, B, a_f, a_t):
             h = A.copy(); h[~_th] = A[~_th] + (B[~_th] - A[~_th]) * a_f; h[_th] = A[_th] + (B[_th] - A[_th]) * a_t; return h
