@@ -500,9 +500,17 @@ def main():
         # close round the handle -- first try (rg, hammer/drill, turn -150): the tool rode through the turn, then fell the moment
         # all fingers and the thumb opened (hammer: at the cradle; drill: during the settle). REGRASP_KEEP=none opens everything.
         _cradle = _closed.copy()
-        _opens = [1, 2, 3] if os.environ.get("REGRASP_KEEP", "pinch") == "pinch" else [0, 1, 2, 3]
+        # REGRASP_KEEP=thumb (v65): the four FINGERS all open to the cradle -- including the index, which
+        # KEEP=pinch holds shut -- while the THUMB stays closed as the retainer. Measured in v64 (rg64c0.log):
+        # with KEEP=pinch the handle never leaves the index+thumb pinch, so middle/ring/pinky close on empty
+        # space and park at their 1.70 rad limit while the index/middle intermediates stay blocked at 0.45 rad
+        # from f520 to the loss -- the wrap never forms. KEEP=none was the other end and is recorded above as
+        # losing the hammer "the moment all fingers and the thumb opened (hammer: at the cradle)", i.e. the
+        # thumb is the one that must not open. This is the remaining combination.
+        _keep = os.environ.get("REGRASP_KEEP", "pinch")
+        _opens = [1, 2, 3] if _keep == "pinch" else [0, 1, 2, 3]
         for j in _opens: _cradle[j] = cradle; _cradle[j + 6] = 1.064 * cradle - 0.045
-        if os.environ.get("REGRASP_KEEP", "pinch") != "pinch": _cradle[[4, 5, 10, 11]] = _open[[4, 5, 10, 11]]
+        if _keep == "none": _cradle[[4, 5, 10, 11]] = _open[[4, 5, 10, 11]]
         _th = np.array([False, False, False, False, True, True, False, False, False, False, True, True])
         def ramp(A, B, a_f, a_t):
             h = A.copy(); h[~_th] = A[~_th] + (B[~_th] - A[~_th]) * a_f; h[_th] = A[_th] + (B[_th] - A[_th]) * a_t; return h
