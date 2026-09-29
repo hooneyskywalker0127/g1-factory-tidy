@@ -3128,3 +3128,70 @@ ejector"* — **cannot** explain the tester's kilonewtons, because the tester do
 - Why the renderer reads 0.00 N on the identical twelve link names.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+---
+
+## v51–v53 (2026-09-29): one hypothesis retracted, one defect found in our own env
+
+### Retracted: "the hand closes in a plane that misses the handle"
+
+I wrote this into `v51/note.txt` and `v52/note.txt` as if measured. It is wrong, and GraspGenX's
+own gripper description refutes it three ways. Both notes now carry a `[정정]` section.
+
+1. `gripper_descriptions/assets/x_grippers/inspire_hand/config.json` declares the grasp cavity:
+   `sweep_volume` box1 extents `[0.080, 0.045, 0.040]` at `[0, 0, 0.135]`, box2 `[0.040, 0.045, 0.035]`
+   at `[0, 0, 0.118]`, fingertip `[0, 0, 0.150]`. Transforming 40,000 sampled hammer surface points
+   into each candidate's canonical gripper frame — `inv(plan_from_cell) @ inv(B) @ g`, one step before
+   `grasps_in_cell()` applies `grasp_to_tool_transform` — puts the handle inside the cavity for
+   **156 of 156** candidates (138: 2736 pts, 3: 2922, best 136: 3434).
+2. The links Isaac measured at hold, in that same frame (mm): index_int `[-45.3, 22.5, 118.1]`,
+   pinky_int `[-44.6, -37.8, 119.8]`, thumb_dist `[43.9, 4.9, 131.6]`, object `[0.4, -54.3, 151.1]`.
+   Fingers at z 118–132 is exactly the declared cavity depth 118–135. The frame mapping is right.
+3. The "17–30 mm miss" was a link-origin-to-surface distance, which does not measure contact. Its own
+   refutation is in the data it came from: it called the pinky the furthest pad (34.6 mm) while the
+   pinky carried the most force (56.46 N).
+
+v52 (candidate 3, chosen by that retracted metric) lost the hammer in both testers — consistent.
+
+### Also dead, for free: "the mimic followers are not tracking"
+
+The hold-frame trace already answered it. Right hand `q [1.47 1.47 1.47 1.47 1.3 0.5 | 1.47 1.47 1.47
+1.47 0.8 1.2]`, `target` identical. The four intermediates are at 1.47. The fingers are fully curled.
+No render spent.
+
+### The defect: our own `MIMIC_URDF_RATIO=1` contradicts our own target vector
+
+`MIMIC_URDF_RATIO=1` (set in every chain v47–v52) rewrites the thumb PhysX gearings at
+`grasp/play_in_cell_opus.py:519-565`, from the IsaacLab USD's **−1.6 / −2.4** to the manufacturer
+URDF's **−1.334 / −0.667**:
+
+```
+inspire_hand/gripper.urdf
+  thumb_intermediate  mimic thumb_proximal_pitch  multiplier="1.334"  limit 0..0.8
+  thumb_distal        mimic thumb_proximal_pitch  multiplier="0.667"  limit 0..0.4
+```
+
+The target vector was not rewritten with them. `_closed_one`'s followers `0.8 / 1.2` were derived from
+the old gearings — `0.8 = 1.6 × 0.5`, `1.2 = 2.4 × 0.5` — and Fable's own `stiffen_mimic()` docstring
+in `grasp/build_reach_reference.py` records those native gearings as −1 / −1.6 / −2.4. Under the
+gearing actually in force the correct targets are `1.334 × 0.5 = 0.667` and `0.667 × 0.5 = 0.334`.
+
+So v47–v52 drove **thumb_distal to 1.2 where its four-bar allows 0.334** — 3.6×, and past the URDF's
+own 0.4 limit. The position drive wins (measured `q` == `target` == 1.2), so the thumb was internally
+jammed for the whole grasp, on the link pair carrying 33.42 N at hold.
+
+v53 changes those two numbers and nothing else, on v51's candidate 138, so the comparison is clean.
+Patched in `grasp/build_reach_reference_opus.py` and the three `_closed` sites of
+`grasp/reach_from_pose_opus.py`, guarded by `MIMIC_URDF_RATIO == "1"`; the three opus testers and
+`play_in_cell_opus.py` were rewired to import the opus reference module, without which the patch
+would have been a no-op.
+
+**Pre-registered falsifier.** If at hold the contact links and forces are unchanged (pinky ≈ 56 N,
+thumb_intermediate ≈ 33 N, index 0 N) and the object still leaves with +27 mm, the thumb jam is not
+the cause and I drop it.
+
+### Still open, deliberately not asserted
+
+- `thumb_proximal_pitch` is commanded 0.5 where `config.json`'s `close` says 0.6. Left unchanged in
+  v53 so as not to confound the one change.
+- The render/tester contact disagreement (0.00 N vs kilonewtons) is unexplained.
