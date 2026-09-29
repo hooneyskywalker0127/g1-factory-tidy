@@ -3647,3 +3647,67 @@ v58 폴더는 영상 3개 + evidence 를 갖추되 note.txt 에 무효 실행임
 **v59 는 이번엔 적용됐다**: 로그에
 `[hand] squeeze (GraspGenX position-mode gains): kp 10.0 kd 0.2 effort 200.0 armature 0.001`.
 kp·armature 그대로, kd 는 robot_cfg 자신의 값, effort 만 30 → 200. 14:44:52 시작(pid 2038082).
+
+## 260929 15:05 — v59: effort 30 -> 200 은 손을 감게 했지만 물체를 사출한다
+
+실제로 걸린 변경은 하나다. 렌더 로그가 확인한다:
+`[hand] squeeze (GraspGenX position-mode gains): kp 10.0 kd 0.2 effort 200.0 armature 0.001`
+(v58 에는 이 줄이 없었다.)
+
+`[eval] end pos [-0.2514 0.2685 0.153] dxy 0.2238 m dz -0.0090 m -> LOST`
+
+**손은 감겼다.** 오른손 손가락 q (target 은 velocity mode 라 무의미):
+
+| frame | j0 | j4 | j6 | j10 |
+|---|---|---|---|---|
+| 600 | 0.71 | 1.30 | 0.71 | −0.16 |
+| 700 | 1.35 | 1.23 | −0.22 | −0.16 |
+| 800 | 1.70 | 1.01 | 1.70 | 0.55 |
+| 900 | 1.70 | 1.01 | 1.70 | 0.67 |
+
+v57(effort 30) 은 같은 구간에서 j0 이 1.06 → 0.90 으로 열렸고 j10 은 −0.16 에 고정이었다.
+v58 note 에 적은 반증 기준 — "j10 이 −0.16 정지점에 붙어 있으면 원인은 손 기하다" — 는
+**틀렸다**. j10 은 effort 200 에서 0.67 까지 풀렸다. 원인은 기하가 아니라 effort limit 이었다.
+
+**그러나 같은 effort 가 물체를 밀어냈다.** 접촉력 (N):
+
+| frame | net | sum | max(링크 1개) |
+|---|---|---|---|
+| 600 | 0.86 | 0.86 | 0.86 |
+| 650 | 100.63 | 3705.75 | 1873.63 |
+| 700 | 147.33 | 7257.43 | 3638.00 |
+| 750 | 277.01 | 3289.37 | 1585.90 |
+| 800 | 1.94 | 0.00 | 0.00 |
+| 850 | 1.96 | 0.00 | 0.00 |
+
+sum=0, max=0 은 접촉이 하나도 없다는 뜻이다. f800 부터 망치는 손에 닿아 있지 않고
+net 1.96 N 은 망치 자체 무게다. f750~f800 사이에 사출됐다. 낙하가 아니라 옆으로 튄 것:
+dz −9 mm, dxy 224 mm.
+
+**두 실패는 반대 방향이다.**
+
+| | 손가락 | 물체 |
+|---|---|---|
+| effort 30 (v53~v58) | 역구동되어 열림 | 손 안에서 100 mm 기어 나감 |
+| effort 200 (v59) | 1.70 까지 완전히 닫힘 | f750~f800 에 사출 |
+
+### v60 — CLOSE_KD 800 -> 40 (한 줄)
+
+velocity mode 에서 손가락이 막혀 멈추면 실제 속도는 0 이므로 정지 토크 = CLOSE_KD × CLOSE_VEL.
+- v59: 800 × 0.25 = **200 N·m = effort ceiling 200** → 항상 포화, 조절이 없다
+- v60: 40 × 0.25 = **10 N·m** < ceiling 200 → ceiling 이 걸리지 않는다
+
+10 N·m 은 Inspire 제조사 URDF 가 12개 손가락 관절 전부에 적는 `effort="10"` 과 같다
+(`GraspGenX/ext/gripper_descriptions/.../inspire_hand/gripper.urdf`).
+GraspGenX 는 velocity mode 의 정지 원리를 "contact equilibrium stops the motion"
+(`end2end/dynamic_playback.py:645`) 이라고 적는다. 포화 상태에서는 이 평형이 성립할 수 없다.
+
+반증 기준: f650~f750 max 접촉력이 1000 N 아래로 내려가고 f800 이후 sum > 0 이면 방향이 맞다.
+손가락이 중간에서 멈추고 net 이 무게 수준(~2 N)에 머물며 물체가 기어 나가면 10 N·m 은
+너무 약한 것이고 답은 10~200 N·m 사이다.
+
+**참고 — GraspGenX 의 Inspire 프로파일 자체 값**: `g1_inspire_arm.yaml` / `g1_inspire_palm_arm.yaml`
+은 close velocity 0.25 (우리와 같음), `finger_effort_limit: 1000.0`, `finger_velocity_kd`
+미지정(기본 800). 그 조합의 정지 토크도 200 N·m 이고 ceiling 1000 이라 포화는 아니다.
+우리가 1000 으로 올리지 않는 이유는, v59 가 보여준 사출이 ceiling 때문이 아니라
+정지 토크 200 N·m 자체 때문이기 때문이다 — ceiling 을 올리면 포화만 풀릴 뿐 조임은 그대로다.
