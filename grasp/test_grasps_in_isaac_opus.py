@@ -184,6 +184,37 @@ _fm.func("/World/G1/FingerMaterial", _fm)
 sim_utils.bind_physics_material("/World/G1", "/World/G1/FingerMaterial")
 build_plan_scene(stage, app, meta, torso_pose((-1.30, -0.60, SPAWN_Z), math.radians(-90.0)))
 floor_slab(stage)
+
+# --- depenetration cap on the object body, ported from play_in_cell_opus.py:700-715 ---
+# Measured in hammer/v53 c0 with TURN_TRACE: at f232 the hammer sits in the hand at
+# |v| 0.078 m/s, |w| 2.19 rad/s; one frame later (33 ms) it reads |v| 2.763 m/s,
+# |w| 30.40 rad/s, and from there x and y hold at -0.82 / +1.93 while z falls by
+# exactly g/30 per frame -- pure ballistic, nothing touching it. About 2.7 J appears
+# in one step. No contact force does that; it is the solver pushing a penetrating
+# pair apart. The wrist is innocent over the same frames: cmd == got to three
+# decimals on all three joints, torques 0.1-15 Nm, velocities ~0.
+#
+# The cap that bounds exactly this quantity was implemented only in the render
+# (grep OBJ_MAX_DEPEN_VEL: play_in_cell_opus.py, nowhere else), so every tester run
+# to date has been uncapped while the chain exported a value to both. Same class of
+# defect as MIMIC_URDF_RATIO.
+#
+# Value: IsaacLab authors this on every Unitree robot it ships --
+# isaaclab_assets/robots/unitree.py has max_depenetration_velocity=1.0 at six sites,
+# G1 among them. Its manipulation configs use 5.0, which the render already sets and
+# which would NOT bind here (2.76 < 5). 1.0 binds, and cuts the injected kinetic
+# energy by (2.76/1.0)^2 = 7.6x.
+_mdv = os.environ.get("OBJ_MAX_DEPEN_VEL", "")
+if _mdv:
+    from pxr import PhysxSchema as _PxS2
+    _tp2 = stage.GetPrimAtPath(os.environ.get("TARGET_PRIM", "/World/GraspTarget"))
+    if _tp2 and _tp2.IsValid():
+        _PxS2.PhysxRigidBodyAPI.Apply(_tp2).CreateMaxDepenetrationVelocityAttr(float(_mdv))
+        _rb = _PxS2.PhysxRigidBodyAPI(_tp2).GetMaxDepenetrationVelocityAttr().Get()
+        print(f"[phys] object maxDepenetrationVelocity authored {_mdv} -> reads back {_rb} m/s"
+              + ("  <<< DID NOT REACH THE BODY" if _rb is None or abs(float(_rb) - float(_mdv)) > 1e-6 else ""), flush=True)
+    else:
+        print(f"[phys] OBJ_MAX_DEPEN_VEL={_mdv} BUT TARGET PRIM NOT FOUND  <<<", flush=True)
 box = RigidObject(RigidObjectCfg(prim_path=os.environ.get("TARGET_PRIM", "/World/GraspTarget"), spawn=None))
 # The rigid body's origin is the mesh origin, which for the lying tools sits
 # 16 cm above the bottom of the mesh -- a can knocked over by the fingers
