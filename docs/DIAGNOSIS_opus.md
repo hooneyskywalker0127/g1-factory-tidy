@@ -2971,3 +2971,79 @@ that did not exist and exited after 8 s with no mp4. `render exit 0` was not a p
 **v47's `-0.262 of 0.35 m` remains the only stand-up measurement taken.** v49 is
 `rg47_chain.sh` copied, with exactly two edits: reuse `reach_rg47.npz`, and the
 stand-up (`TEST_RISE_PKL` for the test, `rise_reference.py` so it is in the video).
+
+## v49: the hammer is thrown, not dropped — and the render says the same (09-29 11:45)
+
+**The stand-up hypothesis is refuted by measurement.** v48's intent (replace the
+vertical root write with the planner's own articulated stand-up) ran correctly in
+v49. It changes nothing:
+
+| stand-up | rise | object followed |
+|---|---|---|
+| v47 c0  vertical root write            | 0.35 m | −0.262 |
+| v49 c0  planner clip (legs/waist/torso) | 0.33 m | **−0.266** |
+| v47 c1 / v49 c1                         |        | −0.298 / **−0.294** |
+
+4 mm apart. Speed is eliminated too: v49's rise at `TEST_RISE_SLOW=2` is slower
+than the lift (0.19 m/s) and lost more. The pick is frame-for-frame identical to
+v47 (hold2 f375 `object [-0.28 -0.007 0.296] tilt 121.5 deg`), so the pipeline is
+deterministic and v48's difference really was the wrong hand.
+
+**What the rise probe measured** (`grasp/test_rise_probe_opus.py`, an instrumented
+copy — the running file was not edited; 11 lines in
+`results/fable40/rise_probe_c0.txt`):
+
+```
+f  0  palm [-0.124  0.079 0.304]  object [-0.269  0.041 0.281]  fing 1.34
+f  9  palm [-0.196  0.027 0.441]  object [-0.443 -0.068 0.518]  fing 1.38
+f 12  palm [-0.271 -0.024 0.540]  object [-0.687 -0.042 0.674]  fing 1.43
+f 18  palm [-0.447 -0.135 0.650]  object [-1.224 -0.030 0.070]  fing 1.53
+f 30  palm [-0.855 -0.352 0.657]  object [-1.260  0.066 0.031]  fing 1.70
+```
+
+- The object is **77 mm above the palm at f9 and 134 mm above at f12**. A dropped
+  object does not go above the hand.
+- It reaches x −1.30: over a metre from the hand, gaining 255 mm of z in ~0.1 s
+  (≈2.5 m/s).
+- The palm rotates less than 9° in roll and pitch through the whole rise, so hand
+  rotation is measured and small.
+- The fingers **never stop closing**: 1.34 → 1.70 (saturation), thumb 0.03 → 0.95.
+
+**The render now agrees with the tester for the first time.** v49's render ends at
+`[eval] dxy 1.3725 m, dz −0.0543` — the hammer 1.37 m from the target. Every
+previous render ended with the object where it started (v47: dxy 0.0381). The
+ejection reproduces in both.
+
+**The number that selects the next change.** The fingers advance 0.36 rad in 2.0 s
+= 0.18 rad/s against a commanded `CLOSE_VEL=0.25` — 72% of the free closing rate.
+With `stiffness 0` the squeeze torque is `kd·(v_target − v)` = 40 × 0.07 =
+**2.8 N·m**. The wrap never reached contact equilibrium; it was sweeping through
+the object at 2.8 N·m.
+
+**The open source documents this symptom at our exact values.**
+`end2end/dynamic_playback.py:641-647`: "Closing happens by setting joint_target_vel
+to a constant closing rate during the close phase; *contact equilibrium stops the
+motion*. Match `newton_grasp_eval.py`'s `FINGER_KD=800`." — default 800.
+`end2end/robots/g1_right_arm.yaml:63-72`: "The UR10e profiles override it down to
+50, and *at 50 this hand's thumb was pushed back open by the object*"; and
+`finger_effort_limit: 1000.0`, "1000, not surge_hand's 200 … 'finger_effort_limit
+(default 200 N in dynamic_playback) was the previous bottleneck' — and *the object
+was sliding out of a grip that closed but could not hold*."
+
+We ran `CLOSE_KD=40` (below the 50 the source records as failing on this very hand)
+and `HAND_EFFORT=200` (the value the source names as the bottleneck).
+
+**v50 = one change, the source's velocity-close gain pair:** `CLOSE_KD 40 → 800`,
+`HAND_EFFORT 200 → 1000`. Falsifier: if the probe still shows the fingers moving at
+>70% of free rate, the gains are not the cause and `OBJ_MAX_DEPEN_VEL=5` is next.
+
+**Two candidate mechanisms for the ejection remain open and neither is established:**
+the still-velocity-driven fingers, and `OBJ_MAX_DEPEN_VEL=5` permitting a 5 m/s
+de-penetration push. The probe is consistent with both.
+
+### Process defect fixed alongside
+v49's folder stood empty for 20 minutes because the chain shell exited after
+launching the render, taking the mp4 copy step with it. A separate watcher now does
+the copy. v33, v34 and v48 never built a motion file at all, so nothing could be
+rendered for them; they were moved to `_무효_영상없음/` rather than left as empty
+version folders. v35–v49 now all carry their three videos.
