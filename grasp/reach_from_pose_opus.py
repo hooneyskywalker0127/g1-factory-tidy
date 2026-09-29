@@ -606,6 +606,20 @@ def main():
         _open = np.array([0, 0, 0, 0, 1.308, 0, 0, 0, 0, 0, 0, 0], float)
         _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.5, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)
         _hookq = _open.copy(); _hookq[[0, 1, 2, 3]] = hook; _hookq[[6, 7, 8, 9]] = 1.064 * hook - 0.045
+        # POWER_THUMB_HOOK (0..1): curl the thumb by this fraction of _closed during the descent and slide.
+        # POWER_HOOK above curls slots 0-3 and 6-9 (the four fingers) but leaves the thumb (4, 5, 10, 11) fully
+        # open, so the thumb tip is the lowest point of the hand coming straight down: measured on the v43 tester
+        # at the grasp pose, thumb_distal sits 14-46 mm below index_intermediate on all 8 candidates (c0 15.0 mm,
+        # c1 46.0, c2 14.0, c3 25.0, c4 16.0, c5 31.0, c6 16.0, c7 29.0; box-relative = body_pos_w - object
+        # root_pos_w, world axes). The force trace shows what that costs: contact44.log, 135 [force] frames, the
+        # ONLY links ever to register force are R_thumb_proximal_base (20 frames), R_thumb_proximal (19) and
+        # R_thumb_intermediate (5) -- index/middle/ring/pinky read 0 N at every frame, best-opposing 0.00 N
+        # throughout. Contact opens at frame 465, 39 frames BEFORE the hand lands at 504, peaks at 4269.82 N on a
+        # 0.2 kg object and shoves the hammer 4.8 cm in -x; by the close (549) and the lift (609) there is no force
+        # left and the fingers reach q == target == 1.47, a full fist closed on air. Slot 4 is the thumb's
+        # abduction and is 1.308 in both _open and _closed, so it is left alone. 0.0 = the v43 schedule exactly.
+        _thook = float(os.environ.get("POWER_THUMB_HOOK", "0"))
+        _hookq[[5, 10, 11]] = _thook * _closed[[5, 10, 11]]
         _fing = np.array([True, True, True, True, False, False, True, True, True, True, False, False])
         seqs, errs, hands_all = [], [], []
         for k, Tg in enumerate(wrists):
