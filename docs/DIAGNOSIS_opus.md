@@ -2891,3 +2891,49 @@ wins regardless of the verdict. Criteria are pre-registered in
 `.../09/260929/5지/hammer/v47/note.txt`: object followed >= +0.10 m of 0.35 m,
 tilt at the close < 30 deg with < 50 mm of object travel, and a non-thumb link
 carrying force in more than 0 frames.
+
+## v47: the hammer left the floor for the first time; the loss is in the stand-up (09-29 11:20)
+
+GraspGen-X's own pinch #138, lifted, then wrapped in the air (`--regrasp-wrap`,
+a path written 09-28 and never run). Solver at the source's 100/50.
+
+| phase | c0 (turn -150) | c1 (turn -120) |
+|---|---|---|
+| pinch f165 | z 0.032 | z 0.032 |
+| lift f225 | **z 0.218** (+186 mm off the floor) | |
+| turn f285 | z 0.302 tilt 116 | z 0.323 tilt 110 |
+| cradle f305 | z 0.305 | z 0.321 |
+| wrap f345 | z 0.289 tilt 126 | z 0.328 tilt 104 |
+| hold2 f375 | z 0.296 | z 0.329 |
+| stand-up | **-0.262 of 0.35** LOST | **-0.298 of 0.35** LOST |
+
+Held airborne for 180 frames (6 s). Every earlier run reported `object
+followed +0.000`. The failure recorded in `reach_from_pose_opus.py:499-501`
+("fell the moment all fingers and the thumb opened -- hammer: at the cradle")
+did not reproduce: `REGRASP_KEEP=pinch` carried both candidates through it.
+
+**The stand-up is the only remaining loss, and it is driven differently from
+the one segment that works.** The lift moves the arm joints and the object
+follows 186 of 186 mm. The stand-up freezes the arm dofs and writes the root
+alone, with the root's linear and angular velocity written as zero
+(`test_grasps_in_isaac_opus.py:293`); the object follows -262 of +350 mm. The
+rise speed is not the difference: 0.236 m/s equals the planner's own
+0.35 m / 1.5 s. I am not asserting the root write is the cause -- the measured
+fact is the asymmetry. `:629` already calls this vertical raise "a stand-in"
+and offers `TEST_RISE_PKL` (the planner's own stand-up, legs/waist/torso
+pitching) quoting Sehoon; that path had never been run. v48 runs it.
+
+### Still open: the render does not reproduce the tester
+
+v47's render: `[eval] dz -0.0075`, every hand-link contact force 0.00 N for all
+789 frames, object net force 1.96-2.04 N (its own 0.2 kg weight). The object
+pose is *not* the divergence -- both runs spawn at `[-0.3 0.05 0.162]` and the
+render's own `[near] centroid [-0.295 0.096 0.032]` matches the tester to 1 mm.
+The fingers are:
+
+    tester  q 1.31 1.32 1.33 1.35  (target 1.47)  -> stopped by the hammer
+    render  q 1.70 1.70 1.70 1.70  (target 1.47)  -> curled past target, nothing blocking
+
+and the render's nearest hand link at the close is 6.9-8.1 cm from the object
+centroid. Why one contacts and the other does not is not yet closed by
+measurement, and is not guessed at here.
