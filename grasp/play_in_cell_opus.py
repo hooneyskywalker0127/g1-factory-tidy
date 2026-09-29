@@ -1003,6 +1003,12 @@ if walk is not None:
         if _vmode:
             print(f"[walk] velocity-mode close: kd {os.environ.get('CLOSE_KD', '8.0')}, "
                   f"{_vel[0].cpu().numpy()} rad/s")
+    if os.environ.get("ROOT_VEL", "0") == "1":
+        _ps = np.asarray(walk["pos"], dtype=np.float64)
+        _sp = np.linalg.norm(np.diff(_ps, axis=0), axis=1) * FPS
+        print(f"[walk] ROOT_VEL: writing the clip's root velocity, not zero "
+              f"(IsaacLab humanoid_amp_env.py:165-166). clip root speed "
+              f"mean {_sp.mean():.3f} m/s, max {_sp.max():.3f} m/s at frame {int(_sp.argmax()) + 1}")
     for _i in range(int(os.environ.get("DIAG_IDLE_FRAMES", "0"))):        # diagnostic: step with no writes at all, watch the object
         for _ss in range(max(1, round((1.0 / FPS) / sim.get_physics_dt()))):
             sim.step()
@@ -1078,10 +1084,41 @@ if walk is not None:
                     robot.write_joint_damping_to_sim(float(os.environ.get("CLOSE_KD", "8.0")) if _want else _damp0,
                                                      joint_ids=_vel_ids)
                 robot.set_joint_velocity_target(_vel if _squeezing else torch.zeros_like(_vel), joint_ids=_vel_ids)
+            # ROOT_VEL: write the clip's own root velocity instead of zero.
+            # IsaacLab's own motion replay does exactly this --
+            # direct/humanoid_amp/humanoid_amp_env.py:165-166 fills
+            # root_state[:, 7:10] / [10:13] from the clip's
+            # body_linear_velocities / body_angular_velocities, and its
+            # motion_loader carries a velocity per frame beside every pose.
+            # Ours wrote zeros, so the solver is told the pelvis is standing
+            # still while it is in fact being teleported. Measured in v55:
+            #   hold  f700-900 (stable)  root steps 1.07 mm/frame, object
+            #                            rotates 0.1-3 deg/sample
+            #   rise  f915-920           2.63 mm   ->  9.3 deg
+            #   rise  f920-925           6.79 mm   -> 44.8 deg
+            #   rise  f925-930 (ejected) 13.00 mm (max 14.5) -> 94 deg,
+            #                            object leaves at 420 m/s
+            # The finger contact offset is 2 mm: the stable hold stays inside
+            # it, the 14.5 mm step is 7x past it, and the declared velocity is
+            # 0 where the true one is 0.44 m/s.
+            _rv = [0.0] * 6
+            if os.environ.get("ROOT_VEL", "0") == "1" and 0 < ci < len(walk["pos"]) - 1:
+                _p0, _p1 = walk["pos"][ci - 1], walk["pos"][ci + 1]
+                _rv[:3] = [float((_p1[k] - _p0[k]) * FPS / 2.0) for k in range(3)]
+                _a, _b = walk["quat"][ci - 1], walk["quat"][ci + 1]      # xyzw
+                # dq = b * conj(a); omega_world = 2 * dq.xyz / dt (small angle)
+                _ax, _ay, _az, _aw = (-_a[0], -_a[1], -_a[2], _a[3])
+                _bx, _by, _bz, _bw = _b
+                _dx = _bw * _ax + _bx * _aw + _by * _az - _bz * _ay
+                _dy = _bw * _ay - _bx * _az + _by * _aw + _bz * _ax
+                _dz = _bw * _az + _bx * _ay - _by * _ax + _bz * _aw
+                _dw = _bw * _aw - _bx * _ax - _by * _ay - _bz * _az
+                _sg = 1.0 if _dw >= 0 else -1.0                          # shortest arc
+                _rv[3:] = [float(2.0 * _sg * v * FPS / 2.0) for v in (_dx, _dy, _dz)]
             _root = torch.tensor(
                 [[float(walk["pos"][ci][0]), float(walk["pos"][ci][1]),
                   float(walk["pos"][ci][2]), float(q[3]), float(q[0]),
-                  float(q[1]), float(q[2]), 0, 0, 0, 0, 0, 0]],
+                  float(q[1]), float(q[2])] + _rv],
                 dtype=torch.float32, device=sim.device)
             # PD_BODY (default 1, as in test_grasps_in_isaac.py): the joints
             # run on their PD drives and the root is placed once per frame,
