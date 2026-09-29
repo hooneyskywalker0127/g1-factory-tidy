@@ -3758,3 +3758,60 @@ v59 납품 폴더를 덮어쓸 뻔했다 (`/proc/<pid>/fd/1` 이 `rg59c0.log` �
 v60 재실행 확인 줄 (15:14):
 `[hand] squeeze (GraspGenX position-mode gains): kp 10.0 kd 0.2 effort 30.0 armature 0.001`
 `[walk] velocity-mode close: kd 8000, [0.25 ... 0. ... 0.25] rad/s`
+
+## 260929 15:26 — v60: CLOSE_KD 8000 은 더 크게 사출한다. 접촉력을 정하는 것은 kd 다
+
+[eval] end pos [-1.457 1.0487 0.153]  dxy 1.5284 m  -> LOST.
+손목 기준 f750 [140 20 40] mm -> f900 [1320 -1000 150] mm.
+
+접촉력 net/sum (N): f650 173/1911, f700 365/1879, **f750 5975/6560**, f800 이후 0/0.
+
+기록해 둔 반증 기준("미끄러짐 10 mm, sum ~600 N, net 무게 수준")은 충족되지
+않았다. **가설은 틀렸다.** 정지 토크 계산 min(8000x0.25, 30)=30 은 v57 과 같은데
+접촉력은 4.5 배가 됐다. 드라이브 힘 상한은 닫힘 접촉력을 정하지 않는다. 접근
+강성 kd 가 정한다 — 손가락이 더 단단히 추종할수록 충돌 충격량이 커지고, 이
+충격량은 상한과 무관하다. GraspGenX dynamic_playback.py 주석의 "objects being
+launched by close-time contact impulse spikes" 와 같은 현상.
+
+측정으로 닫힌 브라켓 (v57 이 여전히 최선):
+| | sum(N) | net 최대(N) | 결과 |
+|---|---|---|---|
+| kd 800 / effort 30 (v57) | ~600 유지 | 351 | 천천히 미끄러짐 |
+| kd 800 / effort 200 (v59) | 7257 | 1405 | 사출 |
+| kd 8000 / effort 30 (v60) | 6560 | 5975 | 사출 |
+
+## 260929 15:31 — v61: 벌어지는 관절은 엄지 외전 하나다
+
+v57/v60 의 배달된 render.log 에서 손가락 q 를 f900 까지 읽었다. 잡고 있는 동안
+벌어지는 관절은 **R_thumb_proximal_yaw(엄지 외전) 하나뿐**이다.
+
+    v57  yaw  f650 1.22  f700 1.11  f750 1.01  f800 0.98   (1.30 -> 0.98, -18도)
+         네 손가락 proximal 은 같은 구간 1.06 -> 1.00 유지
+         R_thumb_proximal_pitch(엄지 닫는 마스터) 는 f900 까지 0.0
+    v60  yaw  1.30 -> 1.19 (사출 전까지 같은 방향)
+
+엄지는 물체를 누르지 못하고, 손의 유일한 대향 부재가 벌어진다. 네 손가락이
+망치를 손아귀 밖으로 밀어내는 그림이 여기서 나온다.
+
+이 관절만 속도 목표가 0 이다(open 1.308 == closed 1.308 이라 sign(c-o)=0).
+0.32 rad / 5.0 s = 0.064 rad/s 를 kd 800 에서 막으려면 51 Nm 가 필요한데 상한은
+30 Nm 다. 상한이 허용하는 표류 속도 30/800 = 0.038 rad/s 는 측정값과 같은
+자릿수다. **이 관절을 벌어지게 두는 것은 kd 가 아니라 상한이다.**
+
+v61 = v57 물리 그대로 + `YAW_EFFORT=1000`: 닫힘 목표 속도가 0 인 관절에만
+per-joint effort limit 1000 Nm(`write_joint_effort_limit_to_sim`). 닫는 관절
+12 개는 30 그대로이므로 v59 식 사출은 구조적으로 불가능하다 — 이 관절은 닫는
+동작을 하지 않는다.
+
+오픈소스 근거: GraspGenX `end2end/robots/g1_inspire_arm.yaml` 의
+`gripper_close_velocity: right_hand_thumb_0_joint: 0.0` (우리와 같은 처리) 와
+`dynamic: finger_effort_limit: 1000.0` (200 도 30 도 아니다),
+`dynamic_playback.py:647 finger_velocity_kd` 기본 800 (= 우리 CLOSE_KD).
+
+확인줄 3 개 모두 실행 중 확인:
+    [hand] squeeze ... effort 30.0
+    [walk] velocity-mode close: kd 800, [... 0. ...] rad/s
+    [hand] YAW_EFFORT: 1000 Nm on the held-velocity joint(s) ['R_thumb_proximal_yaw_joint']
+
+반증 기준: yaw 가 f650..f900 동안 1.30 +-0.02 를 유지하는데도 손목 기준
+미끄러짐이 80 mm 를 넘으면 이 가설은 틀린 것이다.

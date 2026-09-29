@@ -1003,6 +1003,31 @@ if walk is not None:
         if _vmode:
             print(f"[walk] velocity-mode close: kd {os.environ.get('CLOSE_KD', '8.0')}, "
                   f"{_vel[0].cpu().numpy()} rad/s")
+        # --- YAW_EFFORT: the held joint is the thumb's abduction ----------------
+        # The one joint in _vel_ids whose close velocity is 0 is
+        # R_thumb_proximal_yaw (open 1.308 == closed 1.308, so sign(c-o) == 0).
+        # GraspGenX holds the same joint the same way -- robots/g1_inspire_arm.yaml
+        # gripper_close_velocity right_hand_thumb_0_joint: 0.0, in velocity mode at
+        # finger_velocity_kd (dynamic_playback.py:647, default 800) -- but that
+        # profile's `dynamic: finger_effort_limit` is 1000.0, not the 200 default
+        # (:689) and not our 30.
+        # Measured here, hammer v57 (CLOSE_KD 800, effort 30), the delivered
+        # evidence/render.log: the yaw is back-driven 1.30 -> 0.98 rad (-18 deg)
+        # over f650..f800 while the four proximals hold near 1.0, i.e. the hand's
+        # only opposing member is the one that gives way. 0.32 rad in 5.0 s =
+        # 0.064 rad/s; at kd 800 holding that rate needs 51 Nm, above the 30 Nm
+        # ceiling, and 30/800 = 0.038 rad/s is the drift rate the ceiling allows --
+        # the same order as the 0.064 measured. So the ceiling, not kd, is what
+        # lets the thumb spread. It cannot cause a close-time impulse the way
+        # HAND_EFFORT 200 did in v59: this joint's velocity target is 0.
+        if _vmode and os.environ.get("YAW_EFFORT"):
+            _held = [j for j, v in zip(_vel_ids, _vel[0].tolist()) if abs(v) < 1e-9]
+            if _held:
+                robot.write_joint_effort_limit_to_sim(float(os.environ["YAW_EFFORT"]),
+                                                      joint_ids=_held)
+                print(f"[hand] YAW_EFFORT: {os.environ['YAW_EFFORT']} Nm on the held-velocity "
+                      f"joint(s) {[robot.joint_names[j] for j in _held]}; the closing joints "
+                      f"stay at {os.environ.get('HAND_EFFORT', '200')} Nm")
     if os.environ.get("ROOT_SUB", "0") == "1":
         _ps = np.asarray(walk["pos"], dtype=np.float64)
         _st = np.linalg.norm(np.diff(_ps, axis=0), axis=1) * 1000.0
