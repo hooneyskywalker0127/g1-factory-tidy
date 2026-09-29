@@ -3341,3 +3341,55 @@ f233 이후 x, y 성분이 `-0.82, 1.93` 으로 **고정**이고 z 만 프레임
 과하게 말려 있던 엄지가 테스터에서 망치를 붙잡고 있었을 가능성이 있다.
 **확정이 아니다** — 같은 씬을 옛 기어비로 한 번 더 돌려야 가른다.
 
+
+## 260929 13:40 — 손실은 기립이 아니라 이른 들어올리기다 (v53/v54 렌더 계측)
+
+두 후보의 납품 렌더에서 같은 프레임, 같은 값이 재현된다.
+
+| | 닫힘 명령 | 들어올리기 시작 | 그때 검지 근위 | 목표 1.47 도달 | 물체 손실 |
+|---|---|---|---|---|---|
+| v53 c1 | f549 | f609 | 0.58 | f700 | f630 (z 0.163→0.347, 발사) |
+| v54 c0 | f549 | f609 | 0.58 | f700 | f660 (\|v\| 1.34 m/s) |
+
+손은 40 % 닫힌 채로 물체를 든다. 기립은 v54 기준 f909 부터이므로, 손실은
+기립보다 249 프레임 앞선다. `[eval]` 의 "slipped in the stand-up" 은 사건을
+잘못 가리킨다.
+
+**원인은 값이 아니라 일정이다.** 우리 값은 GraspGenX 원본과 이미 같다:
+
+- `CLOSE_VEL 0.25` = `gripper_close_velocity` 0.25 (g1_inspire_arm.yaml,
+  g1_inspire_palm_arm.yaml, g1_right_arm.yaml 셋 다)
+- `CLOSE_KD 800` = newton_grasp_eval `FINGER_KD` 800
+- `HAND_EFFORT 1000` = `finger_effort_limit: 1000.0`
+- 물체 마찰 10.0 = `DEFAULT_OBJECT_MU`, `FINGER_MU 3.0` = `DEFAULT_FINGER_MU`
+  (게다가 `friction_combine_mode="max"` 라 유효 마찰은 10.0)
+
+다른 것은 GraspGenX `end2end/tasks.py:267-278` 의 `hold_after_close` 구간이
+우리 일정에 없다는 것뿐이다. 그 주석이 우리 증상을 그대로 적고 있다:
+"a gripper that closes slowly (e.g. velocity-mode multi-finger hands) needs
+LONGER here so the fingers fully settle on the object before the lift —
+otherwise the object slips out (premature lift)."
+
+1.47 rad 를 0.25 rad/s 로 닫으려면 176 프레임(실측 151)이 드는데 일정은 60 을
+준다. 모자란 91 프레임이 이 실패의 크기다.
+
+조치: `grasp/build_reach_reference_opus.py` 에 `HOLD_AFTER_CLOSE` 를 넣었다.
+v55 는 120 프레임으로 돌고 있고, 로그가 간격 60 → 180 을 확인해 준다
+(`hands close at frame 519 ... lift from 699`).
+
+### 철회: "엄지가 닫히지 않는다"
+
+테스터 `ab_rg54_c0.txt` 의 `thumb_proximal_pitch q 0.01 (목표 0.6)` 로 엄지
+결함을 주장했으나, 같은 관절을 렌더 로그는 0.5 로, 네 손가락은 1.7 로 읽는다.
+**렌더에서 손은 주먹까지 닫힌다.** 0.01 은 테스터 쪽 수치이며 납품 영상의
+실패를 설명하지 않는다. 커밋 f41ad17 이 적어둔 "테스터와 렌더가 서로 다른
+엄지를 구동한다"와 같은 결함이다. 엄지 관련 변경(THUMB_LIMIT_URDF, MIMIC_SPLIT)은
+이 숫자로 정당화되지 않으므로 넣지 않았다.
+
+### 남은 결함 (사실만)
+
+- 체인의 `BEST` 선택이 `max(object followed)` 라, 물체가 이미 바닥에 있어
+  움직이지 않은 후보를 고른다. hold2 에서의 물체–손바닥 거리로 판정해야 한다.
+- 렌더는 모든 프레임에서 접촉력 `0.00 N` 을 보고하는데 테스터는 킬로뉴턴을
+  보고한다. 둘 중 하나는 접촉을 보지 못하고 있다. 원인 미상.
+- v48 폴더가 없다 (v47 다음이 v49).

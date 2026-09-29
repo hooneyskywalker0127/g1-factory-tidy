@@ -204,6 +204,28 @@ def main():
             qb = -qb
         q = (1 - a) * qa + a * qb
         qpos_r[i, 3:7] = q / np.linalg.norm(q)
+    # HOLD_AFTER_CLOSE -- GraspGenX's own segment between close_fingers and lift_object
+    # (end2end/tasks.py:267-278): "Hold AFTER close before lifting. Default = hold_frames,
+    # but a gripper that closes slowly (e.g. velocity-mode multi-finger hands) needs LONGER
+    # here so the fingers fully settle on the object before the lift -- otherwise the object
+    # slips out (premature lift)." Our schedule has no such segment: it goes close -> lift
+    # with only the CLOSE_RAMP frames in between.
+    # Measured in the delivered renders, both candidates, same frame:
+    #   close commanded f549, lift starts f609, R_index_proximal reaches its 1.47 target f700.
+    #   v53 c1: lift begins at prox 0.58 (40% closed); obj z 0.163 -> 0.244 -> 0.347 over
+    #           f625-635 (launched), on the floor by f655.
+    #   v54 c0: lift begins at prox 0.58; obj rides to z 0.310 at f655 (prox 1.02), then
+    #           |v| 1.34 m/s at f660 and through the floor by f670.
+    # The close needs 151 frames at CLOSE_VEL 0.25 rad/s (GraspGenX's own value, every
+    # profile incl. g1_inspire_arm.yaml); the schedule gives it 60. Deficit 91 frames.
+    _hac = int(os.environ.get("HOLD_AFTER_CLOSE", "0"))
+    _lift_r = int(d["lift_from"])
+    if _hac > 0 and 0 < _lift_r <= len(qpos_r):
+        qpos_r = np.concatenate([qpos_r[:_lift_r],
+                                 np.repeat(qpos_r[_lift_r - 1:_lift_r], _hac, axis=0),
+                                 qpos_r[_lift_r:]], axis=0)
+        print(f"[ref] HOLD_AFTER_CLOSE: {_hac} frames held at the grasp pose before the lift "
+              f"(reach lift_from {_lift_r} -> {_lift_r + _hac}); close needs 151, had 60")
     qpos = np.concatenate([qpos_w, qpos_r, np.repeat(qpos_r[-1:], hold, axis=0)], axis=0)
     out = os.path.join("results", "motion", f"{name}.pkl")
     joblib.dump({name: qpos_to_motion_lib(qpos, FPS)}, out, compress=True)
@@ -233,13 +255,15 @@ def main():
     hands[close_at + ramp:] = HAND_CLOSED
     if "hands" in d.files:                       # the reach wrote its own per-frame schedule (assist wrap: two hands, two clocks)
         _hs = np.asarray(d["hands"], np.float32); _n0 = len(qpos_w)
+        if _hac > 0 and 0 < _lift_r <= len(_hs):    # same insertion as qpos_r above
+            _hs = np.concatenate([_hs[:_lift_r], np.repeat(_hs[_lift_r - 1:_lift_r], _hac, axis=0), _hs[_lift_r:]], axis=0)
         hands[:_n0] = HAND_OPEN; hands[_n0:_n0 + len(_hs)] = _hs; hands[_n0 + len(_hs):] = _hs[-1]
     if os.environ.get("NO_CLOSE"):               # a crate is carried between open palms
         hands[:] = HAND_OPEN
     hp = os.path.join("results", "motion", f"{name}_hands.npy")
     np.save(hp, hands)
     print(f"[ref] hands close at frame {close_at} ({close_at/FPS:.1f} s), lift from "
-          f"{len(qpos_w) + int(d['lift_from'])} -> {hp}")
+          f"{len(qpos_w) + int(d['lift_from']) + _hac} -> {hp}")
 
 
 if __name__ == "__main__":
