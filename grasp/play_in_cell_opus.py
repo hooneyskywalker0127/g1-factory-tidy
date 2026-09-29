@@ -1117,6 +1117,33 @@ if walk is not None:
                     robot.write_joint_damping_to_sim(float(os.environ.get("CLOSE_KD", "8.0")) if _want else _damp0,
                                                      joint_ids=_vel_ids)
                 robot.set_joint_velocity_target(_vel if _squeezing else torch.zeros_like(_vel), joint_ids=_vel_ids)
+                # --- GRIP_EFFORT: the grip ceiling is set at close time and never raised ---
+                # Measured, hammer v61 (the best run on record, 320 frames of
+                # dexsuite_good=T): R_thumb_proximal_pitch -- the thumb's closing
+                # master -- sits at q 0.000 rad against a 0.6 rad target from the
+                # close (f519) to the loss (f925), the whole 400 frames. It is
+                # blocked by the object, not by a constraint: v14 measured the same
+                # joint reaching 0.5 rad within 30 frames once the object was gone.
+                # So the thumb presses at whatever HAND_EFFORT allows -- 30 Nm.
+                # In v61's rise that ceiling stayed put while the load quadrupled:
+                #   f915 net 143 N -> f920 net 655 N (4.6x), with the object already
+                #   chattering at 0.34/0.60/1.10 m/s inside the grip while the palm
+                #   moved 0.30 m/s, and then 400 kN at f930.
+                # GraspGenX's profile for this exact robot and hand --
+                # end2end/robots/g1_inspire_arm.yaml, `dynamic: finger_effort_limit:
+                # 1000.0` -- is 33x ours, and is not the 200 default of
+                # dynamic_playback.py:689 either.
+                # v59 raised HAND_EFFORT to 200 globally AT CLOSE TIME and the close
+                # impulse ejected the object. This write lands at GRIP_EFFORT_FRAME,
+                # long after the hand has come to rest on the object (v61: contact
+                # equilibrium f605, rise f909), so it cannot make that impulse.
+                # Unset -> nothing is written and the run is unchanged.
+                if os.environ.get("GRIP_EFFORT") and i == int(os.environ.get("GRIP_EFFORT_FRAME", "850")):
+                    robot.write_joint_effort_limit_to_sim(float(os.environ["GRIP_EFFORT"]),
+                                                          joint_ids=_vel_ids)
+                    print(f"[hand] GRIP_EFFORT: frame {i}, {os.environ['GRIP_EFFORT']} Nm on the "
+                          f"{len(_vel_ids)} closing joints (was "
+                          f"{os.environ.get('HAND_EFFORT', '200')} Nm)", flush=True)
             # ROOT_VEL: write the clip's own root velocity instead of zero.
             # IsaacLab's own motion replay does exactly this --
             # direct/humanoid_amp/humanoid_amp_env.py:165-166 fills
