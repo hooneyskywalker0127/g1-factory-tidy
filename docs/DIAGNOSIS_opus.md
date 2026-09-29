@@ -2825,3 +2825,69 @@ The tester half of v46 did complete and stands:
 and FINGER_COACD fired for the first time since v32, on both candidates:
 "finger colliders -> convexDecomposition on ('intermediate', 'distal'): 6 meshes
 (GraspGenX coacd_link_keywords)".
+
+## The wrap pose is inside the hammer; the weak solver was hiding it (09-29 11:02)
+
+A single-variable A/B settles the 60 mm. Same plan file
+(`results/fable40/reach_mix46.npz`, candidate 2), the mix46 tester environment
+copied verbatim, `TRACE_FRAME=195`, and only `SOLVER_IT`/`SOLVER_VIT` changed:
+
+    SOLVER_IT   right_wrist_yaw_link world   total |d|     object after the close
+    12 / 4      [-0.3832  0.0092  0.0396]    5351.3 mrad   [-0.304 0.095]    7.9 deg
+    24 / 12     [-0.3853  0.0028  0.0417]    5571.7 mrad   [-0.306 0.091]    6.9 deg
+    48 / 24     [-0.3684 -0.0015  0.0528]    3524.0 mrad   [-0.312 0.096]   15.6 deg
+    72 / 36     [-0.3845  0.0017  0.0536]    5407.2 mrad   [-0.310 0.091]   12.8 deg
+    100 / 50    [-0.4469  0.0036  0.0700]    3396.5 mrad   [-0.526 0.081]  172.9 deg
+
+The plan asks for wrist world x -0.441 (FK of `reach_th44.npz` candidate 2). At
+12-72 iterations the wrist stops 64 mm short and the hammer does not move: the
+contact stands the hand up and it reads as a tracking error. At 100/50 the wrist
+reaches the commanded pose to 5.9 mm, and in the same 30 frames the close throws
+the hammer from x -0.290 to -0.526 (236 mm) and flips it to 172.9 deg.
+
+So the thirteen renders did not fail because the hand was 60 mm short. They
+failed because the commanded wrap pose intersects the handle, and a solver at
+12/4 does not converge hard enough to show it -- it lets the hand stall against
+the object instead of ejecting it. GraspGenX says the same thing about its own
+numbers (`end2end/dynamic_playback.py:97-98`, SOLVER_ITERATIONS=100,
+SOLVER_LS_ITERATIONS=50: "With only 10 iterations the constraint solver doesn't
+fully converge and grasps slip during the lift segment").
+
+Corrections to what I wrote earlier today:
+
+* The v46 note's "the remaining cause is vertical position" was wrong, and so is
+  its successor "the cause is the solver iteration count". The iteration count is
+  what *reveals* the cause; the cause is the pose.
+* The renders ran at 12/4 because `$S/mix46b_chain.sh:47` dropped `SOLVER_IT`
+  deliberately, to match the twelve renders the pre-registered criterion compared
+  against. That was my decision, not an accident.
+* The floor wrap is not something I invented against the open source:
+  `grasp/reach_from_pose_opus.py:477` records it as Sehoon's instruction after
+  GraspGen-X's fingertip pinches slipped. What it lacks is any check that the
+  pose clears the object. GraspGenX's own filter
+  (`graspgenx/utils/collision_filter.py`) would not have caught this either --
+  it removes the target's points before testing, by design.
+
+Raw: `results/fable40/ab_{lo12,it24,it48,it72,hi100}.txt`, `$S/ab_solver.sh`,
+`$S/ladder.sh`.
+
+### v47: the pinch off the floor, the wrap in the air
+
+Two measurements already in the repository point at one path:
+
+* `results/fable40/verify_138.txt` -- "grasp #138 conf 0.921 cuRobo 4.9 mm box at
+  close +0.024 after lift dz +0.147 m -> HELD". GraspGen-X's own pinch lifts the
+  hammer on an arm-only lift. `$S/rise_ab2.sh` records that the same pinch loses
+  the whole-body stand-up (+0.000 of 0.36 m), which is why a wrap is needed.
+* The floor wrap cannot be formed without penetrating the handle (above).
+
+`grasp/reach_from_pose_opus.py:490 --regrasp-wrap` does exactly this: take the
+verified pinch, lift, turn the palm up, let the handle settle into the curled
+fingers, close everything. It was written on 09-28 (`$S/regrasp_chain.sh`) and
+has never run -- no log, no pid. v47 runs it on the `_opus` scripts with the
+mix46 physics plus the source's 100/50, tests both turn directions, picks the
+candidate by object-followed rather than defaulting to c0, and renders whichever
+wins regardless of the verdict. Criteria are pre-registered in
+`.../09/260929/5지/hammer/v47/note.txt`: object followed >= +0.10 m of 0.35 m,
+tilt at the close < 30 deg with < 50 mm of object travel, and a non-thumb link
+carrying force in more than 0 frames.
