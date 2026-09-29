@@ -273,7 +273,12 @@ MARKS = {}
 if "marks" in d.files:                                        # phase name -> first frame; keyed here by the frame each phase ENDS on
     import json as _json
     _m = _json.loads(str(d["marks"])); _ends = sorted(_m.items(), key=lambda kv: kv[1])
-    MARKS = {(_ends[j + 1][1] if j + 1 < len(_ends) else n_go): nm for j, (nm, _) in enumerate(_ends)}       # per-frame finger targets (assist wrap: two hands on different clocks)
+    MARKS = {(_ends[j + 1][1] if j + 1 < len(_ends) else n_go): nm for j, (nm, _) in enumerate(_ends)}
+    # TURN_TRACE="a,b": 단계 끝만 찍는 MARKS 로는 turn 60프레임 안에서 무슨 일이 있었는지 알 수 없다.
+    # v53 c0 은 lift 직후(f225) 물체를 17.8 deg 로 들고 있었고 turn 직후(f285) 0.86 m 옆에 157.4 deg 로
+    # 누워 있었다 -- 그 사이 60프레임이 비어 있다. 프레임마다 물체 위치/기울기/선속도와 손바닥 기준
+    # 상대위치를 찍는다. 속도가 한 프레임에 튀면 밀려난 것(depenetration impulse)이고, 완만히 늘면
+    # 놓친 것이다. 둘은 고쳐야 할 곳이 다르다.       # per-frame finger targets (assist wrap: two hands on different clocks)
 order = np.argsort(d["err"][:, n_go - 1])[:TOP]
 if "--only" in sys.argv:
     order = [int(v) for v in sys.argv[sys.argv.index("--only") + 1].split(",")]
@@ -507,6 +512,30 @@ for k in order:
             _tilt = np.degrees(np.arccos(np.clip(1 - 2 * (_bq[1] ** 2 + _bq[2] ** 2), -1, 1)))
             _lb = robot.find_bodies([PALM_LINK["left"]])[0][0]; _rb = robot.find_bodies([PALM_LINK["right"]])[0][0]
             print(f"[test]    after {_ph:6s} (frame {i + 1:3d}): object {np.round(_o, 3)} tilt {_tilt:4.1f} deg  left palm {np.round(robot.data.body_pos_w[0, _lb].cpu().numpy(), 3)}  right palm {np.round(robot.data.body_pos_w[0, _rb].cpu().numpy(), 3)}")
+        _tt = os.environ.get("TURN_TRACE")
+        if _tt:
+            _a, _b = (int(x) for x in _tt.split(","))
+            if _a <= i + 1 <= _b:
+                _o = obj_centre(); _lv = box.data.root_lin_vel_w[0].cpu().numpy()
+                _bq = box.data.root_quat_w[0].cpu().numpy()
+                _tl = np.degrees(np.arccos(np.clip(1 - 2 * (_bq[1] ** 2 + _bq[2] ** 2), -1, 1)))
+                _rp = robot.data.body_pos_w[0, robot.find_bodies([PALM_LINK["right"]])[0][0]].cpu().numpy()
+                _av = box.data.root_ang_vel_w[0].cpu().numpy()
+                _wn = [n for n in names if n.startswith("right_wrist")]
+                _wi = [names.index(n) for n in _wn]; _wj = [body_ids[j] for j in _wi]
+                _wc = np.asarray(dofs[i], float)[_wi]
+                _wq = robot.data.joint_pos[0, _wj].cpu().numpy()
+                _wv = robot.data.joint_vel[0, _wj].cpu().numpy()
+                _wt = getattr(robot.data, "applied_torque", None)
+                _wt = _wt[0, _wj].cpu().numpy() if _wt is not None else np.full(len(_wj), np.nan)
+                print(f"[turn] f{i + 1:3d} obj {np.round(_o, 4)} tilt {_tl:6.1f} |v| {float(np.linalg.norm(_lv)):6.3f}"
+                      f" v {np.round(_lv, 2)} |w| {float(np.linalg.norm(_av)):6.2f}"
+                      f" obj-palm {np.round((_o - _rp) * 1000, 1)} mm  | "
+                      + "  ".join(f"{n.replace('right_wrist_', '').replace('_joint', ''):5s}"
+                                  f" cmd{_wc[j]:+.3f} got{_wq[j]:+.3f} vel{_wv[j]:+6.2f} tau{_wt[j]:+7.1f}"
+                                  for j, n in enumerate(_wn)), flush=True)
+                if (i + 1) % 5 == 0:
+                    snap(f"{int(k)}_turn{i + 1:03d}")
         if os.environ.get("TEST_VERBOSE") and i % 15 == 14:
             _o = obj_centre(); _b = robot.find_bodies([PALM_LINK["right"]])[0][0]; _l = robot.find_bodies([PALM_LINK["left"]])[0][0]
             print(f"[test]    approach frame {i:3d}: object {np.round(_o, 3)}  right palm {np.round(robot.data.body_pos_w[0, _b].cpu().numpy(), 2)}  left palm {np.round(robot.data.body_pos_w[0, _l].cpu().numpy(), 2)}")
