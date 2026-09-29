@@ -88,7 +88,7 @@ from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics  # noqa: E402
 
 import cell_layout as L  # noqa: E402
 from plan_scene import FINGER_MU, OBJECT_MU  # noqa: E402
-from build_reach_reference import HAND_NAMES, PALM_LINK, HAND_KEEP, robot_cfg, stiffen_mimic, soft_mimic  # noqa: E402
+from build_reach_reference_opus import HAND_NAMES, PALM_LINK, HAND_KEEP, robot_cfg, stiffen_mimic, soft_mimic  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 from plan_scene import (  # noqa: E402
     build as build_plan_scene, torso_pose)
@@ -291,6 +291,26 @@ if os.environ.get("ARM_KP_SCALE") and "arms" in cfg.actuators:
 if os.environ.get("ARM_EFFORT") and "arms" in cfg.actuators:
     cfg.actuators["arms"] = cfg.actuators["arms"].replace(
         effort_limit=float(os.environ["ARM_EFFORT"]), effort_limit_sim=None)
+# WAIST_EFFORT: the same lever as ARM_EFFORT, on the group it was never applied to. With FIX_ROOT=1
+# the root is welded, so only the waist and the right arm can move the hand -- and on v44's close pose
+# (test_th44.txt, "commanded vs achieved at the close pose") the four worst hand-relevant joints are
+# waist_yaw 92.6, right_shoulder_roll 74.8, waist_roll 65.4, waist_pitch 53.6 mrad. The arm's 74.8 is
+# already at the floor ARM_EFFORT can buy (eff 1000 -> 76.4, eff 4000 -> 75.5 mrad, above), but the
+# waist's 211.6 mrad over three joints has never been touched: ARM_EFFORT only replaces
+# cfg.actuators["arms"]. IsaacLab's own G1_29DOF_CFG (isaaclab_assets/robots/unitree.py:478-502) gives
+# the waist group effort_limit yaw 88.0, roll 50.0, pitch 50.0 Nm -- 11x to 20x below the arm's current
+# 1000 -- while already giving it a HIGHER stiffness than the arm (5000 vs 3000), which is why the
+# ceiling and not kp is the lever here, exactly as the ARM_EFFORT probe found.
+# What the shortfall costs, measured on v44: at the wrap pose Isaac puts right_wrist_yaw_link 86.2 mm
+# from the commanded target (79.1 mm of it along world x, the finger direction) while cuRobo's own
+# residual at the same frame is 13.5 mm. That drops the handle to palm-frame x ~51 mm -- inboard of the
+# thumb root (69.1 mm) and 85 mm short of the index knuckle (136.5 mm; measured from our own asset,
+# R_index_proximal_joint sits 178.0 mm off right_wrist_yaw_link, minus WRIST_TO_PALM 41.5 mm). That is
+# why R_thumb_proximal and R_thumb_proximal_base are the only links ever to register force in v43 or
+# v44, and why the fingers close to a full fist on air.
+if os.environ.get("WAIST_EFFORT") and "waist" in cfg.actuators:
+    cfg.actuators["waist"] = cfg.actuators["waist"].replace(
+        effort_limit=float(os.environ["WAIST_EFFORT"]), effort_limit_sim=None)
 if os.environ.get("HAND") == "inspire": pass
 else: cfg.actuators["hands"] = cfg.actuators["hands"].replace(
     effort_limit=1.4, velocity_limit=12.0)
@@ -523,7 +543,7 @@ stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_re
 # - offset. The asset's negative gearings therefore drive the followers the same
 # direction soft_mimic's positive table does; only the magnitude is wrong.
 if os.environ.get("HAND") == "inspire" and os.environ.get("MIMIC_URDF_RATIO") == "1":
-    import build_reach_reference as _brr
+    import build_reach_reference_opus as _brr
     _URDF_MULT = {"thumb_intermediate_joint": 1.334, "thumb_distal_joint": 0.667}
     _brr._MIMIC[:] = [(a, b, _URDF_MULT.get(a.split("_", 1)[1], r)) for a, b, r in _brr._MIMIC]
     print("[hand] MIMIC_URDF_RATIO: soft_mimic thumb ratios -> "
@@ -562,9 +582,10 @@ _coacd = os.environ.get("FINGER_COACD", "")
 if _coacd:
     from pxr import Usd as _Usd2, UsdPhysics as _UsdPh2
     _kw = tuple(k for k in _coacd.split(",") if k)
+    _cdone = []
     _nmesh = 0
     for _link in stage.GetPrimAtPath("/World/G1").GetChildren():
-        if not (_link.GetName().startswith("R_") and any(k in _link.GetName() for k in _kw)):
+        if not (_link.GetName().startswith(("R_", "right_wrist")) and any(k in _link.GetName() for k in _kw)):
             continue
         _col = stage.GetPrimAtPath(_link.GetPath().AppendChild("collisions"))
         if not (_col and _col.IsValid()):
@@ -574,8 +595,10 @@ if _coacd:
             if _m.HasAPI(_UsdPh2.CollisionAPI):
                 _UsdPh2.MeshCollisionAPI.Apply(_m).CreateApproximationAttr("convexDecomposition")
                 _nmesh += 1
+                _cdone.append(_link.GetName())
     print(f"[hand] finger colliders -> convexDecomposition on {_kw}: {_nmesh} meshes "
           f"(GraspGenX coacd_link_keywords)")
+    print(f"[hand] coacd links ({len(set(_cdone))}): {sorted(set(_cdone))}", flush=True)
 
 # ------------------------------------------------------------------------------
 if os.environ.get("BODY_COLLISION", "0") == "0" and "--hands" in sys.argv:

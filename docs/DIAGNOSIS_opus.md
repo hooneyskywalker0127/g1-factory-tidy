@@ -3195,3 +3195,62 @@ the cause and I drop it.
 - `thumb_proximal_pitch` is commanded 0.5 where `config.json`'s `close` says 0.6. Left unchanged in
   v53 so as not to confound the one change.
 - The render/tester contact disagreement (0.00 N vs kilonewtons) is unexplained.
+
+### Correction to the section above: the thumb-jam defect does not exist
+
+I committed the section above before reading `soft_mimic()`. It is wrong and I am not
+leaving it standing. `grasp/build_reach_reference.py`:
+
+```python
+def soft_mimic(robot, tgt):
+    """... Call after robot.update() and before set_joint_position_target(), every substep."""
+    for a, b, r in _mimic_ids:
+        tgt[0, a] = r * float(q[b])
+```
+
+The follower entries of `_closed_one` / `HAND_CLOSED` / `hands.npy` are overwritten every
+substep from the **measured** master angle. They are dead numbers. `SOFT_MIMIC` defaults on for
+`HAND=inspire`, and both the v52 render and its tester print their respective activation lines.
+So `0.8 / 1.2` were never driven "because `_closed_one` said so", and the patch I described above
+was a no-op in every path. The v53 chain was killed at its solve, before it spent a render.
+
+**What the same reading did establish, by measurement.** `MIMIC_URDF_RATIO` is implemented in
+`grasp/play_in_cell_opus.py:545-564` and `grasp/thumb_free_opus.py:83` and **nowhere else**
+(`grep -rn MIMIC_URDF_RATIO grasp/*.py`). The chain exports it to the tester too, and the tester
+ignores it. Measured at hold, same candidate, same scene:
+
+| | thumb_intermediate | thumb_distal | ratios in force |
+|---|---|---|---|
+| render (`rg52c0.log`) | 0.667 | 0.334 | URDF 1.334 / 0.667 |
+| tester (`force_probe54_c0.txt`) | 0.8 | 1.2 | USD 1.6 / 2.4 |
+
+Since v47 every tester verdict has been measured on a thumb driven 1.8× further than the render's,
+past the URDF's own 0.4 limit. That is one concrete piece of the long-open "render and tester
+disagree" item. The render's block is now ported verbatim into `test_grasps_in_isaac_opus.py` and
+`test_rise_probe_opus.py`.
+
+### v53, actually: `thumb_proximal_pitch` 0.5 → 0.6
+
+Two sources, both already in the tree:
+
+- `gripper_descriptions/assets/x_grippers/inspire_hand/config.json` `"close"` gives this hand's
+  thumb pitch as **0.6**. We have driven 0.5.
+- `grasp/play_in_cell_opus.py:532`, Fable's transcription of the URDF:
+  `thumb_proximal_pitch_joint (master) limit 0 .. 0.6` — 0.6 is the mechanical stop.
+
+Because `soft_mimic` derives both followers from the master, this one number moves the whole
+four-bar: 0.5 gives `0.667 / 0.334`, which is 83 % of the URDF's `0.8 / 0.4` travel; 0.6 gives
+exactly `0.8 / 0.4`. The thumb has been stopping a fifth short of its stroke. Consistent with the
+measurement: at hold `thumb_distal` sat at cavity depth z 131.6 mm where `config.json` puts the
+fingertip at 150 mm.
+
+Same candidate 138 as v51, so the render comparison is clean. **Pre-registered falsifier** unchanged:
+if the hold contacts and forces are unchanged (pinky ≈ 56 N, thumb_intermediate ≈ 33 N, index 0 N)
+and the object still leaves with +27 mm, thumb stroke is not the cause and I drop it.
+
+### v51 / v52 delivered
+
+- v51 candidate 138: `[eval] dxy 0.8917 m, dz −0.2497 m -> LOST`
+- v52 candidate 3: `[eval] dxy 0.4284 m, dz −0.0081 m -> LOST`
+
+Three mp4s each, room-view frame checked.

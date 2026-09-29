@@ -163,7 +163,6 @@ _coacd = os.environ.get("FINGER_COACD", "")
 if _coacd:
     from pxr import Usd as _Usd2, UsdPhysics as _UsdPh2
     _kw = tuple(k for k in _coacd.split(",") if k); _nmesh = 0
-    _cdone = []
     for _link in stage.GetPrimAtPath("/World/G1").GetChildren():
         if not (_link.GetName().startswith(("R_", "right_wrist")) and any(k in _link.GetName() for k in _kw)): continue
         _col = stage.GetPrimAtPath(_link.GetPath().AppendChild("collisions"))
@@ -172,9 +171,7 @@ if _coacd:
         for _m in _Usd2.PrimRange(_col):
             if _m.HasAPI(_UsdPh2.CollisionAPI):
                 _UsdPh2.MeshCollisionAPI.Apply(_m).CreateApproximationAttr("convexDecomposition"); _nmesh += 1
-                _cdone.append(_link.GetName())
     print(f"[hand] finger colliders -> convexDecomposition on {_kw}: {_nmesh} meshes (GraspGenX coacd_link_keywords)")
-    print(f"[hand] coacd links ({len(set(_cdone))}): {sorted(set(_cdone))}", flush=True)
 
 if os.environ.get("BODY_COLLISION", "0") == "0":
     _kept = keep_only_hand_collisions(stage, keep=HAND_KEEP)
@@ -210,6 +207,44 @@ if SNAP:
         cams.append(Camera(CameraCfg(prim_path=f"/Render/Snap{nm}", update_period=0.0, width=960, height=720,
                                      data_types=["rgb"], spawn=sim_utils.PinholeCameraCfg(focal_length=24.0, clipping_range=(0.05, 20.0)))))
 from plan_scene import dump_physics; dump_physics(stage)
+# --- 접촉력 측정 (play_in_cell_opus.py:511-520, 736-780 에서 이식) ------------
+# 테스터에는 접촉 센서가 없었다. 판정은 테스터가 하는데 힘은 렌더만 쟀다.
+# 센서 하나를 물체에 걸고 각 손가락 링크로 filter 하면 force_matrix_w 가
+# (envs, bodies, filters, 3) 로 손가락별 뉴턴을 준다.
+# DexSuite 기준(mdp/rewards.py:50-71): 엄지 > 1.0 N 이고 반대쪽 손가락 하나 > 1.0 N.
+_fsensor = None
+_fnames = []
+if os.environ.get("PROBE_FORCE", "1") != "0":
+    import re as _re
+    from pxr import PhysxSchema as _PhxS, UsdPhysics as _UsdPh3
+    from isaaclab.sensors import ContactSensor, ContactSensorCfg
+    _fpat = _re.compile("^" + os.environ.get("CONTACT_LINKS", "/World/G1/R_.*") + "$")
+    _flinks = sorted(str(_p.GetPath()) for _p in stage.Traverse()
+                     if _fpat.match(str(_p.GetPath())) and _p.HasAPI(_UsdPh3.RigidBodyAPI))
+    _tprim = os.environ.get("TARGET_PRIM", "/World/GraspTarget")
+    _PhxS.PhysxContactReportAPI.Apply(stage.GetPrimAtPath(_tprim)).CreateThresholdAttr().Set(0.0)
+    _fsensor = ContactSensor(ContactSensorCfg(prim_path=_tprim, filter_prim_paths_expr=_flinks,
+                                              history_length=0, update_period=0.0))
+    _fnames = [n.rsplit("/", 1)[-1] for n in _flinks]
+    print(f"[force] contact sensor on {_tprim} filtered to {len(_flinks)} links", flush=True)
+
+
+def _force_line():
+    """물체에 실제로 걸린 손가락별 접촉력(N). 물체 0.2 kg -> 자중 1.96 N 이 net 의 바닥."""
+    if _fsensor is None:
+        return " (sensor off)"
+    _fsensor.update(sim.get_physics_dt(), force_recompute=True)
+    _fmx = _fsensor.data.force_matrix_w
+    if _fmx is None:
+        return " no filtered contact data"
+    _mag = _fmx[0, 0, :, :].norm(dim=-1).cpu().numpy()
+    _net = float(_fsensor.data.net_forces_w[0, 0].norm())
+    _th = max([m for n, m in zip(_fnames, _mag) if "thumb" in n], default=0.0)
+    _ot = max([m for n, m in zip(_fnames, _mag) if "thumb" not in n], default=0.0)
+    _hit = sorted([(n, m) for n, m in zip(_fnames, _mag) if m > 0.01], key=lambda t: -t[1])
+    return (f" net {_net:6.2f} N sum {_mag.sum():7.2f} N thumb {_th:5.2f} N opp {_ot:5.2f} N "
+            f"dexsuite_good={bool(_th > 1.0 and _ot > 1.0)} "
+            + ", ".join(f"{n} {m:.2f}" for n, m in _hit[:4]))
 sim.reset()
 # --- thumb joint limits: the real Inspire hand has no backward travel ---------
 # Measured in hammer/v21: R_thumb_intermediate_joint sat at -0.160 rad -- exactly our
@@ -507,6 +542,14 @@ for k in order:
             _tilt = np.degrees(np.arccos(np.clip(1 - 2 * (_bq[1] ** 2 + _bq[2] ** 2), -1, 1)))
             _lb = robot.find_bodies([PALM_LINK["left"]])[0][0]; _rb = robot.find_bodies([PALM_LINK["right"]])[0][0]
             print(f"[test]    after {_ph:6s} (frame {i + 1:3d}): object {np.round(_o, 3)} tilt {_tilt:4.1f} deg  left palm {np.round(robot.data.body_pos_w[0, _lb].cpu().numpy(), 3)}  right palm {np.round(robot.data.body_pos_w[0, _rb].cpu().numpy(), 3)}")
+            print(f"[force] after {_ph:6s} (frame {i + 1:3d}):{_force_line()}", flush=True)
+            _mt = {}
+            for _ln in ((PALM_LINK["right"], "R_index_intermediate", "R_pinky_intermediate", "R_thumb_distal")
+                        if os.environ.get("HAND") == "inspire" else (PALM_LINK["right"],)):
+                _bb = robot.find_bodies([_ln])[0]
+                if _bb:
+                    _mt[_ln.replace("R_", "")] = robot.data.body_pos_w[0, _bb[0]].cpu().numpy() - _o
+            print(f"[geom]  after {_ph:6s} (frame {i + 1:3d}) box-relative: " + "  ".join(f"{a} {np.round(b,3)}" for a, b in _mt.items()), flush=True)
         if os.environ.get("TEST_VERBOSE") and i % 15 == 14:
             _o = obj_centre(); _b = robot.find_bodies([PALM_LINK["right"]])[0][0]; _l = robot.find_bodies([PALM_LINK["left"]])[0][0]
             print(f"[test]    approach frame {i:3d}: object {np.round(_o, 3)}  right palm {np.round(robot.data.body_pos_w[0, _b].cpu().numpy(), 2)}  left palm {np.round(robot.data.body_pos_w[0, _l].cpu().numpy(), 2)}")
@@ -550,6 +593,7 @@ for k in order:
             print(f"[test]    at grasp, {_side} hand object-relative: " + "  ".join(_row))
     print(f"[test]    at grasp: palm z {_tips['palm'][2]:+.3f}, lowest fingertip z {_tip_min:+.3f}, "
           f"palm - object {np.round(_tips['palm'] - _bp0, 3)}")
+    print(f"[force] at grasp (닫기 전, 바닥 자중만 보여야 정상):{_force_line()}", flush=True)
     # Close and lift the way the desk pick that held did: the fingers get
     # hold_after_close_frames (150 at 30 fps, 5 s) to settle on the object
     # before the lift, and the lift itself is slow (20 cm over 7 s there).
@@ -676,6 +720,18 @@ for k in order:
                 _r = roots[-1].copy(); _r[:3] = roots[-1][:3] + (_t - _rt[0]); _r[3:7] = _Ri.as_quat()[[3, 0, 1, 2]]
                 _dd = _d.copy(); _dd[_arm] = dofs[-1][_arm]
                 put(_r, _dd, _hc)
+                _pi = int(round(_f))
+                if _pi % 3 == 0 and abs(_f - _pi) < 1e-6:                     # RISE PROBE: 3 프레임마다
+                    _pb = robot.find_bodies([PALM_LINK["right"]])[0][0]
+                    _pp = robot.data.body_pos_w[0, _pb].cpu().numpy()
+                    _pq = robot.data.body_quat_w[0, _pb].cpu().numpy()         # wxyz
+                    _oc = obj_centre()
+                    _hqn = robot.data.joint_pos[0, _rh].cpu().numpy() if "_rh" in dir() else np.zeros(1)
+                    _pe = R.from_quat(_pq[[1, 2, 3, 0]]).as_euler("xyz", degrees=True)
+                    print(f"[rise] f{_pi:3d} pelvis {_r[2]:.3f}  palm {np.round(_pp, 3)} rpy {np.round(_pe, 1)}"
+                          f"  object {np.round(_oc, 3)}  palm-obj {np.round(_pp - _oc, 3)}"
+                          f"  fing {np.round(_hqn, 2)}", flush=True)
+                    print(f"[force] f{_pi:3d}{_force_line()}", flush=True)
         else:
             for _i in range(_nr + 30):
                 _r = roots[-1].copy(); _r[2] += _rise * min(1.0, (_i + 1) / _nr)

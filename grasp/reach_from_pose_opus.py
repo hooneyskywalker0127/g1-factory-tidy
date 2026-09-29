@@ -495,7 +495,7 @@ def main():
         qk = d0["q"][k0]; n_go0, n_lift0 = int(d0["n_go"]), int(d0["n_lift"])
         turn = math.radians(float(os.environ.get("REGRASP_TURN", "150"))); cradle = float(os.environ.get("REGRASP_CRADLE", "0.9"))
         _open = np.array([0, 0, 0, 0, 1.308, 0, 0, 0, 0, 0, 0, 0], float)
-        _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.5, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)
+        _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.6, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)  # pitch 0.6: config.json close
         # REGRASP_KEEP=pinch (default): the index and the thumb keep the pinch while the other three fingers open to the cradle and
         # close round the handle -- first try (rg, hammer/drill, turn -150): the tool rode through the turn, then fell the moment
         # all fingers and the thumb opened (hammer: at the cradle; drill: during the settle). REGRASP_KEEP=none opens everything.
@@ -604,7 +604,7 @@ def main():
         thumb_first = os.environ.get("POWER_CLOSE", "fingers_first") == "thumb_first"
         n_slide, n_close, n_hold = (45 if slide > 0 else 0), (30 if slide > 0 else 0), (30 if slide > 0 else 0)
         _open = np.array([0, 0, 0, 0, 1.308, 0, 0, 0, 0, 0, 0, 0], float)
-        _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.5, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)
+        _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.6, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)  # pitch 0.6: config.json close
         _hookq = _open.copy(); _hookq[[0, 1, 2, 3]] = hook; _hookq[[6, 7, 8, 9]] = 1.064 * hook - 0.045
         # POWER_THUMB_HOOK (0..1): curl the thumb by this fraction of _closed during the descent and slide.
         # POWER_HOOK above curls slots 0-3 and 6-9 (the four fingers) but leaves the thumb (4, 5, 10, 11) fully
@@ -732,7 +732,7 @@ def main():
             M = B.copy(); M[:3, 3] = A[:3, 3] + (B[:3, 3] - A[:3, 3]) * a; return M
         steps, hands_seq, marks = [], [], {}
         _open = np.array([0, 0, 0, 0, 1.308, 0, 0, 0, 0, 0, 0, 0], float)
-        _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.5, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)
+        _closed = np.array([1.47, 1.47, 1.47, 1.47, 1.308, 0.6, 1.47, 1.47, 1.47, 1.47, 0.8, 1.2], float)  # pitch 0.6: config.json close
         _th = np.array([False, False, False, False, True, True, False, False, False, False, True, True])
         def ramp(a_th, a_f):
             h = _open.copy(); h[_th] = (1 - a_th) * _open[_th] + a_th * _closed[_th]; h[~_th] = (1 - a_f) * _open[~_th] + a_f * _closed[~_th]; return h
