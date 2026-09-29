@@ -2699,3 +2699,78 @@ _hookq = _open.copy(); _hookq[[0, 1, 2, 3]] = hook; _hookq[[6, 7, 8, 9]] = 1.064
 등장하거나 `best-opposing > 0 N`. 엄지가 여전히 최하점이면 다음 변경은 더 큰
 `POWER_THUMB_HOOK`. 돌출이 사라졌는데도 opposing 이 0 이면 원인은 엄지 높이가
 아니므로 손잡이가 손바닥 평면에 들어오는지를 다시 봐야 한다.
+
+## 260929 v45: the waist ceiling was real and it was not the cause; the hand is in the floor
+
+Pre-registered two criteria, got a split verdict.
+
+1. Torque ceiling: PASS. `WAIST_EFFORT=1000` -> tau samples 648, pinned at >=990 Nm:
+   0 (0%), max |tau| 348.3 Nm. v44 sat at yaw -88.0 / roll +50.0 / pitch +50.0 on
+   nearly every frame f120-f225 (`waisth.log`), which is IsaacLab's stock waist
+   `effort_limit` (isaaclab_assets/robots/unitree.py:478-521) to the decimal. The
+   ceiling was binding.
+2. Position error following: FAIL. waist_roll 65.4 -> 65.0 mrad with 6.5x the torque.
+   waist_yaw 92.6 -> 47.8. So the ceiling was not what held the position. `effort`
+   is a closed lever now, alongside ARM_EFFORT, solver iterations, friction/mass,
+   POWER_X, POWER_Y(plan-side cap) and POWER_CLOSE.
+
+My stated ground for v45 was overstated: `reach_th44.npz` already caps the waist at
++-0.098 rad (the `_w10` retarget config), so the waist was barely being asked to reach.
+
+### The candidate-selection bug: 12 renders of the worst candidate
+
+`BEST=$(awk '/candidate/{c=$3} /-> HELD/{print c;exit}')` with `[ -z "$BEST" ] && BEST=0`.
+Nothing has ever HELD, so v33-v45 rendered c0 every time. Measured at the close pose
+(handle position in palm-frame x; design value 130 mm from POWER_X=0.13, thumb root
+69.1 mm, index knuckle 136.5 mm, both measured from our own USD):
+
+| cand | wrist err | palm-x | reading |
+|---|---|---|---|
+| c0 | 70.2 mm | 82.8 mm | shallow (what we rendered 12 times) |
+| c1 | 29.2 mm | 178.3 mm | mirror wrap |
+| c2 | 29.4 mm | 122.8 mm | inside the finger pocket |
+| c3 | 26.0 mm | 180.1 mm | mirror wrap |
+| c4 | 47.3 mm | 104.6 mm | inside the finger pocket |
+| c5 | 28.2 mm | 178.0 mm | mirror wrap |
+
+### Two settings silently off since v33
+
+- `FINGER_COACD` unset -> `play_in_cell_opus.py:581` never ran, so the finger
+  intermediate/distal colliders stayed convex hulls for all 12 renders. Its own print
+  cites GraspGenX's `coacd_link_keywords`; v27-v32 had it on. Same failure class as the
+  object collider that was a convex hull.
+- The hand-gain block at `play_in_cell_opus.py:173` is gated on `HAND_KD` being set.
+  No run since v33 set it, so the fingers ran at the default kp 10 / kd 0.2 / effort 30
+  (build_reach_reference.py:102). Note the block replaces only `damping` and
+  `effort_limit`, never `stiffness` -- so it is not a kp fix either.
+
+### What the trace actually says: the hand closes 9 mm below the handle top
+
+A print I misread first: the tester's `at grasp: palm z +0.188 ... palm - object
+[.. +0.156]` is not the grasp pose. Pulling the wrist-z curve out of the render shows
+0.189 is the post-lift value (f640-665), and `PALM_LINK["right"]` for inspire is
+`right_wrist_yaw_link` (build_reach_reference.py:44).
+
+The curve gives the real number, and it points the other way:
+
+    f495 0.070 -> f505 0.054 (lands 504) -> f545 0.037 -> f550 0.029 (closes 549)
+    -> 0.030 held to f605 -> lifts f610
+
+The plan's target palm z is 0.063 (POWER_Y 0.035 above the handle). The handle centre
+is at 0.031, its top at 0.038. So at the close the wrist is 34 mm below target and 9 mm
+below the handle top: the 35 mm of clearance the plan reserved is entirely consumed by
+vertical execution error. With a palm-down power grip that puts the curling fingers into
+the floor, not around the handle, which is one cause for three symptoms:
+
+- non-thumb links register force in 0 frames; best-opposing 0.00 N (v43, v44, v45)
+- the four master finger joints sit 0.68 rad (39 deg) short of their 1.47 rad target
+  through f565-580 with nothing between them
+- 1787-4270 N continuous from f470 to f620 -- a five-second jam, not a strike
+
+### Queued
+
+- v46 (running): v27-v32's physics restored (FINGER_COACD=intermediate,distal,
+  CLOSE_MODE=velocity, CLOSE_VEL=0.25, CLOSE_KD=40, HAND_VEL=5.0, MIMIC_URDF_RATIO=1,
+  SOLVER_IT=100/50, OBJ_MAX_DEPEN_VEL=5) + WAIST_EFFORT=1000, rendering c2 not c0.
+  Criterion: does a non-thumb link register force, or best-opposing leave 0.00 N.
+- v47 (queued): POWER_Y 0.035 -> 0.069, pre-compensating the measured 34 mm.
