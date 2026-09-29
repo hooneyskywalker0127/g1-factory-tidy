@@ -3047,3 +3047,84 @@ launching the render, taking the mp4 copy step with it. A separate watcher now d
 the copy. v33, v34 and v48 never built a motion file at all, so nothing could be
 rendered for them; they were moved to `_무효_영상없음/` rather than left as empty
 version folders. v35–v49 now all carry their three videos.
+
+## v50: the gains are refuted, and the first contact measurement says the hand is *inside* the hammer (09-29 12:00)
+
+**Verdict.** v50 (GraspGenX's own velocity-close pair, `CLOSE_KD 40→800`, `HAND_EFFORT 200→1000`,
+both read from `end2end/dynamic_playback.py:641-661` and `end2end/robots/g1_right_arm.yaml:51-72`)
+still loses the hammer.
+
+| | render `[eval]` | tester stand-up |
+|---|---|---|
+| v50 c0 | end `[-0.8508 0.7513 -0.0877]`, dxy 0.8917 m, dz −0.2497 m → LOST | body up 0.33 m, object followed **−0.246 m** → LOST |
+
+Video: `09/260929/5지/hammer/v50/hammer_rg50_c0{,_head,_wrist}.mp4`; room view verified
+(`evidence/room_view_check.png`).
+
+**The pre-registered falsifier was met.** `v50/note.txt` said, before the run: *"fingers still moving at
+≥70 % of free rate ⇒ the gains are not the cause."* Measured: kd=40 → 72 %, kd=800 → **68 %**.
+A 20× gain increase slowed the fingers by 4 points. The gains are not the cause.
+
+### The measurement that had never been taken
+
+`grep -n "ContactSensor\|net_forces_w\|CONTACT_FORCE" grasp/test_grasps_in_isaac_opus.py` → nothing.
+The tester issues every HELD/LOST verdict and had **no contact sensing at all**; only the renderer
+had it. Ported `play_in_cell_opus.py`'s `ContactSensor` into `grasp/test_rise_probe_opus.py` and
+re-ran the identical v50 environment. Control: the 0.2 kg object's own weight, 1.96 N.
+
+| phase | net | Σ over 12 right-hand links | largest link |
+|---|---|---|---|
+| approach f135 | 2.04 N | 0.00 N | — |
+| pinch f165 | 1.96 N | 0.00 N | — (sensor alive: reads self-weight) |
+| hold f195 | 3.18 N | 3.18 N | `R_ring_intermediate` 3.18 |
+| lift f225 | 59.39 N | 255.31 N | `R_thumb_proximal` 100.90 |
+| **turn f285** | **36 711.97 N** | 19 459.86 N | `R_thumb_proximal` 16 326.35 |
+| cradle f305 | 6 962.92 N | 6 756.77 N | `R_thumb_proximal` 6 756.77 |
+| settle f315 | 104.98 N | 135.26 N | `R_index_intermediate` 135.26 |
+| wrap f345 | 334.09 N | 316.36 N | `R_thumb_proximal` 316.36 |
+| hold2 f375 | 125.67 N | 337.35 N | `R_middle_intermediate` 174.86 |
+| rise f0 | 3 048.45 N | 5 131.28 N | `R_thumb_proximal` 2 821.91 |
+| rise f3 | 12 959.84 N | 16 186.23 N | `R_thumb_proximal` 14 194.23 |
+| rise f6 | 29 562.26 N | 21 769.39 N | `R_pinky_proximal` 14 037.52 |
+| rise f9 | 0.91 N | 0.00 N | (object gone) |
+| rise f18 | **67 144.59 N** | **0.00 N** | (a link outside the 12-link filter) |
+
+Measured facts, not interpretation:
+
+1. 36 712 N on a 1.96 N object — **18 700× its weight**. That is a depenetration impulse, not a grip.
+2. The blow-up starts in the **pick**, at `turn` (f285), not in the stand-up. `approach` and `pinch`
+   read exactly 0.00 N, so the sensor was working and the hand genuinely was not touching yet.
+3. At rise f18, net is 67 145 N while all twelve finger links read 0.00 N ⇒ a link that is **not a
+   finger** (palm, wrist or forearm) struck the departing object. The current filter cannot name it.
+4. The v50 gains changed the verdict not at all (−0.246 m).
+
+### A second, separate defect: render and tester disagree
+
+Same candidate, same scene. Over all 185 sampled frames of the 923-frame render
+(`results/fable40/rg50c0.log`) the twelve-link sum never left 0.00 N and net stayed within
+0.00–10.89 N. The tester reads kilonewtons over the same interval. These two must agree.
+
+One confirmed difference: `OBJ_MAX_DEPEN_VEL` is referenced at `grasp/play_in_cell_opus.py:705` and
+**nowhere else** (`grep -rn OBJ_MAX_DEPEN_VEL grasp/*.py` returns that one line). The tester never
+applies it. So the second candidate recorded in `v50/note.txt` — *"the 5 m/s depenetration cap is the
+ejector"* — **cannot** explain the tester's kilonewtons, because the tester does not set it.
+
+### Also established by reading the source, not by guessing
+
+- `grasp/reach_from_pose.py` carries `self_collision_check=True` and **no world collision model**
+  (no `WorldConfig`, no obstacle, no `world_model`). That is not an oversight on its own: GraspGenX
+  does the same and says so — `end2end/e2e_grasp_demo.py:2092-2094`, *"cuRobo never sees the target
+  (it is deliberately left out of the collision world, scene_builder.py), so nothing else rejects
+  those."*
+- The official compensation is `graspgenx/utils/collision_filter.py: filter_colliding_grasps`, but its
+  docstring is explicit that **the target object's points must already be removed** from `scene_pc`.
+  It rejects grasps that hit the *rest* of the scene. It would not reject fingers inside the hammer,
+  so it is not the missing piece here.
+
+### Open, deliberately not asserted
+
+- Which link carries the 67 kN at rise f18. Queued: the same probe with the filter widened from
+  `/World/G1/R_.*` to every direct child of `/World/G1`.
+- Why the renderer reads 0.00 N on the identical twelve link names.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
