@@ -376,22 +376,26 @@ if SONIC:
         # the policy drives the legs, the 17 upper-body joints (waist + arms, the deploy's
         # has_upper_body set, policy_parameters.hpp:80) take their targets directly. Those
         # keep IsaacLab's G1_29DOF_CFG arm/waist actuators (unitree.py:388-533).
+        # SONIC_LOWER_N: how many of sonic_control JOINTS[:N] the policy drives -- 15 (legs + waist,
+        # decoupled_wbc's lower body, g1_decoupled_whole_body_policy.py:141-143) or 12 (legs only;
+        # waist + arms = the deploy's 17-joint has_upper_body set, policy_parameters.hpp:80, driven
+        # straight to the clip). The rest keep IsaacLab's G1_29DOF_CFG actuators (unitree.py:388-533).
         _legs_only = os.environ.get("SONIC_LEGS_ONLY", "0") == "1"
-        # (decoupled_wbc's lower body is legs + waist, 15 joints: g1_decoupled_whole_body_policy.py:141-143;
-        # only the 14 arm joints are driven straight to their targets)
-        for _g in (("legs", "feet", "waist") if _legs_only else ("legs", "feet", "waist", "arms")):
+        _lower_n = int(os.environ.get("SONIC_LOWER_N", "15")) if _legs_only else 29
+        _sonic_groups = ("legs", "feet") if _lower_n <= 12 else (("legs", "feet", "waist") if _lower_n <= 15 else ("legs", "feet", "waist", "arms"))
+        for _g in _sonic_groups:
             cfg.actuators.pop(_g, None)
         for _g, _act in _sg1.G1_CYLINDER_MODEL_12_DEX_CFG.actuators.items():
-            if _legs_only and _g == "arms":
+            if _g not in _sonic_groups:
                 continue
             cfg.actuators["sonic_" + _g] = _act
-        print(f"[sonic] body actuators from gear_sonic g1.py: "
-              f"{sorted(_g for _g in _sg1.G1_CYLINDER_MODEL_12_DEX_CFG.actuators if not _legs_only or _g != 'arms')}")
+        print(f"[sonic] body actuators from gear_sonic g1.py: {sorted(_sonic_groups)}")
     _kp = dict(zip(_SJ, _SK))
     _kd = dict(zip(_SJ, _SD))
     if os.environ.get("SONIC_LEGS_ONLY", "0") == "1":
-        _kp = {_n: _v for _n, _v in _kp.items() if _SJ.index(_n) < 15}
-        _kd = {_n: _v for _n, _v in _kd.items() if _SJ.index(_n) < 15}
+        _ln = int(os.environ.get("SONIC_LOWER_N", "15"))
+        _kp = {_n: _v for _n, _v in _kp.items() if _SJ.index(_n) < _ln}
+        _kd = {_n: _v for _n, _v in _kd.items() if _SJ.index(_n) < _ln}
     for _g, _act in list(cfg.actuators.items()):
         _pk, _pd = {}, {}
         for _n, _v in _kp.items():
@@ -1169,8 +1173,8 @@ if walk is not None:
                             robot.data.root_quat_w[0].cpu().numpy().astype(np.float64),
                             robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64))
         for _c, _j in enumerate(_wsonic_ids):
-            if _wsonic_legs_only and _c >= 15:
-                continue             # arms: the clip's own targets, below
+            if _wsonic_legs_only and _c >= _wsonic_lower_n:
+                continue             # upper body: the clip's own targets, below
             tgt_q[0, _j] = float(_out[_c])
     # SONIC_LEGS_ONLY=1: decoupled_wbc's split -- the policy moves the lower body (12 leg
     # + 3 waist joints, sonic_control JOINTS[:15]; g1_decoupled_whole_body_policy.py:141-143),
@@ -1178,12 +1182,13 @@ if walk is not None:
     # locomanipulation drives the arms under its leg policy (pink_task_space_actions.py:307-321).
     # SONIC still observes them.
     _wsonic_legs_only = _wsonic is not None and os.environ.get("SONIC_LEGS_ONLY", "0") == "1"
+    _wsonic_lower_n = int(os.environ.get("SONIC_LOWER_N", "15"))
     if _wsonic_legs_only:
-        print("[sonic] legs only: legs + waist (15) from the policy, arms (14) from the clip")
+        print(f"[sonic] legs only: JOINTS[:{_wsonic_lower_n}] from the policy, the other {29 - _wsonic_lower_n} from the clip")
     for i in range(min(len(walk["dof"]) + _settle_n, int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
         ci = _clip_i(i)
         for k, jid in enumerate(walk_ids):
-            if _wsonic is None or (_wsonic_legs_only and k >= 15):   # under SONIC the lower-body targets are its output
+            if _wsonic is None or (_wsonic_legs_only and k >= _wsonic_lower_n):   # under SONIC the lower-body targets are its output
                 tgt_q[0, jid] = float(walk["dof"][ci, k])
         if not CLIP_ARMS:
             for k, jid in enumerate(ids):
