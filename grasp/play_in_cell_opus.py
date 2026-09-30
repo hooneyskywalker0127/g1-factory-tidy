@@ -361,6 +361,22 @@ if SONIC:
     # is driving a different robot than the one it was trained on.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from sonic_control import JOINTS as _SJ, STIFFNESS as _SK, DAMPING as _SD
+    if os.environ.get("SONIC_ACTUATORS", "0") == "1":
+        # The body actuators SONIC was trained on, loaded from its own training
+        # config rather than patched onto G1_29DOF_CFG's: GR00T-WholeBodyControl
+        # gear_sonic/envs/manager_env/robots/g1.py:239-354 (G1_CYLINDER_MODEL_12_DEX_CFG,
+        # all ImplicitActuatorCfg, with its effort/velocity limits and armature).
+        # Loaded by file path so gear_sonic's package __init__ is not imported.
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("_sonic_g1", "/home/sehoon/Projects/GR00T-WholeBodyControl/"
+                                             "gear_sonic/envs/manager_env/robots/g1.py")
+        _sg1 = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_sg1)
+        for _g in ("legs", "feet", "waist", "arms"):
+            cfg.actuators.pop(_g, None)
+        for _g, _act in _sg1.G1_CYLINDER_MODEL_12_DEX_CFG.actuators.items():
+            cfg.actuators["sonic_" + _g] = _act
+        print(f"[sonic] body actuators from gear_sonic g1.py: {sorted(_sg1.G1_CYLINDER_MODEL_12_DEX_CFG.actuators)}")
     _kp = dict(zip(_SJ, _SK))
     _kd = dict(zip(_SJ, _SD))
     for _g, _act in list(cfg.actuators.items()):
@@ -509,6 +525,27 @@ else:
 # the run and that we do not need it. A ContactSensor only requires the reporting API on
 # the bodies it reads, so apply it to exactly those and leave the root alone.
 robot = Articulation(cfg)
+if SONIC and os.environ.get("FIX_ROOT", "0") != "1":
+    # No weld: the pelvis is SONIC's to move. fix_root_link=False only disables the
+    # USD's authored /World/G1/root_joint (IsaacLab schemas.py:180-184), and a disabled
+    # joint whose world frame does not match the spawn pose still breaks the parse
+    # ("disjointed body transforms" -> mimic joints -> "Failed to create articulation").
+    # SONIC's own robot has no world joint at all (gear_sonic g1.py:201 fix_base=False),
+    # so remove ours the same way: deactivate the prim before sim.reset().
+    # In this asset the ArticulationRootAPI sits on that joint (measured: root_joint is a
+    # PhysicsFixedJoint with PhysicsArticulationRootAPI, body0 = world at (0,0,0), body1 =
+    # pelvis), so the root API moves to the pelvis -- where IsaacLab's URDF importer puts
+    # it for a floating base -- and our articulation properties are applied to it again.
+    from pxr import UsdPhysics as _UP, PhysxSchema as _PS
+    _rj = stage.GetPrimAtPath("/World/G1/root_joint")
+    _pel = stage.GetPrimAtPath("/World/G1/pelvis")
+    assert _rj.IsValid() and _pel.IsValid(), "root_joint/pelvis not where the asset had them"
+    _rj.SetActive(False)
+    _UP.ArticulationRootAPI.Apply(_pel)
+    _PS.PhysxArticulationAPI.Apply(_pel)
+    sim_utils.schemas.modify_articulation_root_properties("/World/G1", cfg.spawn.articulation_props)
+    print("[sonic] /World/G1/root_joint deactivated, articulation root on the pelvis: "
+          "floating base, nothing welds it")
 # The report API goes on the OBJECT, not on the hand. Measured 2026-09-29, alone on the
 # machine: with it on the 12 /World/G1/R_* bodies the articulation dies in sim.reset()
 # ("failed to find internal joint object for PhysxMimicJointAPI", 12 of them) whether the
@@ -1080,10 +1117,51 @@ if walk is not None:
             return _i
         return _settle_at if _i <= _settle_at + _settle_n else _i - _settle_n
     _root_prev = None          # ROOT_SUB: last frame's root, to interpolate from
+    _wsonic = None
+    if SONIC:
+        # No root write anywhere below: SONIC tracks the whole clip -- walk, kneel,
+        # reach, stand-up -- and the pelvis goes where the legs put it. This is
+        # GR00T's own deployment loop (g1_deploy_onnx_ref.cpp, ported in
+        # sonic_control.py): reference in, 29 joint targets out at 50 Hz.
+        from sonic_control import (SonicTracker, JOINTS as _SJW, CONTROL_DT as _SDT,
+                                   clip_to_reference)
+        assert list(walk["names"]) == list(_SJW), "clip joint order is not SONIC's"
+        _wref, _wq, _wz = clip_to_reference(
+            {"dof": walk["dof"], "root_trans_offset": walk["pos"], "root_rot": walk["quat"]}, FPS)
+        _wsonic = SonicTracker(_wref, ref_quat=_wq, ref_root_z=_wz)
+        _wsonic_ids = [robot.find_joints([n])[0][0] for n in _SJW]
+        _wsonic_dec = max(1, round(_SDT / sim.get_physics_dt()))
+        # The one initial condition: the robot starts in the clip's first pose
+        # (spawned there by init_state; joints set once here, before any step).
+        for _c, _j in enumerate(_wsonic_ids):
+            tgt_q[0, _j] = float(walk["dof"][0, _c])
+        robot.write_joint_state_to_sim(tgt_q, torch.zeros_like(tgt_q))
+        robot.set_joint_position_target(tgt_q)
+        robot.write_data_to_sim()
+        sim.step()
+        robot.update(sim.get_physics_dt())
+        _wsonic.prime(robot.data.joint_pos[0, _wsonic_ids].cpu().numpy().astype(np.float64),
+                      robot.data.joint_vel[0, _wsonic_ids].cpu().numpy().astype(np.float64),
+                      robot.data.root_quat_w[0].cpu().numpy().astype(np.float64),
+                      robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64))
+        _wsonic_k = 0          # physics substeps since the clip started
+        print(f"[sonic] tracking the whole clip: {len(_wref)} reference frames at "
+              f"{1/_SDT:.0f} Hz, every {_wsonic_dec} physics steps; no root writes")
+
+    def _wsonic_tick(t):
+        """One 50 Hz SONIC tick at reference index t; writes the 29 body targets into tgt_q."""
+        _out = _wsonic.step(min(t, _wsonic.T - 1),
+                            robot.data.joint_pos[0, _wsonic_ids].cpu().numpy().astype(np.float64),
+                            robot.data.joint_vel[0, _wsonic_ids].cpu().numpy().astype(np.float64),
+                            robot.data.root_quat_w[0].cpu().numpy().astype(np.float64),
+                            robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64))
+        for _c, _j in enumerate(_wsonic_ids):
+            tgt_q[0, _j] = float(_out[_c])
     for i in range(min(len(walk["dof"]) + _settle_n, int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
         ci = _clip_i(i)
         for k, jid in enumerate(walk_ids):
-            tgt_q[0, jid] = float(walk["dof"][ci, k])
+            if _wsonic is None:          # under SONIC the body targets are its output
+                tgt_q[0, jid] = float(walk["dof"][ci, k])
         if not CLIP_ARMS:
             for k, jid in enumerate(ids):
                 tgt_q[0, jid] = _plan_q[k]
@@ -1096,7 +1174,8 @@ if walk is not None:
                 tgt_q[0, j] = ((1.0 - a) * float(tgt_q[0, j])
                                + a * float(robot.data.default_joint_pos[0, j]))
         q = walk["quat"][ci]
-        robot.write_root_state_to_sim(torch.tensor(
+        if _wsonic is None:
+          robot.write_root_state_to_sim(torch.tensor(
             [[float(walk["pos"][ci][0]), float(walk["pos"][ci][1]),
               float(walk["pos"][ci][2]), float(q[3]), float(q[0]),
               float(q[1]), float(q[2]), 0, 0, 0, 0, 0, 0]],
@@ -1210,7 +1289,10 @@ if walk is not None:
             _nsub = max(1, round((1.0 / FPS) / sim.get_physics_dt()))
             _root_sub = (os.environ.get("ROOT_SUB", "0") == "1" and _root_prev is not None
                          and _pd_body and os.environ.get("SKIP_ROOT_WRITE") != "1")
-            if _pd_body and not _root_sub and os.environ.get("SKIP_ROOT_WRITE") != "1":   # SKIP_ROOT_WRITE: diagnostic only
+            if _wsonic is not None:
+                _root_sub = False
+            if (_wsonic is None and _pd_body and not _root_sub
+                    and os.environ.get("SKIP_ROOT_WRITE") != "1"):   # SKIP_ROOT_WRITE: diagnostic only
                 robot.write_root_state_to_sim(_root)
             for _ss in range(_nsub):
                 # write_joint_state_to_sim with a subset pushes the whole joint
@@ -1218,6 +1300,11 @@ if walk is not None:
                 # frame, it reset the simulated fingers every substep and they
                 # moved at 1/33 of their drive. Refresh it first.
                 robot.update(sim.get_physics_dt())
+                if _wsonic is not None:
+                    if _wsonic_k % _wsonic_dec == 0:
+                        # the clip frame's time on SONIC's 50 Hz clock
+                        _wsonic_tick(int(round((ci + _ss / _nsub) / FPS / _SDT)))
+                    _wsonic_k += 1
                 soft_mimic(robot, tgt_q)
                 robot.set_joint_position_target(tgt_q)
                 if _vmode:
@@ -1230,7 +1317,7 @@ if walk is not None:
                         _ri[0, 3:7] = _q0 * (_a - 1.0) + _q1 * _a
                     _ri[0, 3:7] = _ri[0, 3:7] / _ri[0, 3:7].norm()
                     robot.write_root_state_to_sim(_ri)
-                if not _pd_body:
+                if not _pd_body and _wsonic is None:
                     robot.write_root_state_to_sim(_root)
                     robot.write_joint_state_to_sim(tgt_q[:, _body_ids], zero[:, _body_ids],
                                                    joint_ids=_body_ids)

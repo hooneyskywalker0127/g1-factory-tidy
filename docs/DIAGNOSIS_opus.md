@@ -4262,3 +4262,20 @@ f1095 발산 원인 미확인. 제외 목록에 추가: 손가락 effort 10 Nm(v
 - 다음 후보 확인: ROOT_VEL 은 v56 에서 이미 반증됐다 (FIX_ROOT 면 루트 속도 쓰기가 시뮬에 닿지 않음, :3984).
   기립은 용접된 루트를 순간이동시키는 방식이라, 남은 길은 GR00T 의 --sonic/--wbc 로 부유 베이스를 실제로 움직이는 것이다 (:162-168).
   이는 하루 단위 작업이다. 세훈님 지시를 기다린다.
+
+## v73 (260930) — 루트 용접·순간이동 제거, SONIC 이 몸 전체를 물리로 수행 : 파지 전 루트 xy 263~286 mm 어긋남
+
+| 항목 | v72 (용접+루트 쓰기) | v73 (부유 베이스 + SONIC) |
+|---|---|---|
+| 루트 쓰기 | 매 서브스텝 | 0회 |
+| 걷기 끝 f200 루트 xy 오차 | 0 (덮어씀) | 338 mm |
+| 무릎 구간 xy 오차 | 0 | 263~286 mm, 줄지 않음 |
+| f519 물체-손바닥 | 136 mm | 약 330 mm (허공에서 닫힘) |
+| 기립 | 루트 순간이동 | 물리로 일어섬 (f1140 z 0.754), 이후 보행 중 f1150~1170 넘어짐 |
+
+- 순간이동이 있던 이유: 클립이 키네마틱 궤적이고 픽 구간 SONIC 추적이 Dex3 모델 기준이라 키네마틱 재생으로 남겨 둠(DIAGNOSIS.md:24-30,436),
+  Inspire USD 의 ArticulationRootAPI 가 world-pelvis root_joint 에 있어 FIX_ROOT 없이는 articulation 생성 실패.
+  v73 에서 root_joint 비활성 + pelvis 에 ArticulationRootAPI (schemas.py:174-184) 로 해결.
+- 액추에이터: gear_sonic g1.py:199-360 G1_CYLINDER_MODEL_12_DEX_CFG 그대로 import (SONIC_ACTUATORS=1).
+- 결론: SONIC 부유 베이스로 걷기·무릎·기립은 물리로 된다. 파지를 막는 것은 걷는 동안 쌓인 루트 xy 오차. 원인 미확인.
+- 다음 한 가지: gear_sonic_deploy 원본의 참조 앵커링(전역 위치 오차 처리)을 읽고 sonic_control.py 포트와 비교.
