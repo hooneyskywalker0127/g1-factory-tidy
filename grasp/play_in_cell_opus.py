@@ -1193,6 +1193,24 @@ if walk is not None:
     # as IsaacLab's fixed-base upper-body env drives every joint to its target. The policy takes the
     # legs back at B for the stand-up. Measured, v2: with the legs on the policy the reach's pelvis
     # tilt was not executed and the hand closed 16 cm above the hammer.
+    def _dump_state(path, frame):
+        """Where the robot really is (root pose, 29+ joints, object pose), for planning from
+        there: the deployment perceives after arriving; floor_object_chain.sh step 5 "look
+        again from the kneel" is the offline form of the same thing."""
+        import json as _json
+        robot.update(sim.get_physics_dt())
+        _rp_, _rq_ = robot.data.root_pos_w[0].cpu().numpy(), robot.data.root_quat_w[0].cpu().numpy()
+        _dq = robot.data.joint_pos[0].cpu().numpy()
+        _dump = {"root_pos": [float(v) for v in _rp_], "root_quat_wxyz": [float(v) for v in _rq_],
+                 "dof": {n: float(_dq[j]) for j, n in enumerate(robot.joint_names)}, "frame": int(frame)}
+        if target_body is not None:
+            target_body.update(sim.get_physics_dt())
+            _dump["object_pos"] = [float(v) for v in target_body.data.root_pos_w[0].cpu().numpy()]
+            _dump["object_quat_wxyz"] = [float(v) for v in target_body.data.root_quat_w[0].cpu().numpy()]
+        _json.dump(_dump, open(path, "w"), indent=1)
+        print(f"[walk] state at frame {frame} dumped to {path}")
+    # DUMP_STATE_AT=frame: the same dump mid-clip (e.g. at the end of the reach, before the close)
+    _dump_at = int(os.environ.get("DUMP_STATE_AT", "-1"))
     _legs_direct = ([int(v) for v in os.environ["SONIC_LEGS_DIRECT"].split(",")]
                     if os.environ.get("SONIC_LEGS_DIRECT") else None)
     _legs_from_policy = True
@@ -1200,6 +1218,8 @@ if walk is not None:
         print(f"[sonic] legs direct from the clip between frames {_legs_direct[0]} and {_legs_direct[1]} (static kneel)")
     for i in range(min(len(walk["dof"]) + _settle_n, int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
         ci = _clip_i(i)
+        if i == _dump_at and os.environ.get("DUMP_STATE"):
+            _dump_state(os.environ["DUMP_STATE"], i)
         _legs_from_policy = not (_legs_direct and _legs_direct[0] <= ci < _legs_direct[1])
         for k, jid in enumerate(walk_ids):
             if (_wsonic is None or (_wsonic_legs_only and k >= _wsonic_lower_n)
@@ -1425,21 +1445,7 @@ if walk is not None:
     _ry = math.degrees(2.0 * math.atan2(float(_rq[3]), float(_rq[0])))
     print(f"[walk] stopped at ({_rp[0]:.4f}, {_rp[1]:.4f}, {_ry:.2f} deg)")
     if os.environ.get("DUMP_STATE"):
-        # Where the robot really is after the walk, for planning the reach from there
-        # (the deployment perceives after arriving; floor_object_chain.sh step 5 "look
-        # again from the kneel" is the offline form of the same thing).
-        import json as _json
-        _dq = robot.data.joint_pos[0].cpu().numpy()
-        _dump = {"root_pos": [float(v) for v in _rp],
-                 "root_quat_wxyz": [float(v) for v in _rq],
-                 "dof": {n: float(_dq[j]) for j, n in enumerate(robot.joint_names)},
-                 "frame": int(i)}
-        if target_body is not None:
-            target_body.update(sim.get_physics_dt())
-            _dump["object_pos"] = [float(v) for v in target_body.data.root_pos_w[0].cpu().numpy()]
-            _dump["object_quat_wxyz"] = [float(v) for v in target_body.data.root_quat_w[0].cpu().numpy()]
-        _json.dump(_dump, open(os.environ["DUMP_STATE"], "w"), indent=1)
-        print(f"[walk] state dumped to {os.environ['DUMP_STATE']}")
+        _dump_state(os.environ["DUMP_STATE"], i)
     if NO_SETTLE:
         print("[walk] not settling -- the pick runs from here, nothing is slid")
     else:
