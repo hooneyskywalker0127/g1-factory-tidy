@@ -1116,6 +1116,11 @@ def main():
         # 2026-09-27 15:23). Along the fingers, the fingertips lead into the gap beside the handle.
         approach_axis = os.environ.get("APPROACH_AXIS", "z" if descend else "y")
         back = float(os.environ.get("APPROACH_BACK", "0.12"))
+        if os.environ.get("GRASP_ONLY"):          # GRASP_ONLY=138[,57]: solve these candidates only (output index = position in the list)
+            _keep = [int(x) for x in os.environ["GRASP_ONLY"].split(",")]
+            wrists = [wrists[k] for k in _keep]
+            conf = np.asarray(conf)[_keep]
+            print(f"[reach] GRASP_ONLY: candidates {_keep}")
         for k, Tg0 in enumerate(wrists):
             Tg = Tg0.copy()
             if g_slide:

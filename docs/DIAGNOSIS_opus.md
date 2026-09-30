@@ -4279,3 +4279,66 @@ f1095 발산 원인 미확인. 제외 목록에 추가: 손가락 effort 10 Nm(v
 - 액추에이터: gear_sonic g1.py:199-360 G1_CYLINDER_MODEL_12_DEX_CFG 그대로 import (SONIC_ACTUATORS=1).
 - 결론: SONIC 부유 베이스로 걷기·무릎·기립은 물리로 된다. 파지를 막는 것은 걷는 동안 쌓인 루트 xy 오차. 원인 미확인.
 - 다음 한 가지: gear_sonic_deploy 원본의 참조 앵커링(전역 위치 오차 처리)을 읽고 sonic_control.py 포트와 비교.
+
+## 260930 15:20 — v74~v78 정리와 오픈소스 재독 (Fable)
+
+| 버전 | 변경 하나 | 결과 |
+|---|---|---|
+| v74~v77 | SONIC 부유 베이스 + 온라인 플래너(sonic_nav) | 전부 도달 실패. 세훈님 판정: v69 이후 폐기, v68 코드로 복귀 |
+| v78 | v68 코드 + rg72c0r, FIX_ROOT=0 ROOT_VEL=1 (루트 pose+속도 매 substep) | LOST. 루트 정지 상태(f995→1005)에서 1.75 kN→0, 물체 0.65 m 사출. 루트 속도 가설 기각 |
+
+v68 재독: 손실은 기립이 아니라 들어올리기 f895~945(손목 회전 구간)였다. v72(회전 제거)가 f1085 까지 유지한 유일한 런.
+v72 의 손실 f1085→1090 = 기립 클립 fable40carry 가 일어나면서 동시에 1.23 m 를 걷기 시작하는 순간(0.78 m/s, RISE_SLOW=2 후 0.42 m/s).
+
+오픈소스에서 확인한 것(파일:줄은 scratch study_*.md 와 v79 note):
+- GraspGenX: 베이스 고정, 들어올리기 5 cm/s(0.20 m/240f@60), "a fast lift loses grip under inertia" (end2end/tasks.py:170-175). 흔들기 시험 없음.
+- Isaac Lab: 물체를 쥔 채 루트를 매 스텝 써서 옮기는 태스크는 없다. Locomanipulation G1 은 하체 정책이 다리로 베이스를 옮긴다.
+- GR00T-WBC: SONIC 은 상체 목표를 관측으로만 받고(정책이 팔을 출력, kp≈14), decoupled_wbc 는 팔 목표 직결(kp 100) 이지만 무릎 모드 없음(스쿼트 0.2~0.74).
+- walk_clip.py:232-236 --rise-first: 제자리 기립 옵션이 이미 있고 크레이트 v5 에서 같은 문제("stands and strides in the same second ... thrown")를 고쳤다.
+
+v79 = v72 env 그대로 + 기립 클립만 --rise-first 2 로 재생성(rg79c0r: 기립 중 xy 이동 3 mm, 수직 0.16 m/s).
+
+## 260930 15:50 — 공부 결과: 파지는 처음부터 "잡힌 상태"가 아니었다 (Fable, 새 시리즈 fable/v1 의 근거)
+
+### v72 로그 재구성 (5프레임 샘플, evidence/render.log)
+| 항목 | 측정 |
+|---|---|
+| 손가락 정지 각 | 네 손가락 q 1.02~1.14 (목표 1.47), 새끼 1.70(목표 초과). **엄지 pitch q 0.00 (목표 0.6) f650~f1085 내내** — 엄지는 한 번도 닫히지 않았다 |
+| 구동 | CLOSE_MODE=velocity kd 800 → 정지 관절마다 effort 30 Nm 포화. 링크당 300~900 N, 합 1.2~2.6 kN. 물체 무게 2 N |
+| 접촉 위치 | intermediate 링크만 (손끝 집기), proximal 접촉 0. 손바닥-물체 y 간격 3~5 cm |
+| "정지" 유지 f960~1080 | index/ring 힘이 5프레임마다 65 N ↔ 400~670 N 로 교대, 물체 속도 0.03~0.39 m/s, 20 mm 기어가고 8° 회전 |
+| 손실 f1080→1090 | 루트가 3 mm/frame 움직이자 index 먼저 0, thumb_i 850→0, 물체가 손바닥을 가로질러 +18 cm |
+- 결론: kN 으로 눌린 강체 접촉이 떨리고 있었고, 기립은 그것을 드러냈을 뿐이다. 실제 Inspire URDF effort 는 10 Nm.
+
+### 오픈소스 대조 (엔진이 다르면 값을 옮기면 안 된다)
+| 항목 | GraspGenX (Newton/MuJoCo-warp, 소프트 접촉 ke 5e4) | Isaac Lab (PhysX, 우리 엔진) | 우리 v72 |
+|---|---|---|---|
+| 손가락 게인 | kp 2000 kd 200 effort 200 (dynamic_playback.py:70-71,689) | G1_INSPIRE_FTP: **kp 10 kd 0.2 effort 30** (unitree.py:566-611); Dex3 20/2 — PR #3749 "4000/50 은 물체와 큰 관통을 일으켰다"(1f56bf0bdf) | kp 10 이지만 velocity 모드 kd 800 → 30 Nm 포화 |
+| 솔버 반복 | 100/50 (:97-98) | 로봇 8/4, 물체 16/1 (unitree.py:401-406, lift/franka:53-58) | 100/50 (TGS 경고: 속도 반복 >4) |
+| depenetration | — | 로봇 1.0, 물체 5.0 | 물체 1.0 |
+| 물체 마찰 | mu 10 (Newton) | 0.5/0.5 average (기본) | 10/10, 손 3.0 max |
+| 베이스 | 고정, 이동 없음 | 하체 정책이 다리로 옮김, 루트 쓰기 없음 (locomanipulation pick_place) | 용접+순간이동 |
+| 들어올리기 | 5 cm/s, 4 s (tasks.py:170-175) | — | 15 cm/s (체인은 ×4 감속 사용) |
+| 기립 | — | — | 일어나며 동시에 1.23 m 보행 (0.78 m/s); walk_clip --rise-first 가 제자리 기립 |
+- Isaac Lab locomanipulation(G1+Dex3, 핸들 잡고 정책 보행): 물체 부착/용접 없음, 마찰+PD 만, CPU PhysX, dt 1/200, 손가락 20/2/300, 팔 3000/10, 허리 5000/5, 상체는 매 스텝 PD 목표(pink_task_space_actions.py:307-321).
+- GR00T: SONIC 은 무릎(모드 5/6)이 있고 팔은 정책 출력(kp≈14); decoupled_wbc 는 팔 직결(kp 100)이지만 무릎 없음. 배포의 상체 override 집합 = 허리3+팔14 (policy_parameters.hpp:80).
+
+### fable/v1 구성 (한 번에 제대로; 각 항목의 출처는 위 표)
+1. 손: Isaac Lab G1_INSPIRE_FTP 그대로(position, 10/0.2/30), velocity 모드·CLOSE_ORDER·HAND_KD 덮어쓰기 없음. 닫힘 목표 GraspGenX 0.6/1.47, 전 손가락 동시 램프.
+2. 물체/솔버: Isaac Lab 값(로봇 8/4, 물체 16/1, 물체 depen 5.0). GraspGenX 의 100/50 은 Newton 값이라 제외.
+3. 몸: 부유 베이스. 다리 12관절 = SONIC(gear_sonic 액추에이터), 허리3+팔14 = 클립 목표 직접 PD(Isaac Lab G1 팔 3000/10, 허리 5000/5). 루트 쓰기 없음.
+4. 도달: 걷기+무릎을 먼저 돌려 실제 골반 자세를 덤프(DUMP_STATE) → 그 자세에서 cuRobo 전신 도달을 다시 풀기(결정적 시뮬이라 2차 실행의 걷기는 동일).
+5. 들어올리기 5 cm/s(체인의 ×4), 기립은 --rise-first 제자리 클립(rg79c0r 방식).
+
+## 260930 17:05 — fable/v1 진행 중 측정: SONIC 의 무릎은 계획보다 6 cm 높다 (용접 렌더의 무릎은 바닥 속에 있었다)
+| 항목 | 값 |
+|---|---|
+| 걷기 1.4 m 뒤 서 있는 위치 오차 (SONIC, 부유 베이스, 다리+허리 정책 / 팔 직접 PD) | 0.48 m (측정→재계획 1회: 0.22 m; 목표 보정 2회 뒤 무릎 위치 오차 0.14 m) |
+| 짧은 걷기(0.2 m) | SONIC 이 실행하지 않음(제자리) |
+| 무릎(한쪽) 전환 시 골반 이동 | 약 +0.1 m (측정 1회) |
+| 플래너 무릎 골반 z | 0.425 (mode 6 키프레임 고정, --squat-to 값 무관) |
+| SONIC 실제 무릎 골반 z | 0.484, 허리 pitch 0.23(계획 0.50), 발목·엉덩이 0.2~0.46 rad 차이 |
+| cuRobo 도달 오차 #138: 계획 무릎 자세 (xy 명목) | 3.9 mm; xy 를 측정 위치로 옮겨도 8.9 mm |
+| 측정 무릎 자세 (xy 명목) | 27.0 mm; 5/15 cm 더 가까이 서도 31.7 / 49.0 mm |
+결론: 도달 실패의 원인은 위치가 아니라 **무릎 자세**다. 계획 무릎(0.425)은 물리적으로 나올 수 없는 높이(무릎이 바닥 속)였고, 용접 렌더는 그것을 숨겼다.
+다음: 실제 무릎 자세에서 닿는 파지를 156개 중에서 고른다(전체 재풀이 중). 없으면 무릎 모드 5(양무릎) 또는 도달 자세를 SONIC 자세로 바꾼다.

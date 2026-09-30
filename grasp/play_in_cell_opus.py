@@ -372,13 +372,26 @@ if SONIC:
                                              "gear_sonic/envs/manager_env/robots/g1.py")
         _sg1 = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_sg1)
-        for _g in ("legs", "feet", "waist", "arms"):
+        # SONIC_LEGS_ONLY=1: decoupled_wbc's split (g1_decoupled_whole_body_policy.py:118-143):
+        # the policy drives the legs, the 17 upper-body joints (waist + arms, the deploy's
+        # has_upper_body set, policy_parameters.hpp:80) take their targets directly. Those
+        # keep IsaacLab's G1_29DOF_CFG arm/waist actuators (unitree.py:388-533).
+        _legs_only = os.environ.get("SONIC_LEGS_ONLY", "0") == "1"
+        # (decoupled_wbc's lower body is legs + waist, 15 joints: g1_decoupled_whole_body_policy.py:141-143;
+        # only the 14 arm joints are driven straight to their targets)
+        for _g in (("legs", "feet", "waist") if _legs_only else ("legs", "feet", "waist", "arms")):
             cfg.actuators.pop(_g, None)
         for _g, _act in _sg1.G1_CYLINDER_MODEL_12_DEX_CFG.actuators.items():
+            if _legs_only and _g == "arms":
+                continue
             cfg.actuators["sonic_" + _g] = _act
-        print(f"[sonic] body actuators from gear_sonic g1.py: {sorted(_sg1.G1_CYLINDER_MODEL_12_DEX_CFG.actuators)}")
+        print(f"[sonic] body actuators from gear_sonic g1.py: "
+              f"{sorted(_g for _g in _sg1.G1_CYLINDER_MODEL_12_DEX_CFG.actuators if not _legs_only or _g != 'arms')}")
     _kp = dict(zip(_SJ, _SK))
     _kd = dict(zip(_SJ, _SD))
+    if os.environ.get("SONIC_LEGS_ONLY", "0") == "1":
+        _kp = {_n: _v for _n, _v in _kp.items() if _SJ.index(_n) < 15}
+        _kd = {_n: _v for _n, _v in _kd.items() if _SJ.index(_n) < 15}
     for _g, _act in list(cfg.actuators.items()):
         _pk, _pd = {}, {}
         for _n, _v in _kp.items():
@@ -1156,11 +1169,21 @@ if walk is not None:
                             robot.data.root_quat_w[0].cpu().numpy().astype(np.float64),
                             robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64))
         for _c, _j in enumerate(_wsonic_ids):
+            if _wsonic_legs_only and _c >= 15:
+                continue             # arms: the clip's own targets, below
             tgt_q[0, _j] = float(_out[_c])
+    # SONIC_LEGS_ONLY=1: decoupled_wbc's split -- the policy moves the lower body (12 leg
+    # + 3 waist joints, sonic_control JOINTS[:15]; g1_decoupled_whole_body_policy.py:141-143),
+    # the 14 arm joints are PD-driven straight to the clip, as IsaacLab's own G1
+    # locomanipulation drives the arms under its leg policy (pink_task_space_actions.py:307-321).
+    # SONIC still observes them.
+    _wsonic_legs_only = _wsonic is not None and os.environ.get("SONIC_LEGS_ONLY", "0") == "1"
+    if _wsonic_legs_only:
+        print("[sonic] legs only: legs + waist (15) from the policy, arms (14) from the clip")
     for i in range(min(len(walk["dof"]) + _settle_n, int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
         ci = _clip_i(i)
         for k, jid in enumerate(walk_ids):
-            if _wsonic is None:          # under SONIC the body targets are its output
+            if _wsonic is None or (_wsonic_legs_only and k >= 15):   # under SONIC the lower-body targets are its output
                 tgt_q[0, jid] = float(walk["dof"][ci, k])
         if not CLIP_ARMS:
             for k, jid in enumerate(ids):
@@ -1381,6 +1404,22 @@ if walk is not None:
     _rq = robot.data.root_quat_w[0].cpu().numpy()
     _ry = math.degrees(2.0 * math.atan2(float(_rq[3]), float(_rq[0])))
     print(f"[walk] stopped at ({_rp[0]:.4f}, {_rp[1]:.4f}, {_ry:.2f} deg)")
+    if os.environ.get("DUMP_STATE"):
+        # Where the robot really is after the walk, for planning the reach from there
+        # (the deployment perceives after arriving; floor_object_chain.sh step 5 "look
+        # again from the kneel" is the offline form of the same thing).
+        import json as _json
+        _dq = robot.data.joint_pos[0].cpu().numpy()
+        _dump = {"root_pos": [float(v) for v in _rp],
+                 "root_quat_wxyz": [float(v) for v in _rq],
+                 "dof": {n: float(_dq[j]) for j, n in enumerate(robot.joint_names)},
+                 "frame": int(i)}
+        if target_body is not None:
+            target_body.update(sim.get_physics_dt())
+            _dump["object_pos"] = [float(v) for v in target_body.data.root_pos_w[0].cpu().numpy()]
+            _dump["object_quat_wxyz"] = [float(v) for v in target_body.data.root_quat_w[0].cpu().numpy()]
+        _json.dump(_dump, open(os.environ["DUMP_STATE"], "w"), indent=1)
+        print(f"[walk] state dumped to {os.environ['DUMP_STATE']}")
     if NO_SETTLE:
         print("[walk] not settling -- the pick runs from here, nothing is slid")
     else:
