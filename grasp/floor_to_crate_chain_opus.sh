@@ -39,6 +39,10 @@ export FIX_ROOT=0 SONIC_ACTUATORS=1 SONIC_LEGS_ONLY=1 PD_BODY=1 OBJECT_NO_SLEEP=
 export SOLVER_IT=8 SOLVER_VIT=4 OBJ_SOLVER_IT=16 OBJ_SOLVER_VIT=1 OBJ_MAX_DEPEN_VEL=5.0 OBJECT_MU=1.0
 export MIMIC_URDF_RATIO=1 SONIC_LOWER_N=12 HOLD_AFTER_CLOSE=100
 export RETARGET_CFG=unitree_g1_29dof_retarget_floor.yml
+# fingertip floor clearance for the reach (reach_from_pose_opus: FLOOR_CLEAR + TIP_FLESH; defaults 0.005 + 0.04 were measured on the
+# Dex3): floor_object_chain.sh:14 runs the chain with FLOOR_CLEAR=0 TIP_FLESH=0.03. At 4.5 cm the drill's grasps (object top at 6 cm)
+# were backed off until the fingers closed on its top surface (drill v1/v2: 17/17 LOST, dz 0.000)
+export FLOOR_CLEAR=${FLOOR_CLEAR:-0} TIP_FLESH=${TIP_FLESH:-0}
 nframes(){ $P -c "import joblib; print(len(list(joblib.load('$1').values())[0]['dof']))"; }
 # open-hand targets for the walk/kneel passes: play_in_cell needs --hands (line 667: without it the hand's body
 # collisions stay on and the articulation exploded to 10 m in drill v1's first run); the hammer passes used v1_hands_open.npy
