@@ -164,10 +164,12 @@ PY
   # FIX_ROOT=1: the tester keeps the authored root_joint and its body is kinematic; unfixed, PhysX fails to create the
   # articulation (memory: isaac-runs-must-be-serial). v2's first run crashed here and fell back to #37 again.
   say "stage 3: physics test of $NC candidates ($(cat $F/${TAG}_candidates.txt | cut -c1-60))"
-  FIX_ROOT=1 timeout 5400 $P grasp/test_grasps_in_isaac.py $F/scene.npy $M/${TAG}_kneel_m.pkl $F/${TAG}_reach_all.npz --top $NC --slow --order $F/${TAG}_candidates.txt 2>&1 | /usr/bin/grep -a "\[test\] grasp\|grasps held\|Traceback" | cut -c1-150 > $F/${TAG}_test_grasps.txt
+  [ -n "${GRASP_K:-}" ] || FIX_ROOT=1 timeout 5400 $P grasp/test_grasps_in_isaac.py $F/scene.npy $M/${TAG}_kneel_m.pkl $F/${TAG}_reach_all.npz --top $NC --slow --order $F/${TAG}_candidates.txt 2>&1 | /usr/bin/grep -a "\[test\] grasp\|grasps held\|Traceback" | cut -c1-150 > $F/${TAG}_test_grasps.txt
   /usr/bin/grep -a "grasps held\|HELD" $F/${TAG}_test_grasps.txt | head -4 | while read -r l; do say "  $l"; done
   K=$(/usr/bin/grep -a "HELD" $F/${TAG}_test_grasps.txt | head -1 | sed 's/.*grasp #\s*\([0-9]*\).*/\1/')
   if [ -z "$K" ]; then K=$(cut -d, -f1 $F/${TAG}_candidates.txt); say "  no candidate HELD in the test; taking the first, #$K"; else say "  first HELD: #$K"; fi
+  # GRASP_K=<id>: take this grasp (chosen by a test run outside the chain, e.g. the tester with TEST_RISE=0)
+  [ -n "${GRASP_K:-}" ] && { K=$GRASP_K; say "  GRASP_K given: #$K"; }
   $P - <<PY
 import numpy as np
 d = np.load("$F/${TAG}_reach_all.npz"); k = $K; q = d["q"][k]; n_go, n_lift = int(d["n_go"]), int(d["n_lift"])
