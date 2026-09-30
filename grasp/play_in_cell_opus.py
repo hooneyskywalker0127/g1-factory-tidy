@@ -1493,7 +1493,9 @@ if walk is not None:
     _ry = math.degrees(2.0 * math.atan2(float(_rq[3]), float(_rq[0])))
     print(f"[walk] stopped at ({_rp[0]:.4f}, {_rp[1]:.4f}, {_ry:.2f} deg)")
     if os.environ.get("DUMP_STATE"):
-        _dump_state(os.environ["DUMP_STATE"], i)
+        # the end-of-walk dump must not overwrite a DUMP_STATE_AT dump taken mid-clip (it did, v9-v14:
+        # every "walk end" state was in fact the end of the run)
+        _dump_state(os.environ["DUMP_STATE"] if _dump_at < 0 else os.environ["DUMP_STATE"].replace(".json", "_end.json"), i)
     if NO_SETTLE:
         print("[walk] not settling -- the pick runs from here, nothing is slid")
     else:
