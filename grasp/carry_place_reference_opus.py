@@ -30,7 +30,10 @@ hands_base = np.load(rise_hands)
 wrap = hands_base[-1]
 
 carry = clip_qpos(carry_pkl)
-carry[:, arm] = base[-1, arm]                      # the arm stays where the pick left it
+if os.environ.get("FREEZE_ARM", "1") == "1":
+    carry[:, arm] = base[-1, arm]                  # the arm stays where the pick left it (PLANNER_FROZEN_UPPER)
+else:
+    print("[carry] FREEZE_ARM=0: the right arm follows the planner's own walking swing; only the fingers keep the wrap")
 carry = blend_in(base[-1], carry)
 
 place, open_from = npz_qpos(place_npz, names)
