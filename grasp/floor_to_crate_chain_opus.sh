@@ -13,8 +13,8 @@
 #     walk; a 0.5 m leg is not executed at all), until within 0.25 m of the stand, then
 #     the short walk + two-knee kneel (planner mode 5), the goal corrected by the measured kneel error (<= 2 rounds,
 #     as v1 passes B3/B4/K5) -> measure -> kneel_from_state
-#   3 whole-body reach for every grasp from the measured kneel and object pose, rank_handle order, first
-#     candidate under 10 mm -> close / hold_after_close 100 / lift x4 -> reference c0
+#   3 whole-body reach for every grasp from the measured kneel and object pose, rank_handle order, the candidates
+#     under 10 mm replayed under physics (test_grasps_in_isaac, chain step 7), first HELD -> close / hold 100 / lift x4 -> c0
 #   4 run c0 -> measure the pose just before the rise (v8)
 #   5 rise clip from that pose (walk_clip --rise-first 2), rise_reference RISE_SLOW 2 -> c0r -> measure standing
 #   6 carry pose (planner objectCarrying arm, waist 0.1; v11), carry walk with the goal extended x2.0 along
@@ -145,15 +145,23 @@ if [ $FROM -le 3 ] && [ ! -f $M/${TAG}c0.pkl ]; then
   OBJECT_POSE_NOW=$NOW OBJECT_POSE_PLAN=$PLAN BODY_W=1.0 PELVIS_W=0.1 timeout 3600 $G grasp/reach_from_pose_opus.py $M/${TAG}_kneel_m.pkl $F/grasps_all.json $F/near --all-out $F/${TAG}_reach_all.npz > $F/${TAG}_solve_all.log 2>&1
   /usr/bin/grep -a "grasps moved\|clip ends\|wrote\|Traceback" $F/${TAG}_solve_all.log | cut -c1-140 | while read -r l; do say "  $l"; done
   $G grasp/rank_handle.py $F/near $F/${TAG}_reach_all.npz --out $F/${TAG}_order.txt 2>&1 | /usr/bin/grep -a "\[rank\]" | cut -c1-160 | while read -r l; do say "  $l"; done
-  K=$($P - <<PY
+  # candidates: rank_handle order, reach error under 10 mm; then the chain's own physics test (floor_object_chain.sh step 7,
+  # test_grasps_in_isaac.py: kneel -> grasp, close, lift; GraspGenX validates its grasps by replaying them under physics too).
+  # drill v1 skipped the test and took #37 by error alone: the closing fingers pushed the drill 5 cm away (contact 0).
+  $P - <<PY
 import numpy as np
 d = np.load("$F/${TAG}_reach_all.npz"); n_go = int(d["n_go"]); e = d["err"][:, n_go - 1]
-order = [int(x) for x in open("$F/${TAG}_order.txt").read().strip().split(",")] if __import__("os").path.exists("$F/${TAG}_order.txt") else list(np.argsort(e))
-ok = [k for k in order if e[k] < 0.010]
-k = ok[0] if ok else min(order[:10], key=lambda i: e[i])
-print(k); print(f"[pick] grasp #{k} rank {order.index(k)} reach error {e[k]*1000:.1f} mm; {len(ok)} candidates under 10 mm", file=__import__("sys").stderr)
+order = [int(x) for x in open("$F/${TAG}_order.txt").read().strip().split(",")]
+ok = [k for k in order if e[k] < 0.010] or sorted(order[:10], key=lambda i: e[i])[:5]
+open("$F/${TAG}_candidates.txt", "w").write(",".join(map(str, ok)))
+print(f"[pick] {len(ok)} candidates under 10 mm in handle order: " + ", ".join(f"#{k}({e[k]*1000:.1f})" for k in ok[:8]))
 PY
-) 2> >(while read -r l; do say "  $l"; done)
+  NC=$(tr ',' '\n' < $F/${TAG}_candidates.txt | wc -l)
+  say "stage 3: physics test of $NC candidates ($(cat $F/${TAG}_candidates.txt | cut -c1-60))"
+  timeout 5400 $P grasp/test_grasps_in_isaac.py $F/scene.npy $M/${TAG}_kneel_m.pkl $F/${TAG}_reach_all.npz --top $NC --slow --order $F/${TAG}_candidates.txt 2>&1 | /usr/bin/grep -a "\[test\] grasp\|grasps held\|Traceback" | cut -c1-150 > $F/${TAG}_test_grasps.txt
+  /usr/bin/grep -a "grasps held\|HELD" $F/${TAG}_test_grasps.txt | head -4 | while read -r l; do say "  $l"; done
+  K=$(/usr/bin/grep -a "HELD" $F/${TAG}_test_grasps.txt | head -1 | sed 's/.*grasp #\s*\([0-9]*\).*/\1/')
+  if [ -z "$K" ]; then K=$(cut -d, -f1 $F/${TAG}_candidates.txt); say "  no candidate HELD in the test; taking the first, #$K"; else say "  first HELD: #$K"; fi
   $P - <<PY
 import numpy as np
 d = np.load("$F/${TAG}_reach_all.npz"); k = $K; q = d["q"][k]; n_go, n_lift = int(d["n_go"]), int(d["n_lift"])
@@ -174,7 +182,8 @@ if [ $FROM -le 4 ] && [ ! -f $F/${TAG}_stateRise.json ]; then
   CONTACT_FORCE=1 DUMP_STATE=$F/${TAG}_stateRise.json DUMP_STATE_AT=$((C0-1)) WALK_MAX_FRAMES=$((C0+1)) OBJ_EVERY=30 run_isaac $F/${TAG}_passRise.log $F/${TAG}_passRise.mp4 $F/scene.npy --walk $M/${TAG}c0.pkl --hands $M/${TAG}c0_hands.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 4"; exit 1; }
   /usr/bin/grep -a '^\[eval\]' $F/${TAG}_passRise.log | while read -r l; do say "  pick: $l"; done
   LIFTED=$(python3 -c "import json;d=json.load(open('$F/${TAG}_stateRise.json'));print(d['object_pos'][2])")
-  if awk "BEGIN{exit !($LIFTED < 0.10)}"; then say "FALSIFIED: the object is not lifted before the rise (z $LIFTED); the attempt ends here"; PROBE=$F/${TAG}_passRise; STOP=pick; fi
+  REST=$(frame0_obj $F/${TAG}_passA.log | cut -d, -f3)
+  if awk "BEGIN{exit !($LIFTED < $REST + 0.05)}"; then say "FALSIFIED: the object is not lifted before the rise (z $LIFTED, rest $REST); the attempt ends here"; PROBE=$F/${TAG}_passRise; STOP=pick; fi
 fi
 # ---------------------------------------------------------------- 5. rise from the measured pose -> c0r -> standing
 if [ -z "${STOP:-}" ] && [ $FROM -le 5 ] && [ ! -f $F/${TAG}_stateStand.json ]; then
