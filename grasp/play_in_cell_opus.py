@@ -1240,7 +1240,17 @@ if walk is not None:
             else:
                 robot.write_joint_stiffness_to_sim(_leg_kp0.unsqueeze(0), joint_ids=_leg_ids)
                 robot.write_joint_damping_to_sim(_leg_kd0.unsqueeze(0), joint_ids=_leg_ids)
-                print(f"[sonic] frame {i}: legs back on the policy's gains")
+                # Hand the legs back the way the deployment starts the policy: history filled
+                # with the state the robot is actually in (SonicTracker.prime, the state-logger
+                # warm-up of g1_deploy_onnx_ref). While the legs followed the clip the policy
+                # kept stepping on outputs that were never applied; v3/v4/v5 all lunged and
+                # fell within 2 s of this handover, v5 with the hammer still in hand.
+                robot.update(sim.get_physics_dt())
+                _wsonic.prime(robot.data.joint_pos[0, _wsonic_ids].cpu().numpy().astype(np.float64),
+                              robot.data.joint_vel[0, _wsonic_ids].cpu().numpy().astype(np.float64),
+                              robot.data.root_quat_w[0].cpu().numpy().astype(np.float64),
+                              robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64))
+                print(f"[sonic] frame {i}: legs back on the policy's gains; policy history re-primed from the measured state")
         for k, jid in enumerate(walk_ids):
             if (_wsonic is None or (_wsonic_legs_only and k >= _wsonic_lower_n)
                     or (k < 12 and not _legs_from_policy)):   # under SONIC the lower-body targets are its output
