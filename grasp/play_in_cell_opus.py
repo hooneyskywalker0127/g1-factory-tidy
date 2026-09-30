@@ -1173,10 +1173,10 @@ if walk is not None:
                             robot.data.root_quat_w[0].cpu().numpy().astype(np.float64),
                             robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64))
         for _c, _j in enumerate(_wsonic_ids):
-            if _wsonic_legs_only and _c >= _wsonic_lower_n:
+            if _wsonic_legs_only and _c >= _wsonic_lower_n and not (_waist_policy and 12 <= _c < 15):
                 continue             # upper body: the clip's own targets, below
-            if _c < 12 and not _legs_from_policy:
-                continue             # static phase: the legs follow the clip too (below)
+            if _c < _wsonic_direct_n and not _legs_from_policy:
+                continue             # static phase: legs (and waist, SONIC_DIRECT_N=15) follow the clip too (below)
             tgt_q[0, _j] = float(_out[_c])
     # SONIC_LEGS_ONLY=1: decoupled_wbc's split -- the policy moves the lower body (12 leg
     # + 3 waist joints, sonic_control JOINTS[:15]; g1_decoupled_whole_body_policy.py:141-143),
@@ -1214,14 +1214,32 @@ if walk is not None:
     _legs_direct = ([int(v) for v in os.environ["SONIC_LEGS_DIRECT"].split(",")]
                     if os.environ.get("SONIC_LEGS_DIRECT") else None)
     _legs_from_policy = True
+    # SONIC_DIRECT_N: how many of JOINTS[:N] leave the policy inside the window -- 12 (legs) or 15 (legs + waist).
+    # The waist belongs to the lower-body policy when it walks (decoupled_wbc's 15-joint lower body; measured: the
+    # walk tracked 71% with the waist on the policy, 17-36% with the waist PD-driven from the clip); the static
+    # kneel reach is the only place the clip's waist lean must be executed exactly.
+    _wsonic_direct_n = int(os.environ.get("SONIC_DIRECT_N", "12"))
+    # SONIC_WAIST_POLICY_FROM=frame: from that clip frame on, the waist joins the policy's lower body (targets
+    # and SONIC's waist gains), as in decoupled_wbc's 15-joint lower body. Measured: walks tracked 71% with the
+    # waist on the policy (v1) and 17-36% with the waist PD-driven from the clip (v9-v12); the clip-driven waist
+    # is kept for the pick (kneel reach needs the planned lean) and handed over for the carry walk.
+    _waist_from = int(os.environ.get("SONIC_WAIST_POLICY_FROM", "-1"))
+    _waist_policy = False
     if _legs_direct:
-        print(f"[sonic] legs direct from the clip between frames {_legs_direct[0]} and {_legs_direct[1]} (static kneel)")
+        print(f"[sonic] JOINTS[:{_wsonic_direct_n}] direct from the clip between frames {_legs_direct[0]} and {_legs_direct[1]} (static kneel)")
     for i in range(min(len(walk["dof"]) + _settle_n, int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
         ci = _clip_i(i)
         if i == _dump_at and os.environ.get("DUMP_STATE"):
             _dump_state(os.environ["DUMP_STATE"], i)
         _was_policy = _legs_from_policy
         _legs_from_policy = not (_legs_direct and _legs_direct[0] <= ci < _legs_direct[1])
+        if _wsonic is not None and _waist_from >= 0 and not _waist_policy and ci >= _waist_from:
+            _waist_policy = True
+            _w_ids = [_wsonic_ids[_c] for _c in range(12, 15)]
+            from sonic_control import JOINTS as _SJn, STIFFNESS as _SKn, DAMPING as _SDn
+            robot.write_joint_stiffness_to_sim(torch.tensor([[float(_SKn[_c]) for _c in range(12, 15)]], device=sim.device), joint_ids=_w_ids)
+            robot.write_joint_damping_to_sim(torch.tensor([[float(_SDn[_c]) for _c in range(12, 15)]], device=sim.device), joint_ids=_w_ids)
+            print(f"[sonic] frame {i}: waist handed to the policy (SONIC waist gains kp {[round(float(_SKn[_c]),1) for _c in range(12,15)]})")
         if _legs_direct and _was_policy != _legs_from_policy:
             # cuRobo executes its plans open loop on position drives at kp 1047.2 / kd 52.36
             # (curobo v0.7.7 examples/isaac_sim/helper.py:96-97, JOINT_DRIVE_POSITION), i.e. the
@@ -1252,8 +1270,8 @@ if walk is not None:
                               robot.data.root_ang_vel_b[0].cpu().numpy().astype(np.float64))
                 print(f"[sonic] frame {i}: legs back on the policy's gains; policy history re-primed from the measured state")
         for k, jid in enumerate(walk_ids):
-            if (_wsonic is None or (_wsonic_legs_only and k >= _wsonic_lower_n)
-                    or (k < 12 and not _legs_from_policy)):   # under SONIC the lower-body targets are its output
+            if (_wsonic is None or (_wsonic_legs_only and k >= _wsonic_lower_n and not (_waist_policy and 12 <= k < 15))
+                    or (k < _wsonic_direct_n and not _legs_from_policy)):   # under SONIC the lower-body targets are its output
                 tgt_q[0, jid] = float(walk["dof"][ci, k])
         if not CLIP_ARMS:
             for k, jid in enumerate(ids):
