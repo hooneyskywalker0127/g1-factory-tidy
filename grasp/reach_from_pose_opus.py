@@ -209,6 +209,20 @@ def grasps_in_cell(grasps_json, cap_dir, base_z=0.98):
     P = np.eye(4)
     P[:3, 3] = -WRIST_TO_PALM
     wrists = np.array([p @ P for p in palms])
+    # OBJECT_POSE_NOW / OBJECT_POSE_PLAN = "x,y,z,qw,qx,qy,qz" (world): the grasps were made for the
+    # object at OBJECT_POSE_PLAN (the scene pose it was captured in); if it has since settled or been
+    # brushed (DUMP_STATE's object_pos/object_quat_wxyz), move every grasp with it. This is the
+    # offline form of looking again after arriving (floor_object_chain.sh step 5); cuRobo's own loop
+    # plans from the measured state and the goal is what the sensors say now (motion_gen_reacher).
+    if os.environ.get("OBJECT_POSE_NOW") and os.environ.get("OBJECT_POSE_PLAN"):
+        from scipy.spatial.transform import Rotation as _Ro
+        def _T(spec):
+            v = [float(x) for x in spec.split(",")]; T = np.eye(4)
+            T[:3, :3] = _Ro.from_quat([v[4], v[5], v[6], v[3]]).as_matrix(); T[:3, 3] = v[:3]; return T
+        _D = _T(os.environ["OBJECT_POSE_NOW"]) @ np.linalg.inv(_T(os.environ["OBJECT_POSE_PLAN"]))
+        wrists = np.array([_D @ w for w in wrists])
+        print(f"[reach] grasps moved with the object: {np.round(_D[:3, 3], 3)} m, "
+              f"{np.degrees(np.linalg.norm(_Ro.from_matrix(_D[:3, :3]).as_rotvec())):.1f} deg (OBJECT_POSE_NOW vs PLAN)")
     return wrists, np.asarray(d["confidence"])
 
 

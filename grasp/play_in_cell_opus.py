@@ -1220,7 +1220,27 @@ if walk is not None:
         ci = _clip_i(i)
         if i == _dump_at and os.environ.get("DUMP_STATE"):
             _dump_state(os.environ["DUMP_STATE"], i)
+        _was_policy = _legs_from_policy
         _legs_from_policy = not (_legs_direct and _legs_direct[0] <= ci < _legs_direct[1])
+        if _legs_direct and _was_policy != _legs_from_policy:
+            # cuRobo executes its plans open loop on position drives at kp 1047.2 / kd 52.36
+            # (curobo v0.7.7 examples/isaac_sim/helper.py:96-97, JOINT_DRIVE_POSITION), i.e. the
+            # controller, not the planner, is what makes the executed pose match the plan. The
+            # policy's soft leg gains (kp ~99) sagged 0.2 rad under the torso in v3 (pelvis 7.8 cm
+            # back, 4.3 cm low; hand 10 cm off). So while the legs follow the plan they get
+            # cuRobo's drive gains; the policy's own gains come back at the handover.
+            _leg_ids = [_wsonic_ids[_c] for _c in range(12)]
+            if not _legs_from_policy:
+                _kp_c, _kd_c = [float(v) for v in os.environ.get("SONIC_LEGS_DIRECT_GAINS", "1047.19751,52.35988").split(",")]
+                _leg_kp0 = robot.data.joint_stiffness[0, _leg_ids].clone()
+                _leg_kd0 = robot.data.joint_damping[0, _leg_ids].clone()
+                robot.write_joint_stiffness_to_sim(torch.full((1, 12), _kp_c, device=sim.device), joint_ids=_leg_ids)
+                robot.write_joint_damping_to_sim(torch.full((1, 12), _kd_c, device=sim.device), joint_ids=_leg_ids)
+                print(f"[sonic] frame {i}: legs on cuRobo's execution drives kp {_kp_c:.0f} kd {_kd_c:.1f} (were kp {_leg_kp0.mean():.0f})")
+            else:
+                robot.write_joint_stiffness_to_sim(_leg_kp0.unsqueeze(0), joint_ids=_leg_ids)
+                robot.write_joint_damping_to_sim(_leg_kd0.unsqueeze(0), joint_ids=_leg_ids)
+                print(f"[sonic] frame {i}: legs back on the policy's gains")
         for k, jid in enumerate(walk_ids):
             if (_wsonic is None or (_wsonic_legs_only and k >= _wsonic_lower_n)
                     or (k < 12 and not _legs_from_policy)):   # under SONIC the lower-body targets are its output
