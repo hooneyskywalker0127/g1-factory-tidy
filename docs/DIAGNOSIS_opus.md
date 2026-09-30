@@ -4250,3 +4250,6 @@ f1095 발산 원인 미확인. 제외 목록에 추가: 손가락 effort 10 Nm(v
 ## v71 (260930) — CONTACT_LAST=1 (Isaac Lab PhysxCfg.solve_articulation_contact_last)
 - 출처: simulation_cfg.py:46-58 "for gripping scenarios ... solve dynamic contact towards the end".
 - 나머지는 v67. 반증 조건은 v71/note.txt.
+- v71 결과: LOST, f930 thumb_distal 3907 N → f935 접촉 0 → 사출. 되돌림.
+- v69/v70/v71 모두 f925~940 에서 빠졌다. v67 에도 f930 스파이크(net 1637 N)가 있었다. 솔버 설정을 바꿀 때마다 f930 이 갈린다.
+  다음: f930 에 클립/손 지령에서 무엇이 바뀌는지 먼저 잰다(노브 변경 전).
