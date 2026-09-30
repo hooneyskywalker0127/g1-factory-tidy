@@ -38,6 +38,9 @@ export SOLVER_IT=8 SOLVER_VIT=4 OBJ_SOLVER_IT=16 OBJ_SOLVER_VIT=1 OBJ_MAX_DEPEN_
 export MIMIC_URDF_RATIO=1 SONIC_LOWER_N=12 HOLD_AFTER_CLOSE=100
 export RETARGET_CFG=unitree_g1_29dof_retarget_floor.yml
 nframes(){ $P -c "import joblib; print(len(list(joblib.load('$1').values())[0]['dof']))"; }
+# open-hand targets for the walk/kneel passes: play_in_cell needs --hands (line 667: without it the hand's body
+# collisions stay on and the articulation exploded to 10 m in drill v1's first run); the hammer passes used v1_hands_open.npy
+[ -f $M/${TAG}_hands_open.npy ] || $P -c "import numpy as np; h=np.load('$M/v1_hands_open.npy'); np.save('$M/${TAG}_hands_open.npy', np.tile(h[:1], (4000, 1)))"
 # run play_in_cell with a stall watchdog: the renders stop with the CPU spinning (v8 f75, v12, v13, v15 f1590);
 # the only sign is the log not growing. Judge by the log's mtime (>150 s silent = stalled), kill by pid, rerun.
 run_isaac(){ # run_isaac LOG MP4 <play_in_cell args...>   (env already exported by the caller)
@@ -68,7 +71,7 @@ if [ $FROM -le 1 ] && [ ! -f $F/${TAG}_stateA.json ]; then
   say "stage 1: walk1 to the vision stand $(cat $F/stand_kneel.json | tr -d '\n ' | cut -c1-90)"
   LOOKED=""; for k in 1 2 3; do y=$(echo "90 -30 -150" | cut -d' ' -f$k); LOOKED="${LOOKED:+$LOOKED,}$y"; /usr/bin/grep -aq '^FOUND' $F/look_$k/text.txt && break; done
   OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip.py $M ${TAG}_walk1 1.40 0.70 90 --look-yaws "$LOOKED" --stand $F/stand_kneel.json --goal-at $F/stand_kneel.json --hold-target --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|goal  \|Traceback" | while read -r l; do say "  $l"; done
-  CONTACT_FORCE=1 DUMP_STATE=$F/${TAG}_stateA.json OBJ_EVERY=30 run_isaac $F/${TAG}_passA.log $F/${TAG}_passA.mp4 $F/scene.npy --walk $M/${TAG}_walk1.pkl --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 1"; exit 1; }
+  CONTACT_FORCE=1 DUMP_STATE=$F/${TAG}_stateA.json OBJ_EVERY=30 run_isaac $F/${TAG}_passA.log $F/${TAG}_passA.mp4 $F/scene.npy --walk $M/${TAG}_walk1.pkl --hands $M/${TAG}_hands_open.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 1"; exit 1; }
   say "  measured stand $(state_xy $F/${TAG}_stateA.json); object at frame 0: $(frame0_obj $F/${TAG}_passA.log)"
 fi
 # ---------------------------------------------------------------- 2. walk2 + kneel, corrected, -> measure
@@ -81,7 +84,7 @@ if [ $FROM -le 2 ] && [ ! -f $M/${TAG}_kneel_m.pkl ]; then
     OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip.py $M ${TAG}_walk2_r$round 0 0 0 0 0 0 --from-clip $M/${TAG}_stateA_clip.pkl --stand $S --hold-mode 5 --squat-to 0.35 --hold-target --goal-at $S --hold-max 6 2>&1 | /usr/bin/grep -a "frames (\|goal  \|root height\|Traceback" | while read -r l; do say "  $l"; done
     $P grasp/clip_tools_opus.py concat $M/${TAG}_walk1.pkl $M/${TAG}_walk2_r$round.pkl ${TAG}_walk12_r$round 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
     N=$(nframes $M/${TAG}_walk12_r$round.pkl)
-    CONTACT_FORCE=1 SETTLE_AT=$((N-1)) SETTLE_FRAMES=160 DUMP_STATE=$F/${TAG}_stateK_r$round.json OBJ_EVERY=30 run_isaac $F/${TAG}_passK_r$round.log $F/${TAG}_passK_r$round.mp4 $F/scene.npy --walk $M/${TAG}_walk12_r$round.pkl --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 2"; exit 1; }
+    CONTACT_FORCE=1 SETTLE_AT=$((N-1)) SETTLE_FRAMES=160 DUMP_STATE=$F/${TAG}_stateK_r$round.json OBJ_EVERY=30 run_isaac $F/${TAG}_passK_r$round.log $F/${TAG}_passK_r$round.mp4 $F/scene.npy --walk $M/${TAG}_walk12_r$round.pkl --hands $M/${TAG}_hands_open.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 2"; exit 1; }
     ERR=$(python3 - <<PY
 import json, math
 st = json.load(open("$F/${TAG}_stateK_r$round.json")); g = json.load(open("$S"))["stand"]
