@@ -4221,3 +4221,18 @@ globally AT CLOSE TIME and the close impulse ejected the object."
 
 코드 동작 변경은 없다. `grasp/rise_reference_opus.py` 는 기존 파일의 사본이고 import 되는 곳이 아직 없다
 (스크립트에서 경로로 호출된다).
+
+## 260930 11:15 — v68: 손가락 effort 30 → 10 Nm (GraspGenX Inspire URDF effort="10"). LOST, 같은 자리
+
+`[eval] dxy 0.3144 m -> LOST`. 폭주 구간 f1090–1110 이 v67 과 같다.
+effort 10 Nm 인데 엄지 링크 접촉력 f1000 10.1 kN, f1090 17.8 kN, f1110 전체 net 1.0 MN.
+
+| | v67 (30 Nm) | v68 (10 Nm) |
+|---|---|---|
+| f1040–1075 sum | 1114–1236 N | 4.8–1051 N (엄지 0 ↔ 624 N 반복) |
+| 첫 kN 급 스파이크 | f1095 6.5 kN | f1000 10.1 kN |
+| 발산 | f1100–1105 | f1090–1110 |
+| 판정 | LOST | LOST |
+
+결론: effort 크기는 기립 손실의 원인이 아니다(반증 조건 2 성립). 액추에이터 상한과 무관한 kN~MN 접촉력은
+접촉 해 쪽 값이다. 원인 미확인. 다음 한 가지: 접촉 해 설정을 원본 값으로 하나만 바꿔 재측정. effort 는 30 으로 복귀.
