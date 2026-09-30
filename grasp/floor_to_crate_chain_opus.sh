@@ -142,7 +142,7 @@ if [ $FROM -le 3 ] && [ ! -f $M/${TAG}c0.pkl ]; then
   NOW=$(python3 -c "import json; d=json.load(open('$F/${TAG}_stateK.json')); print(','.join('%.5f'%v for v in d['object_pos']+d['object_quat_wxyz']))")
   PLAN=$(frame0_obj $F/${TAG}_passA.log)
   say "stage 3: reach for all grasps from the measured kneel; object now $NOW (planned at $PLAN)"
-  OBJECT_POSE_NOW=$NOW OBJECT_POSE_PLAN=$PLAN BODY_W=1.0 PELVIS_W=0.1 timeout 3600 $G grasp/reach_from_pose_opus.py $M/${TAG}_kneel_m.pkl $F/grasps_all.json $F/near --all-out $F/${TAG}_reach_all.npz > $F/${TAG}_solve_all.log 2>&1
+  [ -f $F/${TAG}_reach_all.npz ] || OBJECT_POSE_NOW=$NOW OBJECT_POSE_PLAN=$PLAN BODY_W=1.0 PELVIS_W=0.1 timeout 3600 $G grasp/reach_from_pose_opus.py $M/${TAG}_kneel_m.pkl $F/grasps_all.json $F/near --all-out $F/${TAG}_reach_all.npz > $F/${TAG}_solve_all.log 2>&1
   /usr/bin/grep -a "grasps moved\|clip ends\|wrote\|Traceback" $F/${TAG}_solve_all.log | cut -c1-140 | while read -r l; do say "  $l"; done
   $G grasp/rank_handle.py $F/near $F/${TAG}_reach_all.npz --out $F/${TAG}_order.txt 2>&1 | /usr/bin/grep -a "\[rank\]" | cut -c1-160 | while read -r l; do say "  $l"; done
   # candidates: rank_handle order, reach error under 10 mm; then the chain's own physics test (floor_object_chain.sh step 7,
@@ -157,8 +157,10 @@ open("$F/${TAG}_candidates.txt", "w").write(",".join(map(str, ok)))
 print(f"[pick] {len(ok)} candidates under 10 mm in handle order: " + ", ".join(f"#{k}({e[k]*1000:.1f})" for k in ok[:8]))
 PY
   NC=$(tr ',' '\n' < $F/${TAG}_candidates.txt | wc -l)
+  # FIX_ROOT=1: the tester keeps the authored root_joint and its body is kinematic; unfixed, PhysX fails to create the
+  # articulation (memory: isaac-runs-must-be-serial). v2's first run crashed here and fell back to #37 again.
   say "stage 3: physics test of $NC candidates ($(cat $F/${TAG}_candidates.txt | cut -c1-60))"
-  timeout 5400 $P grasp/test_grasps_in_isaac.py $F/scene.npy $M/${TAG}_kneel_m.pkl $F/${TAG}_reach_all.npz --top $NC --slow --order $F/${TAG}_candidates.txt 2>&1 | /usr/bin/grep -a "\[test\] grasp\|grasps held\|Traceback" | cut -c1-150 > $F/${TAG}_test_grasps.txt
+  FIX_ROOT=1 timeout 5400 $P grasp/test_grasps_in_isaac.py $F/scene.npy $M/${TAG}_kneel_m.pkl $F/${TAG}_reach_all.npz --top $NC --slow --order $F/${TAG}_candidates.txt 2>&1 | /usr/bin/grep -a "\[test\] grasp\|grasps held\|Traceback" | cut -c1-150 > $F/${TAG}_test_grasps.txt
   /usr/bin/grep -a "grasps held\|HELD" $F/${TAG}_test_grasps.txt | head -4 | while read -r l; do say "  $l"; done
   K=$(/usr/bin/grep -a "HELD" $F/${TAG}_test_grasps.txt | head -1 | sed 's/.*grasp #\s*\([0-9]*\).*/\1/')
   if [ -z "$K" ]; then K=$(cut -d, -f1 $F/${TAG}_candidates.txt); say "  no candidate HELD in the test; taking the first, #$K"; else say "  first HELD: #$K"; fi
