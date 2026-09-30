@@ -1175,6 +1175,8 @@ if walk is not None:
         for _c, _j in enumerate(_wsonic_ids):
             if _wsonic_legs_only and _c >= _wsonic_lower_n:
                 continue             # upper body: the clip's own targets, below
+            if _c < 12 and not _legs_from_policy:
+                continue             # static phase: the legs follow the clip too (below)
             tgt_q[0, _j] = float(_out[_c])
     # SONIC_LEGS_ONLY=1: decoupled_wbc's split -- the policy moves the lower body (12 leg
     # + 3 waist joints, sonic_control JOINTS[:15]; g1_decoupled_whole_body_policy.py:141-143),
@@ -1185,10 +1187,23 @@ if walk is not None:
     _wsonic_lower_n = int(os.environ.get("SONIC_LOWER_N", "15"))
     if _wsonic_legs_only:
         print(f"[sonic] legs only: JOINTS[:{_wsonic_lower_n}] from the policy, the other {29 - _wsonic_lower_n} from the clip")
+    # SONIC_LEGS_DIRECT=A,B: between clip frames A and B (the kneel is static -- both knees on the
+    # floor, no balance to keep) the legs too are PD-driven to the clip, so the whole-body reach
+    # cuRobo planned (which tilts the pelvis, v2: 19 deg) is executed by the body that was planned,
+    # as IsaacLab's fixed-base upper-body env drives every joint to its target. The policy takes the
+    # legs back at B for the stand-up. Measured, v2: with the legs on the policy the reach's pelvis
+    # tilt was not executed and the hand closed 16 cm above the hammer.
+    _legs_direct = ([int(v) for v in os.environ["SONIC_LEGS_DIRECT"].split(",")]
+                    if os.environ.get("SONIC_LEGS_DIRECT") else None)
+    _legs_from_policy = True
+    if _legs_direct:
+        print(f"[sonic] legs direct from the clip between frames {_legs_direct[0]} and {_legs_direct[1]} (static kneel)")
     for i in range(min(len(walk["dof"]) + _settle_n, int(os.environ.get("WALK_MAX_FRAMES", "1000000")))):   # WALK_MAX_FRAMES: a short diagnostic run
         ci = _clip_i(i)
+        _legs_from_policy = not (_legs_direct and _legs_direct[0] <= ci < _legs_direct[1])
         for k, jid in enumerate(walk_ids):
-            if _wsonic is None or (_wsonic_legs_only and k >= _wsonic_lower_n):   # under SONIC the lower-body targets are its output
+            if (_wsonic is None or (_wsonic_legs_only and k >= _wsonic_lower_n)
+                    or (k < 12 and not _legs_from_policy)):   # under SONIC the lower-body targets are its output
                 tgt_q[0, jid] = float(walk["dof"][ci, k])
         if not CLIP_ARMS:
             for k, jid in enumerate(ids):
