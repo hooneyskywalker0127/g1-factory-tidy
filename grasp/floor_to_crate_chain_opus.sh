@@ -9,7 +9,8 @@
 #
 # Stages (each skipped when its product exists, so a later version can resume; FROM=<n> forces from stage n):
 #   1 walk1 to the vision stand (stand_kneel.json from floor_object_chain.sh step 3) -> measure
-#   2 standing approach rounds until within 0.25 m of the kneel stand (SONIC walks ~half of a planner walk), then
+#   2 standing approach legs, each planned to a goal extended x2 past the kneel stand (SONIC walks ~half of a planner
+#     walk; a 0.5 m leg is not executed at all), until within 0.25 m of the stand, then
 #     the short walk + two-knee kneel (planner mode 5), the goal corrected by the measured kneel error (<= 2 rounds,
 #     as v1 passes B3/B4/K5) -> measure -> kneel_from_state
 #   3 whole-body reach for every grasp from the measured kneel and object pose, rank_handle order, first
@@ -82,13 +83,24 @@ if [ $FROM -le 2 ] && [ ! -f $M/${TAG}_kneel_m.pkl ]; then
   # until the measured stand is within 0.25 m of the kneel stand; each round starts from the measured pose
   # (hammer v1: walk1 stopped 0.4 m short and the kneel walk was that short leg)
   CUR=$F/${TAG}_stateA.json; CHAIN=$M/${TAG}_walk1.pkl
-  for i in 1 2 3; do
+  # the goal of each approach leg is extended x APPROACH_K along start->stand (default 2.0): the planner reaches any goal
+  # in about the same time (0.69 m -> 112 f, 0.51 m -> 104 f) and SONIC executes about half of a planner walk (GR00T's
+  # own loop doubles the requested speed for that reason, full_agent.py:227-228); a 0.5 m leg was not executed at all
+  # (drill v1 S1-S3: 0.51 -> 0.55 -> 0.56 m, modes 2 and 1 alike), the x2.0 goal of the hammer's carry walk (v14) was
+  for i in 1 2 3 4 5; do
     DIST=$(python3 -c "import json,math;s=json.load(open('$CUR'))['root_pos'];g=json.load(open('$F/stand_kneel.json'))['stand'];print('%.3f'%math.hypot(s[0]-g['x'],s[1]-g['y']))")
     say "stage 2a: measured stand $(state_xy $CUR) is $DIST m from the kneel stand"
     awk "BEGIN{exit !($DIST <= 0.25)}" && break
     if [ ! -f $F/${TAG}_stateS$i.json ]; then
       $P grasp/clip_tools_opus.py from_state $CUR 4 ${TAG}_stateS${i}_from 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
-      OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip.py $M ${TAG}_walkS$i 0 0 0 0 0 0 --from-clip $M/${TAG}_stateS${i}_from.pkl --stand $F/stand_kneel.json --goal-at $F/stand_kneel.json --hold-target --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|goal  \|Traceback" | while read -r l; do say "  $l"; done
+      python3 - <<PY | while read -r l; do say "  $l"; done
+import json
+d = json.load(open("$F/stand_kneel.json")); s = json.load(open("$CUR"))["root_pos"]; k = float("${APPROACH_K:-2.0}")
+gx, gy = d["stand"]["x"], d["stand"]["y"]; d["stand"]["x"] = s[0] + k * (gx - s[0]); d["stand"]["y"] = s[1] + k * (gy - s[1])
+d["note"] = "approach leg $i: kneel stand extended x%.1f along the measured start -> stand (hammer v14 rule)" % k
+json.dump(d, open("$F/${TAG}_stand_S$i.json", "w"), indent=1); print(f"[goal] leg $i: stand {gx:.3f},{gy:.3f} -> planner goal {d['stand']['x']:.3f},{d['stand']['y']:.3f}")
+PY
+      WALK_MODE=${APPROACH_MODE:-2} OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_opus.py $M ${TAG}_walkS$i 0 0 0 0 0 0 --from-clip $M/${TAG}_stateS${i}_from.pkl --stand $F/${TAG}_stand_S$i.json --goal-at $F/${TAG}_stand_S$i.json --hold-target --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|goal  \|Traceback" | while read -r l; do say "  $l"; done
       $P grasp/clip_tools_opus.py concat $CHAIN $M/${TAG}_walkS$i.pkl ${TAG}_walkchain$i 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
       CONTACT_FORCE=1 DUMP_STATE=$F/${TAG}_stateS$i.json OBJ_EVERY=30 run_isaac $F/${TAG}_passS$i.log $F/${TAG}_passS$i.mp4 $F/scene.npy --walk $M/${TAG}_walkchain$i.pkl --hands $M/${TAG}_hands_open.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 2a"; exit 1; }
     fi
@@ -101,7 +113,7 @@ if [ $FROM -le 2 ] && [ ! -f $M/${TAG}_kneel_m.pkl ]; then
   for round in 0 1 2; do
     S=$F/${TAG}_stand_k$round.json
     say "stage 2b round $round: walk2 + two-knee kneel toward $(python3 -c "import json;d=json.load(open('$S'))['stand'];print('%.3f %.3f %.1f'%(d['x'],d['y'],d['yaw_deg']))")"
-    OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip.py $M ${TAG}_walk2_k$round 0 0 0 0 0 0 --from-clip $M/${TAG}_stateA_clip.pkl --stand $S --hold-mode 5 --squat-to 0.35 --hold-target --goal-at $S --hold-max 6 2>&1 | /usr/bin/grep -a "frames (\|goal  \|root height\|Traceback" | while read -r l; do say "  $l"; done
+    WALK_MODE=${APPROACH_MODE:-2} OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_opus.py $M ${TAG}_walk2_k$round 0 0 0 0 0 0 --from-clip $M/${TAG}_stateA_clip.pkl --stand $S --hold-mode 5 --squat-to 0.35 --hold-target --goal-at $S --hold-max 6 2>&1 | /usr/bin/grep -a "frames (\|goal  \|root height\|Traceback" | while read -r l; do say "  $l"; done
     $P grasp/clip_tools_opus.py concat $CHAIN $M/${TAG}_walk2_k$round.pkl ${TAG}_walk12_k$round 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
     N=$(nframes $M/${TAG}_walk12_k$round.pkl)
     CONTACT_FORCE=1 SETTLE_AT=$((N-1)) SETTLE_FRAMES=160 DUMP_STATE=$F/${TAG}_stateK_k$round.json OBJ_EVERY=30 run_isaac $F/${TAG}_passK_k$round.log $F/${TAG}_passK_k$round.mp4 $F/scene.npy --walk $M/${TAG}_walk12_k$round.pkl --hands $M/${TAG}_hands_open.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 2b"; exit 1; }
