@@ -144,6 +144,10 @@ fi
 # ---------------------------------------------------------------- 3. grasps from the measured kneel -> c0
 if [ $FROM -le 3 ] && [ ! -f $M/${TAG}c0.pkl ]; then
   NOW=$(python3 -c "import json; d=json.load(open('$F/${TAG}_stateK.json')); print(','.join('%.5f'%v for v in d['object_pos']+d['object_quat_wxyz']))")
+  # OBJECT_NOW_OVERRIDE="x,y,z,qw,qx,qy,qz": the object pose shifted by the hand error measured in a pick run
+  # (grasp/hand_error_opus.py) -- the walk/kneel correction applied to the hand: the render's arm lands ~2.5 cm off
+  # the planned wrist and a fingertip pinch shoves a 4 cm handle instead of catching it (drill v3/v4)
+  [ -n "${OBJECT_NOW_OVERRIDE:-}" ] && { NOW=$OBJECT_NOW_OVERRIDE; say "  object pose for the reach overridden (hand error): $NOW"; }
   PLAN=$(frame0_obj $F/${TAG}_passA.log)
   say "stage 3: reach for all grasps from the measured kneel; object now $NOW (planned at $PLAN)"
   [ -f $F/${TAG}_reach_all.npz ] || OBJECT_POSE_NOW=$NOW OBJECT_POSE_PLAN=$PLAN BODY_W=1.0 PELVIS_W=0.1 timeout 3600 $G grasp/reach_from_pose_opus.py $M/${TAG}_kneel_m.pkl $F/grasps_all.json $F/near --all-out $F/${TAG}_reach_all.npz > $F/${TAG}_solve_all.log 2>&1
