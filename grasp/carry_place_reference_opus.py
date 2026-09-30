@@ -37,7 +37,15 @@ else:
 carry = blend_in(base[-1], carry)
 
 place, open_from = npz_qpos(place_npz, names)
-place = blend_in(carry[-1], place)
+# PLACE_SLOW: stretch the place motion (GraspGenX moves to the bin over 6 s, tasks.py:325-335; ours was 3 s).
+# PLACE_BLEND: frames over which the carry pose fades into the place plan (default 45 as build_place_reference).
+# v13 lost the hammer here: the wrist rose 0.65 -> 1.05 m at 0.8 m/s in the 45-frame blend, contact spiked 270 -> 408 N.
+_slow = float(os.environ.get("PLACE_SLOW", "1"))
+if _slow > 1:
+    idx = np.linspace(0, len(place) - 1, int(round(len(place) * _slow)))
+    place = np.stack([np.interp(idx, np.arange(len(place)), place[:, j]) for j in range(place.shape[1])], axis=1).astype(np.float32)
+    place[:, 3:7] /= np.linalg.norm(place[:, 3:7], axis=1, keepdims=True)
+place = blend_in(carry[-1], place, n=int(os.environ.get("PLACE_BLEND", "45")))
 settle = int(os.environ.get("RELEASE_SETTLE", "30"))   # GraspGenX hold_frames 60 @60 fps
 ramp = int(os.environ.get("RELEASE_RAMP", "10"))       # GraspGenX close_frames 20 @60 fps
 after = int(os.environ.get("RELEASE_HOLD", "45"))
