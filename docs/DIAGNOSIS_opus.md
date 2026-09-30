@@ -4204,3 +4204,20 @@ globally AT CLOSE TIME and the close impulse ejected the object."
 3. effort 한계를 30 → 1000 Nm 로 올리면 접촉력 9 kN, 물체 2.8 m 사출 (v65 vs v67).
 4. 30 Nm 만으로 파지는 f519–f1090, 570 프레임 유지된다 (v67).
 5. 남은 손실 지점: 기립 f1095 의 접촉 해 발산. 원인 미확인.
+
+## 260930 10:30 — 인계: 세션 임시폴더에만 있던 것을 내구 위치로 옮겼다
+
+세훈님 지시 "67버전까지만해" 로 렌더는 v67 에서 멈춰 있다. 돌고 있는 프로세스 없음, GPU 20 MiB.
+다음 세션이 이어서 하려면 없으면 안 되는 것이 세션 임시폴더에만 있었다.
+
+- `rise_reference.py` (46줄) → **`grasp/rise_reference_opus.py`** 로 커밋.
+  렌더 3단계 중 2단계(`build_reach_reference_opus` 다음, `play_in_cell_opus` 앞)가 이 파일을 쓴다.
+  v65/v66/v67 의 `results/motion/rg6Nc0r.pkl` 은 전부 이 스크립트가 만든 것이다.
+- v65/v66/v67 의 실행 스크립트 → 각 `vN/evidence/` (`run.sh`, v65 는 `run_solve.sh` + `run_render2.sh`).
+  `results/` 는 gitignore 이므로 이것이 실행 인자·환경변수의 유일한 내구 기록이다.
+- 측정 도구 `absd.py`(물체-손바닥 거리) `slip.py` `fk_check.py` `insp.py` `insp2.py`
+  → `할일/26/09/260930/도구_260929/`.
+- 인계 메모 → `할일/26/09/260930/이어서_진행_g1-factory-tidy.md`.
+
+코드 동작 변경은 없다. `grasp/rise_reference_opus.py` 는 기존 파일의 사본이고 import 되는 곳이 아직 없다
+(스크립트에서 경로로 호출된다).
