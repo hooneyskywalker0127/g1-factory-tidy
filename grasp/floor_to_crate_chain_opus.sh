@@ -119,7 +119,9 @@ PY
     CONTACT_FORCE=1 SETTLE_AT=$((N-1)) SETTLE_FRAMES=160 DUMP_STATE=$F/${TAG}_stateK_k$round.json OBJ_EVERY=30 run_isaac $F/${TAG}_passK_k$round.log $F/${TAG}_passK_k$round.mp4 $F/scene.npy --walk $M/${TAG}_walk12_k$round.pkl --hands $M/${TAG}_hands_open.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 2b"; exit 1; }
     ERR=$(python3 - <<PY
 import json, math
-st = json.load(open("$F/${TAG}_stateK_k$round.json")); g = json.load(open("$S"))["stand"]
+# the error is measured against the TRUE kneel stand, not the round's (moved) planner goal: drill v1 k1 knelt 0.144 m
+# from the stand but 0.322 m from its x2 goal, and the additive rule then aimed 0.5 m past the object
+st = json.load(open("$F/${TAG}_stateK_k$round.json")); g = json.load(open("$F/stand_kneel.json"))["stand"]
 ex, ey = st["root_pos"][0] - g["x"], st["root_pos"][1] - g["y"]
 nxt = json.load(open("$S")); nxt["stand"]["x"] -= ex; nxt["stand"]["y"] -= ey
 nxt["note"] = "round $round goal minus the kneel error measured under physics (hammer v1 passes B3/B4)"
