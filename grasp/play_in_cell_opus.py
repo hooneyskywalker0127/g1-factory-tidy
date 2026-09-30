@@ -109,9 +109,13 @@ print(f"[play] {traj.shape[0]} frames, {len(names)} joints, {FPS} fps")
 # CCD=0: CCD came from the placed-hand tester (plan_scene.py:84-91), not from a source.
 # GraspGenX (Newton/MuJoCo, dynamic_playback.py:1153-1170) and IsaacLab's dexsuite
 # (dexsuite_env_cfg.py:425-430) grasp without it. The scene flag gates the per-body one.
+# CONTACT_LAST=1: IsaacLab's PhysxCfg.solve_articulation_contact_last (simulation_cfg.py:46-58),
+# documented "for gripping scenarios": solve dynamic contact after the joint drives. Default off.
 sim = SimulationContext(sim_utils.SimulationCfg(dt=1.0 / 1000.0, device="cpu", physx=sim_utils.PhysxCfg(
-    enable_ccd=os.environ.get("CCD", "1") == "1")))
-print(f"[phys] scene CCD {os.environ.get('CCD', '1') == '1'}")
+    enable_ccd=os.environ.get("CCD", "1") == "1",
+    solve_articulation_contact_last=os.environ.get("CONTACT_LAST", "0") == "1")))
+print(f"[phys] scene CCD {os.environ.get('CCD', '1') == '1'}  "
+      f"contact_last {os.environ.get('CONTACT_LAST', '0') == '1'}")
 stage = omni.usd.get_context().get_stage()
 UsdGeom.Xform.Define(stage, "/World")
 stage.DefinePrim("/World/Cell", "Xform").GetReferences().AddReference(

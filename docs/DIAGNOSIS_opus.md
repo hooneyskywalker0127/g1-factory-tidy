@@ -4242,3 +4242,11 @@ effort 10 Nm 인데 엄지 링크 접촉력 f1000 10.1 kN, f1090 17.8 kN, f1110 
 `[eval] dxy 1.4144 m -> LOST`. f700 까지 v67 과 접촉력이 소수점까지 같고(363.34/1990.01), f800 부터 갈라져
 f925→f930 에 물체가 12 m/s 로 사출(기립 전). CCD 는 손실 원인이 아니라 손실을 늦추는 쪽이다. 기본값(켬) 유지.
 f1095 발산 원인 미확인. 제외 목록에 추가: 손가락 effort 10 Nm(v68), CCD 끔(v69).
+
+## v70 (260930) — 속도 반복 50 -> 1/0 : 악화, 되돌림
+- LOST dxy 0.1702 m. f875 thumb 7262 N 스파이크 → f905 물체 회전 시작 → f940 접촉 0. 기립(f1090) 전에 빠짐.
+- v69(CCD off)와 같은 구간(f900~940) 손실. 속도 반복 50 은 이 장면에서 필요. f1095 폭주 원인은 원인 미확인.
+
+## v71 (260930) — CONTACT_LAST=1 (Isaac Lab PhysxCfg.solve_articulation_contact_last)
+- 출처: simulation_cfg.py:46-58 "for gripping scenarios ... solve dynamic contact towards the end".
+- 나머지는 v67. 반증 조건은 v71/note.txt.
