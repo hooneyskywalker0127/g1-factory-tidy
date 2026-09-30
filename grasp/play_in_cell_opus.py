@@ -106,7 +106,12 @@ print(f"[play] {traj.shape[0]} frames, {len(names)} joints, {FPS} fps")
 # with sim_fps=60, so ~17 solver steps per trajectory waypoint). At 1/120 there
 # are only 2 steps per waypoint and the hand passes through a contact in one
 # step, which reads as the arm swatting the object.
-sim = SimulationContext(sim_utils.SimulationCfg(dt=1.0 / 1000.0, device="cpu", physx=sim_utils.PhysxCfg(enable_ccd=True)))
+# CCD=0: CCD came from the placed-hand tester (plan_scene.py:84-91), not from a source.
+# GraspGenX (Newton/MuJoCo, dynamic_playback.py:1153-1170) and IsaacLab's dexsuite
+# (dexsuite_env_cfg.py:425-430) grasp without it. The scene flag gates the per-body one.
+sim = SimulationContext(sim_utils.SimulationCfg(dt=1.0 / 1000.0, device="cpu", physx=sim_utils.PhysxCfg(
+    enable_ccd=os.environ.get("CCD", "1") == "1")))
+print(f"[phys] scene CCD {os.environ.get('CCD', '1') == '1'}")
 stage = omni.usd.get_context().get_stage()
 UsdGeom.Xform.Define(stage, "/World")
 stage.DefinePrim("/World/Cell", "Xform").GetReferences().AddReference(
