@@ -970,11 +970,27 @@ def main():
         Tp[:3, 3] = place
         n_go, n_hold = 90, 45
         targets = []
-        for i in range(n_go):
-            a = (i + 1) / n_go
-            M = T0.copy()
-            M[:3, 3] = T0[:3, 3] + (Tp[:3, 3] - T0[:3, 3]) * a
-            targets.append(M)
+        if os.environ.get("PLACE_GRASPGEN") == "1":
+            # GraspGenX PickAndDropInBinTask order (end2end/tasks.py:280-297, 337-369): lift_object straight up
+            # (LIFT_FRAMES 240 @60 -> 120 @30), hold_after_lift (hold_frames 60 @60 -> 30), then move_to_above_bin
+            # at that height (MOVE_TO_BIN_FRAMES 360 @60 -> 180, "s l o w"). The straight carry->drop line of v14
+            # crossed the crate rim and the desk edge (the wrist started 4 cm below the rim).
+            n_up, n_lift_hold, n_go = 120, 30, 180
+            Tu = T0.copy(); Tu[2, 3] = place[2]
+            for i in range(n_up):
+                M = T0.copy(); M[:3, 3] = T0[:3, 3] + (Tu[:3, 3] - T0[:3, 3]) * (i + 1) / n_up
+                targets.append(M)
+            targets += [Tu.copy() for _ in range(n_lift_hold)]
+            for i in range(n_go):
+                M = T0.copy(); M[:3, 3] = Tu[:3, 3] + (Tp[:3, 3] - Tu[:3, 3]) * (i + 1) / n_go
+                targets.append(M)
+            n_go = n_up + n_lift_hold + n_go
+        else:
+            for i in range(n_go):
+                a = (i + 1) / n_go
+                M = T0.copy()
+                M[:3, 3] = T0[:3, 3] + (Tp[:3, 3] - T0[:3, 3]) * a
+                targets.append(M)
         targets += [Tp.copy() for _ in range(n_hold)]
         sol, err = solve(targets, from_here=True)
         print(f"[reach] place: {len(targets)} frames to {np.round(place, 3)}, wrist error "
