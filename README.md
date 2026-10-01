@@ -8,9 +8,9 @@
 [![IsaacLab](https://img.shields.io/badge/IsaacLab-2.3.2-silver.svg)](https://isaac-sim.github.io/IsaacLab/)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
 
-[**YouTube**](https://www.youtube.com/playlist?list=PLOijdB1dOk8Y) · [**시연 영상**](https://www.youtube.com/watch?v=Xm1skXH7E90)
+[**YouTube**](https://www.youtube.com/playlist?list=PLOijdB1dOk8Y) · [**시연 영상**](https://www.youtube.com/watch?v=taS7JnfQNs4)
 
-[![시연 영상 재생](docs/youtube_thumb.jpg)](https://www.youtube.com/watch?v=Xm1skXH7E90)
+[![시연 영상 재생](docs/youtube_thumb.jpg)](https://www.youtube.com/watch?v=taS7JnfQNs4)
 
 > **범위는 시뮬레이션까지입니다.** 하드웨어가 없어 실제 로봇 배포는 하지 않았고,
 > sim-to-real 성능을 주장하지 않습니다. 다만 실기에 없는 장치(골반 고정, 순간이동)는
@@ -71,7 +71,7 @@ RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점�
 | 바닥 망치: 무릎 자세에서 cuRobo 도달 | 양무릎 자세에서 0.8~2.9 mm, 실행 뒤 골반 12 mm·관절 0.03 rad | [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
 | 바닥 망치: 조임 | 접촉 269 N 유지(엄지 135 / 대향 70 N), 손가락 사이에 손잡이 | [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
 | 바닥 망치: 들고 일어나기 | 기립 클립을 일어서기 직전 측정 자세에서 계획하면 잡은 채 일어섭니다 (접촉 180~270 N 유지) | [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
-| 바닥 망치: 운반해 크레이트에 넣기 | 들어올리기→정지→수평 이동(GraspGenX 순서)으로 놓으면 들어갑니다. 머리가 테두리에 걸침(투하점이 손목 기준) | [시연 영상](https://www.youtube.com/watch?v=Xm1skXH7E90) · [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
+| 바닥 망치: 운반해 크레이트에 넣기 | 들어올리기→정지→수평 이동(GraspGenX 순서)으로 놓으면 들어갑니다. 머리가 테두리에 걸침(투하점이 손목 기준) | [시연 영상](https://www.youtube.com/watch?v=taS7JnfQNs4) · [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
 
 되지 않는 것도 적어 둡니다. 도착 후 한 번 다시 보고 그 뒤에는 눈을 감습니다(실행 중 물체가
 움직여도 따라가지 않습니다). 위치 측정은 시뮬 상태 덤프로 대신하며, 실기에서는 상태 추정과
@@ -82,6 +82,10 @@ camera가 그 자리를 맡아야 합니다.
 <table>
   <tr>
     <td align="center"><img src="docs/hammer_walk_kneel.gif" width="360"/><br/>걷기·양무릎 — GR00T SONIC, 부유 베이스; 멈춘 자리를 재서 다시 계획 (3배속)</td>
+    <td align="center"><img src="docs/hammer_graspgen_cloud.gif" width="360"/><br/>GraspGen-X — 머리 camera 점구름(1216점)과 파지 후보 156개, 선택한 파지는 RGB 축 (2배속)</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/hammer_curobo_path.gif" width="360"/><br/>cuRobo — 측정한 무릎 자세에서 푼 전신 도달의 손목 경로 (2배속)</td>
     <td align="center"><img src="docs/hammer_grasp.gif" width="360"/><br/>파지 — GraspGen-X 파지를 Inspire 손이 닫기·유지·들기 (3인칭 확대, 1.5배속)</td>
   </tr>
   <tr>
@@ -90,7 +94,7 @@ camera가 그 자리를 맡아야 합니다.
   </tr>
 </table>
 
-전체 영상: [시연 영상](https://www.youtube.com/watch?v=Xm1skXH7E90) · [재생목록](https://www.youtube.com/playlist?list=PLOijdB1dOk8Y)
+전체 영상: [시연 영상](https://www.youtube.com/watch?v=taS7JnfQNs4) · [재생목록](https://www.youtube.com/playlist?list=PLOijdB1dOk8Y)
 
 ## 설치
 
