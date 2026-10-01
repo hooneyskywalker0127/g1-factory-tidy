@@ -82,7 +82,7 @@ camera가 그 자리를 맡아야 합니다.
 <table>
   <tr>
     <td align="center"><img src="docs/hammer_walk_kneel.gif" width="360"/><br/>걷기·양무릎 — GR00T SONIC, 부유 베이스; 멈춘 자리를 재서 다시 계획 (3배속)</td>
-    <td align="center"><img src="docs/hammer_grasp_wrist.gif" width="360"/><br/>파지 — GraspGen-X 파지를 Inspire 손이 닫기·유지·들기 (손목 camera, 1.5배속)</td>
+    <td align="center"><img src="docs/hammer_grasp_head.gif" width="360"/><br/>파지 — GraspGen-X 파지를 Inspire 손이 닫기·유지·들기 (머리 camera, 1.5배속)</td>
   </tr>
   <tr>
     <td align="center"><img src="docs/hammer_carry_drop.gif" width="360"/><br/>기립·운반·투하 — 측정 자세에서 기립, 크레이트 위로 들어 올려 놓기 (2.5배속)</td>
