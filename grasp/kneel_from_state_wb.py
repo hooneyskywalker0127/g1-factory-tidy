@@ -1,9 +1,9 @@
 """Kneel clip + hold, ending in the pose the robot actually reached (DUMP_STATE json).
-    python kneel_from_state_opus.py KNEEL.pkl STATE.json HOLD_FRAMES OUT_NAME
+    python kneel_from_state_wb.py KNEEL.pkl STATE.json HOLD_FRAMES OUT_NAME
 The walk/kneel frames are kept verbatim (the second run must repeat the first), then
 HOLD_FRAMES of the last frame, and the very last frame is the measured root pose and
 joints, so reach_from_pose plans from where the robot really is (it reads the last
-frame: reach_from_pose_opus.py:126-128). The deployment perceives after arriving; the
+frame: reach_from_pose_wb.py:126-128). The deployment perceives after arriving; the
 chain's step 5 ("look again from the kneel") is the offline form of the same thing.
 """
 import json

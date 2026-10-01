@@ -1,11 +1,11 @@
 """Reference for carrying the held object to the crate and releasing it, appended to a
 pick+rise reference.
-    python carry_place_reference_opus.py RISE.pkl RISE_hands.npy CARRY.pkl PLACE.npz OUT_NAME
+    python carry_place_reference_wb.py RISE.pkl RISE_hands.npy CARRY.pkl PLACE.npz OUT_NAME
 Same construction as build_place_reference.py (read, not guessed): the carry clip's right arm
 is replaced by the last arm pose of the reference it follows (the hand keeps what it holds),
-the seams are blended, then the place reach (reach_from_pose_opus --place) and a release.
+the seams are blended, then the place reach (reach_from_pose_wb --place) and a release.
 Differences from build_place_reference: the fingers keep the reference's LAST hand row (the
-actual wrap, rise_reference_opus does the same) instead of HAND_CLOSED; the release follows
+actual wrap, rise_reference_wb does the same) instead of HAND_CLOSED; the release follows
 GraspGenX's PickAndDropInBinTask (end2end/tasks.py:608-625): the arm holds still above the
 drop for hold_frames (60 f @60 = 1 s -> 30 f @30) before the fingers ramp closed->open over
 close_frames (20 f @60 -> 10 f @30), then hold so the object falls; and PLACE.npz's own

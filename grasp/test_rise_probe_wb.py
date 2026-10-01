@@ -34,7 +34,7 @@ from scipy.spatial.transform import Rotation as R  # noqa: E402
 
 from plan_scene import FINGER_MU, build as build_plan_scene, torso_pose, keep_only_hand_collisions, floor_slab  # noqa: E402
 from props import spawn_props  # noqa: E402
-from build_reach_reference_opus import HAND_OPEN, HAND_CLOSED, HAND_NAMES, PALM_LINK, HAND_KEEP, mujoco_names, robot_cfg, stiffen_mimic, soft_mimic  # noqa: E402
+from build_reach_reference_wb import HAND_OPEN, HAND_CLOSED, HAND_NAMES, PALM_LINK, HAND_KEEP, mujoco_names, robot_cfg, stiffen_mimic, soft_mimic  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 
 meta = json.load(open(os.path.splitext(SCENE)[0] + ".json"))
@@ -54,7 +54,7 @@ cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
     contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
 # SOLVER_IT/SOLVER_VIT: GraspGenX end2end/dynamic_playback.py:91-98 runs 100/50
 # ("with only 10 iterations the constraint solver doesn't fully converge and grasps
-# slip during the lift segment"). Fable's tester is fixed at 12/4, so every candidate
+# slip during the lift segment"). the original tester is fixed at 12/4, so every candidate
 # it judged was judged under a solver NVIDIA calls too loose to hold a lift.
 _SIT = int(os.environ.get("SOLVER_IT", "12")); _SVIT = int(os.environ.get("SOLVER_VIT", "4"))
 cfg.spawn = cfg.spawn.replace(articulation_props=sim_utils.ArticulationRootPropertiesCfg(
@@ -129,15 +129,15 @@ if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_KD"):
 robot = Articulation(cfg)
 stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_reference.py)
 
-# --- MIMIC_URDF_RATIO, ported verbatim from play_in_cell_opus.py:545-564 -------------
+# --- MIMIC_URDF_RATIO, ported verbatim from play_in_cell_wb.py:545-564 -------------
 # The chain exports MIMIC_URDF_RATIO=1 to the tester and the render alike, but only the
-# render implemented it (grep: play_in_cell_opus.py and thumb_free_opus.py, nowhere else).
+# render implemented it (grep: play_in_cell_wb.py and thumb_free_wb.py, nowhere else).
 # So since v47 the tester has been driving the thumb four-bar at the USD's 1.6 / 2.4
 # while the render drove the URDF's 1.334 / 0.667: measured at hold, tester target
 # thumb_intermediate 0.8 / thumb_distal 1.2 against render target 0.667 / 0.334.
 # A tester that actuates a different hand than the render cannot predict the render.
 if os.environ.get("HAND") == "inspire" and os.environ.get("MIMIC_URDF_RATIO") == "1":
-    import build_reach_reference_opus as _brr
+    import build_reach_reference_wb as _brr
     _URDF_MULT = {"thumb_intermediate_joint": 1.334, "thumb_distal_joint": 0.667}
     _brr._MIMIC[:] = [(a, b, _URDF_MULT.get(a.split("_", 1)[1], r)) for a, b, r in _brr._MIMIC]
     print("[hand] MIMIC_URDF_RATIO: soft_mimic thumb ratios -> "
@@ -207,7 +207,7 @@ if SNAP:
         cams.append(Camera(CameraCfg(prim_path=f"/Render/Snap{nm}", update_period=0.0, width=960, height=720,
                                      data_types=["rgb"], spawn=sim_utils.PinholeCameraCfg(focal_length=24.0, clipping_range=(0.05, 20.0)))))
 from plan_scene import dump_physics; dump_physics(stage)
-# --- 접촉력 측정 (play_in_cell_opus.py:511-520, 736-780 에서 이식) ------------
+# --- 접촉력 측정 (play_in_cell_wb.py:511-520, 736-780 에서 이식) ------------
 # 테스터에는 접촉 센서가 없었다. 판정은 테스터가 하는데 힘은 렌더만 쟀다.
 # 센서 하나를 물체에 걸고 각 손가락 링크로 filter 하면 force_matrix_w 가
 # (envs, bodies, filters, 3) 로 손가락별 뉴턴을 준다.
@@ -433,14 +433,14 @@ def _jtrace(_i):
     else:
         _lo = _lim[0, body_ids, 0].cpu().numpy(); _hi = _lim[0, body_ids, 1].cpu().numpy()
     _rows = sorted(range(len(names)), key=lambda j: -abs(_ach[j] - _cmd[j]))
-    print("[opus] commanded vs achieved at the close pose (rad), worst first:")
+    print("[probe] commanded vs achieved at the close pose (rad), worst first:")
     for j in _rows[:12]:
         _at = "  AT LIMIT" if min(abs(_cmd[j] - _lo[j]), abs(_cmd[j] - _hi[j])) < 0.02 else ""
-        print(f"[opus]   {names[j]:<30s} cmd {_cmd[j]:+.4f}  got {_ach[j]:+.4f}  "
+        print(f"[probe]   {names[j]:<30s} cmd {_cmd[j]:+.4f}  got {_ach[j]:+.4f}  "
               f"d {(_ach[j]-_cmd[j])*1000:+7.1f} mrad  limits [{_lo[j]:+.3f} {_hi[j]:+.3f}]{_at}")
     _clamped = [names[j] for j in range(len(names)) if _cmd[j] < _lo[j] - 1e-4 or _cmd[j] > _hi[j] + 1e-4]
-    print(f"[opus]   commanded OUTSIDE Isaac's limits: {_clamped if _clamped else 'none'}")
-    print(f"[opus]   total |d| {abs(_ach - _cmd).sum()*1000:.1f} mrad over {len(names)} joints")
+    print(f"[probe]   commanded OUTSIDE Isaac's limits: {_clamped if _clamped else 'none'}")
+    print(f"[probe]   total |d| {abs(_ach - _cmd).sum()*1000:.1f} mrad over {len(names)} joints")
     # The arms track to <8 mrad while the wrist link is 20-50 mm off, so the error is
     # not in the arm chain's joints. Two candidates remain: the pelvis is not where the
     # plan put it (fix_root_link=True may make write_root_state_to_sim a no-op), or the
@@ -449,13 +449,13 @@ def _jtrace(_i):
     _rc = np.asarray(roots[_i], float)
     _rp = robot.data.root_pos_w[0].cpu().numpy(); _rqw = robot.data.root_quat_w[0].cpu().numpy()
     _Ri = R.from_quat(_rqw[[1, 2, 3, 0]]); _Rc = R.from_quat(_rc[[4, 5, 6, 3]])
-    print(f"[opus]   root commanded pos {np.round(_rc[:3], 4)} quat {np.round(_rc[3:7], 4)}")
-    print(f"[opus]   root Isaac     pos {np.round(_rp, 4)} quat {np.round(_rqw, 4)}")
-    print(f"[opus]   root d pos {np.round((_rp - _rc[:3]) * 1000, 1)} mm  orientation "
+    print(f"[probe]   root commanded pos {np.round(_rc[:3], 4)} quat {np.round(_rc[3:7], 4)}")
+    print(f"[probe]   root Isaac     pos {np.round(_rp, 4)} quat {np.round(_rqw, 4)}")
+    print(f"[probe]   root d pos {np.round((_rp - _rc[:3]) * 1000, 1)} mm  orientation "
           f"{np.degrees((_Ri * _Rc.inv()).magnitude()):.2f} deg")
     _wb = robot.find_bodies(["right_wrist_yaw_link"])[0][0]
     _ww = robot.data.body_pos_w[0, _wb].cpu().numpy()
-    print(f"[opus]   right_wrist_yaw_link world {np.round(_ww, 4)}  in Isaac root frame "
+    print(f"[probe]   right_wrist_yaw_link world {np.round(_ww, 4)}  in Isaac root frame "
           f"{np.round(_Ri.inv().apply(_ww - _rp), 4)}  in commanded root frame "
           f"{np.round(_Rc.inv().apply(_ww - _rc[:3]), 4)}")
 
@@ -507,7 +507,7 @@ for k in order:
             _v = robot.data.joint_vel[0, _wj].cpu().numpy()
             _tt = getattr(robot.data, "applied_torque", None)
             _t = _tt[0, _wj].cpu().numpy() if _tt is not None else np.full(len(_wj), np.nan)
-            print("[opus] waisth f%3d  " % i + "   ".join(
+            print("[probe] waisth f%3d  " % i + "   ".join(
                 f"{n.replace('waist_','').replace('_joint',''):5s} cmd{_c[j]:+.4f} got{_q[j]:+.4f}"
                 f" d{(_q[j]-_c[j])*1000:+7.1f} vel{_v[j]:+7.2f} tau{_t[j]:+7.1f}"
                 for j, n in enumerate(_wn)), flush=True)
@@ -532,7 +532,7 @@ for k in order:
             if _el is None:
                 try: _el = robot.root_physx_view.get_dof_max_forces().cpu().numpy()[0][_aj]
                 except Exception: _el = np.full(len(_aj), np.nan)
-            print("[opus] armh f%3d  " % i + "   ".join(
+            print("[probe] armh f%3d  " % i + "   ".join(
                 f"{n.replace('right_','').replace('_joint',''):14s} cmd{_c[j]:+.4f} got{_q[j]:+.4f}"
                 f" d{(_q[j]-_c[j])*1000:+7.1f} vel{_v[j]:+6.2f} tau{_t[j]:+7.1f}/{_el[j]:.0f}"
                 for j, n in enumerate(_an)), flush=True)

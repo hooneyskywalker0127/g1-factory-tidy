@@ -1,5 +1,5 @@
 """How far the executed hand is from the planned grasp when the fingers start to close.
-    python hand_error_opus.py PICK_RUN.log REACH_PICK.npz STATE_K.json
+    python hand_error_wb.py PICK_RUN.log REACH_PICK.npz STATE_K.json
 The same correction the chain applies to the walk and the kneel (aim the goal by the measured stop
 error): the render's arm reaches the planned wrist within ~2.5 cm, and for a fingertip pinch on a
 4 cm handle that is the difference between catching and shoving (drill v3 #76: tester HELD at the

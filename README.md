@@ -23,8 +23,8 @@ RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점�
 
 ## News
 
-- **[2026-10-01]** 바닥의 망치를 집어 일어서고, 들고 걸어가 크레이트에 넣는 것까지 한 렌더에서 됐습니다(골반 고정 없음). place 는 GraspGenX 의 들어올리기→정지→이동 순서, 걷기 목표는 SONIC 이 덜 걷는 만큼 늘려 잡습니다([DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md)).
-- **[2026-09-30]** 골반 고정 없이 SONIC 정책이 부유 베이스 위에서 걷고 무릎을 꿇습니다. 도달은 도착 후 측정한 자세와 물체 자세에서 cuRobo로 다시 풀고, 정지 구간은 cuRobo 실행 게인으로 계획을 그대로 실행합니다 — 29관절 0.03 rad, 골반 12 mm로 계획과 일치([DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md)).
+- **[2026-10-01]** 바닥의 망치를 집어 일어서고, 들고 걸어가 크레이트에 넣는 것까지 한 렌더에서 됐습니다(골반 고정 없음). place 는 GraspGenX 의 들어올리기→정지→이동 순서, 걷기 목표는 SONIC 이 덜 걷는 만큼 늘려 잡습니다([DIAGNOSIS_wb](docs/DIAGNOSIS_wb.md)).
+- **[2026-09-30]** 골반 고정 없이 SONIC 정책이 부유 베이스 위에서 걷고 무릎을 꿇습니다. 도달은 도착 후 측정한 자세와 물체 자세에서 cuRobo로 다시 풀고, 정지 구간은 cuRobo 실행 게인으로 계획을 그대로 실행합니다 — 29관절 0.03 rad, 골반 12 mm로 계획과 일치([DIAGNOSIS_wb](docs/DIAGNOSIS_wb.md)).
 - **[2026-09-30]** 손가락 게인을 Isaac Lab의 Inspire 값(kp 10)으로. GraspGenX의 kp 2000은 Newton 소프트 접촉용이었고 PhysX에서는 kN 관통 조임이 됐습니다.
 - **[2026-09-29]** 바닥의 망치가 처음으로 바닥을 떠났습니다(무릎 자세 + 전신 도달).
 - **[2026-09-28]** 물체 콜라이더를 볼록껍질에서 convex decomposition으로. 망치 손잡이가 물리에 없었습니다.
@@ -56,7 +56,7 @@ RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점�
 | 4. 검증·렌더 | 셀 안에서 물리로 재생하고 3뷰 영상을 남깁니다 | Isaac Lab |
 
 운반은 2와 3을 한 번 더 지납니다. 단계별 세부와 측정값은 [docs/notes.md](docs/notes.md),
-실패 원인의 기록은 [docs/DIAGNOSIS_opus.md](docs/DIAGNOSIS_opus.md)에 있습니다.
+실패 원인의 기록은 [docs/DIAGNOSIS_wb.md](docs/DIAGNOSIS_wb.md)에 있습니다.
 
 ## 결과
 
@@ -67,11 +67,11 @@ RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점�
 | 머리 camera 물체 위치 추정 (바닥 상자, 5 시점) | 중심 오차 1~8 mm, 높이 +2~3 mm | [notes](docs/notes.md#추정-정확도) |
 | 책상 위 상자: 문장 → 파지 → 걷기 → 집기 | 들어 올림 (+50.6 mm), 영상 | [시연 영상](https://youtu.be/0Tu-V0MvPYc) |
 | 머리+손목 camera 합성 | 윗면 관측 3.9% → 70.2%, 위에서 내려오는 파지 생성 | [notes](docs/notes.md#camera-두-대를-합치면-파지-방향이-달라집니다) |
-| 부유 베이스 보행 (SONIC) | 플래너 클립의 17~40%만 걷습니다. 측정→재계획 2회로 무릎 위치 오차 0.12~0.14 m; 운반 걷기는 목표를 2배로 늘려 설 자리 0.28 m 앞에 섭니다 | [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
-| 바닥 망치: 무릎 자세에서 cuRobo 도달 | 양무릎 자세에서 0.8~2.9 mm, 실행 뒤 골반 12 mm·관절 0.03 rad | [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
-| 바닥 망치: 조임 | 접촉 269 N 유지(엄지 135 / 대향 70 N), 손가락 사이에 손잡이 | [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
-| 바닥 망치: 들고 일어나기 | 기립 클립을 일어서기 직전 측정 자세에서 계획하면 잡은 채 일어섭니다 (접촉 180~270 N 유지) | [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
-| 바닥 망치: 운반해 크레이트에 넣기 | 들어올리기→정지→수평 이동(GraspGenX 순서)으로 놓으면 들어갑니다. 머리가 테두리에 걸침(투하점이 손목 기준) | [시연 영상](https://www.youtube.com/watch?v=taS7JnfQNs4) · [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
+| 부유 베이스 보행 (SONIC) | 플래너 클립의 17~40%만 걷습니다. 측정→재계획 2회로 무릎 위치 오차 0.12~0.14 m; 운반 걷기는 목표를 2배로 늘려 설 자리 0.28 m 앞에 섭니다 | [DIAGNOSIS_wb](docs/DIAGNOSIS_wb.md) |
+| 바닥 망치: 무릎 자세에서 cuRobo 도달 | 양무릎 자세에서 0.8~2.9 mm, 실행 뒤 골반 12 mm·관절 0.03 rad | [DIAGNOSIS_wb](docs/DIAGNOSIS_wb.md) |
+| 바닥 망치: 조임 | 접촉 269 N 유지(엄지 135 / 대향 70 N), 손가락 사이에 손잡이 | [DIAGNOSIS_wb](docs/DIAGNOSIS_wb.md) |
+| 바닥 망치: 들고 일어나기 | 기립 클립을 일어서기 직전 측정 자세에서 계획하면 잡은 채 일어섭니다 (접촉 180~270 N 유지) | [DIAGNOSIS_wb](docs/DIAGNOSIS_wb.md) |
+| 바닥 망치: 운반해 크레이트에 넣기 | 들어올리기→정지→수평 이동(GraspGenX 순서)으로 놓으면 들어갑니다. 머리가 테두리에 걸침(투하점이 손목 기준) | [시연 영상](https://www.youtube.com/watch?v=taS7JnfQNs4) · [DIAGNOSIS_wb](docs/DIAGNOSIS_wb.md) |
 
 되지 않는 것도 적어 둡니다. 도착 후 한 번 다시 보고 그 뒤에는 눈을 감습니다(실행 중 물체가
 움직여도 따라가지 않습니다). 위치 측정은 시뮬 상태 덤프로 대신하며, 실기에서는 상태 추정과
@@ -106,7 +106,7 @@ camera가 그 자리를 맡아야 합니다.
 | 보기·파지·도달 (0, 1, 3단계) | conda `graspgenx` — GraspGenX, cuRobo V2, C-RADIO(torch.hub), `open_clip_torch`, `einops` | [GraspGenX](https://github.com/NVlabs/GraspGenX), [cuRobo](https://github.com/NVlabs/curobo) |
 
 GR00T-WholeBodyControl(SONIC 정책·플래너 ONNX)과 GraspGenX·cuRobo는 로컬 체크아웃을 경로로
-참조합니다(`grasp/sonic_control.py`, `grasp/walk_clip.py`, `grasp/reach_from_pose_opus.py`).
+참조합니다(`grasp/sonic_control.py`, `grasp/walk_clip.py`, `grasp/reach_from_pose_wb.py`).
 스크립트에 로컬 경로(`/home/sehoon/...`)가 박혀 있어 그대로 복제해 돌리기는 아직 어렵습니다([TODO](#todo)).
 
 ## 사용법
@@ -128,9 +128,9 @@ bash grasp/compose_fable.sh                       # 영어 자막이 달린 한 
 RUN=fable40 QUERY="hammer" MESH=hammer_flat.obj OBJ=hammer bash grasp/floor_object_chain.sh
 ```
 걷기·무릎을 물리로 수행한 뒤 측정 자세에서 다시 계획하는 단계별 명령은 영상 폴더의
-`evidence/run.sh`와 `note.txt`에 그대로 적혀 있습니다(`DUMP_STATE`, `kneel_from_state_opus.py`,
-`clip_tools_opus.py`, `reach_from_pose_opus.py --all-out`, `build_reach_reference_opus.py`,
-`rise_reference_opus.py`, `play_in_cell_opus.py --sonic`).
+`evidence/run.sh`와 `note.txt`에 그대로 적혀 있습니다(`DUMP_STATE`, `kneel_from_state_wb.py`,
+`clip_tools_wb.py`, `reach_from_pose_wb.py --all-out`, `build_reach_reference_wb.py`,
+`rise_reference_wb.py`, `play_in_cell_wb.py --sonic`).
 
 ## 폴더 구조
 
@@ -148,7 +148,7 @@ results/    생성 결과 (gitignored)
 | 문서 | 내용 |
 |---|---|
 | [docs/notes.md](docs/notes.md) | 셀 치수, 손·camera 구성, 추정 정확도, camera 합성, 마찰, 팔 도달 범위, troubleshooting |
-| [docs/DIAGNOSIS_opus.md](docs/DIAGNOSIS_opus.md) | 바닥 도구 파지·기립의 실패 원인 기록 (버전별 측정값과 출처) |
+| [docs/DIAGNOSIS_wb.md](docs/DIAGNOSIS_wb.md) | 바닥 도구 파지·기립의 실패 원인 기록 (버전별 측정값과 출처) |
 | [docs/DIAGNOSIS.md](docs/DIAGNOSIS.md) | 이전 단계의 진단 (책상 위 상자, 걷기 이음매) |
 | [docs/GITS.md](docs/GITS.md) | 쓰는 오픈소스 저장소와 읽어야 할 파일 |
 

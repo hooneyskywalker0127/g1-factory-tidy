@@ -28,7 +28,7 @@ still "$R/look_1/rgb.png" 2.8 "$C/p1a.mp4" "$(sub '1  Head camera (RealSense D43
 still "$R/look_2/rgb.png" 2.2 "$C/p1b.mp4" "$(sub '1  Turned in place - second look' 0 2.2 60 30)"
 still "$R/look_3/obj_lang_overlay.png" 3.5 "$C/p1c.mp4" "$(sub '1  Third look - FOUND, the pixels C-RADIO scores for the word hammer' 0 3.5 60 30)"
 still "$R/near/obj_part_overlay.png" 3.5 "$C/p1d.mp4" "$(sub '2  Closer look from the kneel - the handle, found by language' 0 3.5 60 30)"
-# --- 2. what GraspGen-X and cuRobo made of the close look (cloud + grasps | planned wrist path), drawn by plan_views_hammer_opus.py
+# --- 2. what GraspGen-X and cuRobo made of the close look (cloud + grasps | planned wrist path), drawn by plan_views_hammer_wb.py
 ffmpeg -y -loglevel error -i "$R/hammer_views_cloud.mp4" -i "$R/hammer_views_traj.mp4" \
   -filter_complex "\
 [0:v]scale=940:-2[a];[1:v]scale=940:-2[b];\

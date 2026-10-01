@@ -1,5 +1,5 @@
 """Move the right arm and waist to a carrying pose while standing, holding what the hand holds.
-    python carry_pose_opus.py BASE.pkl BASE_hands.npy OUT_NAME [N=60] [HOLD=30]
+    python carry_pose_wb.py BASE.pkl BASE_hands.npy OUT_NAME [N=60] [HOLD=30]
 The pose is the planner's own objectCarrying (mode 21) arm, averaged over its walking frames
 (GR00T planner_onnx.md:145 "Walking with hands reaching out"; measured on a mode-21 clip:
 [-0.33,-0.43,0.27,0.50,-0.06,-0.05,-0.25]), waist 0.1. v9/v10 carried with the pick's last arm

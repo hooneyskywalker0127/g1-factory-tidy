@@ -1,10 +1,10 @@
 """Small operations on motion-lib clips (results/motion/*.pkl), for the perceive-and-replan chain.
-    python clip_tools_opus.py cut IN.pkl A B HOLD OUT_NAME        frames [A, B) then HOLD copies of frame B-1
-    python clip_tools_opus.py concat A.pkl B.pkl OUT_NAME           A then B, verbatim (no blend, no shift)
-    python clip_tools_opus.py from_state STATE.json N OUT_NAME      N identical frames of a DUMP_STATE pose
+    python clip_tools_wb.py cut IN.pkl A B HOLD OUT_NAME        frames [A, B) then HOLD copies of frame B-1
+    python clip_tools_wb.py concat A.pkl B.pkl OUT_NAME           A then B, verbatim (no blend, no shift)
+    python clip_tools_wb.py from_state STATE.json N OUT_NAME      N identical frames of a DUMP_STATE pose
                                                                     (walk_clip --from-clip reads the last 4 as context)
 Clips are qpos rows [xyz, quat wxyz, 29 dof (MuJoCo order)] through build_place_reference.clip_qpos and
-gen_planner_motion.qpos_to_motion_lib, the same round trip rise_reference_opus.py uses.
+gen_planner_motion.qpos_to_motion_lib, the same round trip rise_reference_wb.py uses.
 """
 import json
 import os

@@ -54,7 +54,7 @@ cfg.spawn = cfg.spawn.replace(collision_props=sim_utils.CollisionPropertiesCfg(
     contact_offset=0.002, rest_offset=0.0))   # fingers as thin as they are: no phantom floor contact
 # SOLVER_IT/SOLVER_VIT: GraspGenX end2end/dynamic_playback.py:91-98 runs 100/50
 # ("with only 10 iterations the constraint solver doesn't fully converge and grasps
-# slip during the lift segment"). Fable's tester is fixed at 12/4, so every candidate
+# slip during the lift segment"). the original tester is fixed at 12/4, so every candidate
 # it judged was judged under a solver NVIDIA calls too loose to hold a lift.
 _SIT = int(os.environ.get("SOLVER_IT", "12")); _SVIT = int(os.environ.get("SOLVER_VIT", "4"))
 cfg.spawn = cfg.spawn.replace(articulation_props=sim_utils.ArticulationRootPropertiesCfg(
@@ -292,7 +292,7 @@ def put(root7, dof29, hands14):
         _cp = np.asarray(root7[:3], float)
         if _k[0] % 10 == 0:
             _jm = 0.0 if _k[1] is None else float(np.linalg.norm(_cp - _k[1])) * 1000
-            print(f"[opus] root f{_k[0]:3d}  drift {np.linalg.norm(_ap - _cp) * 1000:7.2f} mm "
+            print(f"[probe] root f{_k[0]:3d}  drift {np.linalg.norm(_ap - _cp) * 1000:7.2f} mm "
                   f"(dz {(_ap[2] - _cp[2]) * 1000:+7.2f})  jump {_jm:6.2f} mm  "
                   f"achieved_vel {np.linalg.norm(_av):6.3f} m/s  omega {np.linalg.norm(_aw):6.3f} rad/s",
                   flush=True)
@@ -375,14 +375,14 @@ def _jtrace(_i):
     else:
         _lo = _lim[0, body_ids, 0].cpu().numpy(); _hi = _lim[0, body_ids, 1].cpu().numpy()
     _rows = sorted(range(len(names)), key=lambda j: -abs(_ach[j] - _cmd[j]))
-    print("[opus] commanded vs achieved at the close pose (rad), worst first:")
+    print("[probe] commanded vs achieved at the close pose (rad), worst first:")
     for j in _rows[:12]:
         _at = "  AT LIMIT" if min(abs(_cmd[j] - _lo[j]), abs(_cmd[j] - _hi[j])) < 0.02 else ""
-        print(f"[opus]   {names[j]:<30s} cmd {_cmd[j]:+.4f}  got {_ach[j]:+.4f}  "
+        print(f"[probe]   {names[j]:<30s} cmd {_cmd[j]:+.4f}  got {_ach[j]:+.4f}  "
               f"d {(_ach[j]-_cmd[j])*1000:+7.1f} mrad  limits [{_lo[j]:+.3f} {_hi[j]:+.3f}]{_at}")
     _clamped = [names[j] for j in range(len(names)) if _cmd[j] < _lo[j] - 1e-4 or _cmd[j] > _hi[j] + 1e-4]
-    print(f"[opus]   commanded OUTSIDE Isaac's limits: {_clamped if _clamped else 'none'}")
-    print(f"[opus]   total |d| {abs(_ach - _cmd).sum()*1000:.1f} mrad over {len(names)} joints")
+    print(f"[probe]   commanded OUTSIDE Isaac's limits: {_clamped if _clamped else 'none'}")
+    print(f"[probe]   total |d| {abs(_ach - _cmd).sum()*1000:.1f} mrad over {len(names)} joints")
     # The arms track to <8 mrad while the wrist link is 20-50 mm off, so the error is
     # not in the arm chain's joints. Two candidates remain: the pelvis is not where the
     # plan put it (fix_root_link=True may make write_root_state_to_sim a no-op), or the
@@ -391,13 +391,13 @@ def _jtrace(_i):
     _rc = np.asarray(roots[_i], float)
     _rp = robot.data.root_pos_w[0].cpu().numpy(); _rqw = robot.data.root_quat_w[0].cpu().numpy()
     _Ri = R.from_quat(_rqw[[1, 2, 3, 0]]); _Rc = R.from_quat(_rc[[4, 5, 6, 3]])
-    print(f"[opus]   root commanded pos {np.round(_rc[:3], 4)} quat {np.round(_rc[3:7], 4)}")
-    print(f"[opus]   root Isaac     pos {np.round(_rp, 4)} quat {np.round(_rqw, 4)}")
-    print(f"[opus]   root d pos {np.round((_rp - _rc[:3]) * 1000, 1)} mm  orientation "
+    print(f"[probe]   root commanded pos {np.round(_rc[:3], 4)} quat {np.round(_rc[3:7], 4)}")
+    print(f"[probe]   root Isaac     pos {np.round(_rp, 4)} quat {np.round(_rqw, 4)}")
+    print(f"[probe]   root d pos {np.round((_rp - _rc[:3]) * 1000, 1)} mm  orientation "
           f"{np.degrees((_Ri * _Rc.inv()).magnitude()):.2f} deg")
     _wb = robot.find_bodies(["right_wrist_yaw_link"])[0][0]
     _ww = robot.data.body_pos_w[0, _wb].cpu().numpy()
-    print(f"[opus]   right_wrist_yaw_link world {np.round(_ww, 4)}  in Isaac root frame "
+    print(f"[probe]   right_wrist_yaw_link world {np.round(_ww, 4)}  in Isaac root frame "
           f"{np.round(_Ri.inv().apply(_ww - _rp), 4)}  in commanded root frame "
           f"{np.round(_Rc.inv().apply(_ww - _rc[:3]), 4)}")
 
@@ -479,7 +479,7 @@ for k in order:
             _v = robot.data.joint_vel[0, _wj].cpu().numpy()
             _tt = getattr(robot.data, "applied_torque", None)
             _t = _tt[0, _wj].cpu().numpy() if _tt is not None else np.full(len(_wj), np.nan)
-            print("[opus] waisth f%3d  " % i + "   ".join(
+            print("[probe] waisth f%3d  " % i + "   ".join(
                 f"{n.replace('waist_','').replace('_joint',''):5s} cmd{_c[j]:+.4f} got{_q[j]:+.4f}"
                 f" d{(_q[j]-_c[j])*1000:+7.1f} vel{_v[j]:+7.2f} tau{_t[j]:+7.1f}"
                 for j, n in enumerate(_wn)), flush=True)
@@ -515,20 +515,20 @@ for k in order:
                 _sl = _sl[0, _aj].cpu().numpy() if _sl is not None else None
                 for _j, _n in enumerate(_an):
                     _extra = f"  soft [{_sl[_j][0]:+.4f} {_sl[_j][1]:+.4f}]" if _sl is not None else ""
-                    print(f"[opus] lim  {_n:<28s} hard [{_pl[_j][0]:+.4f} {_pl[_j][1]:+.4f}]{_extra}", flush=True)
+                    print(f"[probe] lim  {_n:<28s} hard [{_pl[_j][0]:+.4f} {_pl[_j][1]:+.4f}]{_extra}", flush=True)
                 # NOT _v: that name holds the joint-velocity array this block's caller prints two
                 # lines below, and clobbering it with a tensor is what raised Tensor.__format__.
                 for _attr in ("joint_friction_coeff", "joint_friction", "joint_armature"):
                     _fv = getattr(robot.data, _attr, None)
                     if _fv is not None:
                         _fv = _fv[0, _aj].cpu().numpy()
-                        print(f"[opus] {_attr}  " + "  ".join(
+                        print(f"[probe] {_attr}  " + "  ".join(
                             f"{_an[_j].replace('right_','').replace('_joint','')} {_fv[_j]:.5f}"
                             for _j in range(len(_an))), flush=True)
-                print("[opus] arm drive  " + "   ".join(
+                print("[probe] arm drive  " + "   ".join(
                             f"{n.replace('right_','').replace('_joint','')} kp{_ks[j]:.0f} kd{_kd[j]:.1f} eff{_el[j]:.0f}"
                             for j, n in enumerate(_an)), flush=True)
-            print("[opus] armh f%3d  " % i + "   ".join(
+            print("[probe] armh f%3d  " % i + "   ".join(
                 f"{n.replace('right_','').replace('_joint',''):14s} cmd{_c[j]:+.4f} got{_q[j]:+.4f}"
                 f" d{(_q[j]-_c[j])*1000:+7.1f} vel{_v[j]:+6.2f} tau{_t[j]:+7.1f}/{_el[j]:.0f}"
                 for j, n in enumerate(_an)), flush=True)
@@ -541,7 +541,7 @@ for k in order:
             try:
                 _w = robot.root_physx_view.get_link_incoming_joint_force()[0].cpu().numpy()
             except Exception as _e:
-                print(f"[opus] wrench unavailable: {_e}", flush=True); _w = None
+                print(f"[probe] wrench unavailable: {_e}", flush=True); _w = None
             if _w is not None:
                 _bn = list(robot.body_names)
                 # The load does not enter at the fingers (0.5-2 N) and the arm carries 25-34x its own
@@ -578,11 +578,11 @@ for k in order:
                                 f"F{np.linalg.norm(_f[:3]):6.1f} T{np.linalg.norm(_f[3:6]):6.1f}"
                                 + (f" z{_z:+.4f}" if os.environ.get("WRENCH") == "hand" else ""))
                 if os.environ.get("WRENCH") == "hand":
-                    print(f"[opus] wr f{i:3d}", flush=True)
+                    print(f"[probe] wr f{i:3d}", flush=True)
                     for _e in _row:
-                        print(f"[opus]      {_e}", flush=True)
+                        print(f"[probe]      {_e}", flush=True)
                 else:
-                    print(f"[opus] wr f{i:3d}  " + "  ".join(_row), flush=True)
+                    print(f"[probe] wr f{i:3d}  " + "  ".join(_row), flush=True)
         if os.environ.get("SEG_GAP") and i % 10 == 0:
             # Link ORIGINS 300 mm apart say nothing about two 250-400 mm links crossing. The upper
             # arm and the thigh are capsules; measure segment-to-segment distance. shoulder_roll is
@@ -610,7 +610,7 @@ for k in order:
                 for _y in ("thigh", "shank"):
                     if all(z is not None for z in _pt[_x] + _pt[_y]):
                         _out.append(f"{_x}-{_y} {_s2s(*_pt[_x], *_pt[_y])*1000:5.0f}")
-            print(f"[opus] seg  f{i:3d}  " + "   ".join(_out), flush=True)
+            print(f"[probe] seg  f{i:3d}  " + "   ".join(_out), flush=True)
         if os.environ.get("ARM_PHYS") and not globals().get("_PHYS_SHOWN"):
             # 226 Nm of load at f90 with nothing within 262 mm of the hand is impossible for a
             # 2 kg arm on a 0.3 m lever (6 Nm). Before blaming the drive, dump the physics the
@@ -620,24 +620,24 @@ for k in order:
                 _m = robot.root_physx_view.get_masses().cpu().numpy()[0]
                 _in = robot.root_physx_view.get_inertias().cpu().numpy()[0]
             except Exception as _e:
-                print(f"[opus] phys: unavailable ({_e})"); _m = None
+                print(f"[probe] phys: unavailable ({_e})"); _m = None
             if _m is not None:
                 _sel = [j for j, n in enumerate(robot.body_names)
                         if n.startswith("R_") or n.startswith("right_shoulder") or n.startswith("right_elbow")
                         or n.startswith("right_wrist") or n in ("torso_link", "pelvis")]
-                print(f"[opus] phys: total robot mass {_m.sum():.2f} kg over {len(_m)} links")
+                print(f"[probe] phys: total robot mass {_m.sum():.2f} kg over {len(_m)} links")
                 for j in _sel:
                     _I = _in[j].reshape(3, 3) if _in[j].size == 9 else _in[j]
                     _d = np.diag(_I) if getattr(_I, "ndim", 1) == 2 else _I[:3]
-                    print(f"[opus] phys:   {robot.body_names[j]:<26s} m {_m[j]:8.4f} kg   Idiag {np.round(_d, 5)}")
+                    print(f"[probe] phys:   {robot.body_names[j]:<26s} m {_m[j]:8.4f} kg   Idiag {np.round(_d, 5)}")
                 _hb = [j for j, n in enumerate(robot.body_names) if n.startswith("R_")]
-                print(f"[opus] phys: right hand = {len(_hb)} links, {_m[_hb].sum():.4f} kg;  "
+                print(f"[probe] phys: right hand = {len(_hb)} links, {_m[_hb].sum():.4f} kg;  "
                       f"right arm+hand = {_m[[j for j in _sel if robot.body_names[j] not in ('torso_link','pelvis')]].sum():.4f} kg")
         if os.environ.get("HAND_FLOOR") and i % 10 == 0:
             _hb = [j for j, n in enumerate(robot.body_names) if n.startswith("R_") or n.startswith("right_wrist")]
             if _hb:
                 _z = robot.data.body_pos_w[0, _hb, 2].cpu().numpy()
-                print(f"[opus] handz f{i:3d}  lowest {_z.min():+.4f} ({robot.body_names[_hb[int(_z.argmin())]]})", flush=True)
+                print(f"[probe] handz f{i:3d}  lowest {_z.min():+.4f} ({robot.body_names[_hb[int(_z.argmin())]]})", flush=True)
         if os.environ.get("LIMB_GAP") and i >= 90 and i % 10 == 0:
             # shoulder_roll sits at tau -300/300 with vel +1.5 rad/s for the whole dwell: a
             # saturated drive that still moves is being pushed, not drooping. The only body
@@ -651,7 +651,7 @@ for k in order:
                 if _b: _pos[_n] = robot.data.body_pos_w[0, _b[0]].cpu().numpy()
             _pr = [(float(np.linalg.norm(_pos[x] - _pos[y])), x, y) for x in _A if x in _pos for y in _L if y in _pos]
             _pr.sort()
-            print("[opus] gap f%3d  " % i + "   ".join(
+            print("[probe] gap f%3d  " % i + "   ".join(
                 f"{x.replace('right_','').replace('_link','')}-{y.replace('right_','').replace('_link','')} {d*1000:.0f}"
                 for d, x, y in _pr[:5]), flush=True)
         if MARKS and (i + 1) in MARKS:                        # end of a scheduled phase (assist wrap): a picture and the object's pose

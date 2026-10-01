@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build the carry + place reference for a freshly built pick reference ($REF), then render it
-# with play_in_cell_opus.py at the gains already exported, and deliver as the next vN.
-# Same steps as place_any.sh lines 9-14, but the render is the _opus one so HAND_KD /
-# SOLVER_IT / FINGER_COACD reach the sim (Fable's play_in_cell.py reads none of them).
+# with play_in_cell_wb.py at the gains already exported, and deliver as the next vN.
+# Same steps as place_any.sh lines 9-14, but the render is the _wb one so HAND_KD /
+# SOLVER_IT / FINGER_COACD reach the sim (the original play_in_cell.py reads none of them).
 R=/home/sehoon/Documents/GitHub/g1-factory-tidy; cd $R
 S=/tmp/claude-1000/-home-sehoon-Documents-GitHub-g1-factory-tidy/dc54b632-3298-4596-93ea-d9ca60407d34/scratchpad
 RUN=${RUN:?}; REF=${REF:?}; OBJ=${OBJ:?}; F=$R/results/$RUN
@@ -21,7 +21,7 @@ python grasp/build_place_reference.py results/motion/${REF}.pkl results/motion/$
    results/motion/${REF}carry.pkl $F/place_${REF}.npz ${REF}place 2>&1 | grep -a "\[place\]\|Traceback" | while read -r l; do say "$l"; done
 [ -f results/motion/${REF}place.pkl ] || { say "no place reference -> STOP"; exit 1; }
 say "$OBJ render start (kp $HAND_KP kd $HAND_KD effort $HAND_EFFORT)"
-OBJ_EVERY=${OBJ_EVERY:-10} python grasp/play_in_cell_opus.py $F/scene.npy --walk results/motion/${REF}place.pkl \
+OBJ_EVERY=${OBJ_EVERY:-10} python grasp/play_in_cell_wb.py $F/scene.npy --walk results/motion/${REF}place.pkl \
    --walk-only --clip-arms --hands results/motion/${REF}place_hands.npy --no-settle \
    --cam-eye -0.2 -3.4 1.9 --look-at -0.9 -0.5 0.7 --video $F/g.mp4 > $F/g.log 2>&1
 grep -a "\[hand\] squeeze\|\[eval\]\|\[obj \] frame  *\(600\|700\|800\|900\)" $F/g.log | while read -r l; do say "$OBJ: $l"; done

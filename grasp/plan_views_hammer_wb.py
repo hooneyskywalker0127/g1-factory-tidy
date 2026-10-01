@@ -3,8 +3,8 @@
 render_plan_views.py draws them from e2e_grasp_demo's trajectory.json; the floor chain has no such file -- the grasp
 candidates are grasps_all.json (GraspGen-X, Inspire hand, in the cell frame) and the reach is cuRobo's whole-body
 retargeting solution (reach_*_pick.npz: joint q per frame). So:
-    compute (graspgenx env, cuRobo FK):  python plan_views_hammer_opus.py compute CAP GRASPS.json PICK.npz OUT.npz
-    render  (any env with matplotlib):   python plan_views_hammer_opus.py render  OUT.npz OUT_PREFIX [--frames 300]
+    compute (graspgenx env, cuRobo FK):  python plan_views_hammer_wb.py compute CAP GRASPS.json PICK.npz OUT.npz
+    render  (any env with matplotlib):   python plan_views_hammer_wb.py render  OUT.npz OUT_PREFIX [--frames 300]
 Same look as render_plan_views.py (dark 3D axes, cloud + approach axes, the chosen grasp in RGB).
 """
 import json
@@ -31,7 +31,7 @@ def observed_cloud(cap, label="obj_lang"):
 
 def compute(cap, grasps_json, pick_npz, out):
     import torch
-    import reach_from_pose_opus as RP
+    import reach_from_pose_wb as RP
     cloud = observed_cloud(cap)
     wrists, conf = RP.grasps_in_cell(grasps_json, cap)        # (N, 4, 4) wrist poses in the cell
     d = np.load(pick_npz); q = np.asarray(d["q"], np.float32); jn = [str(n) for n in d["joint_names"]]

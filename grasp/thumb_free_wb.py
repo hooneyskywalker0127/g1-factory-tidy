@@ -12,7 +12,7 @@ One config a run, chosen by the same env vars the render reads.  ~20 s instead o
 
     MIMIC_FREQ=200 MIMIC_DAMPING=1.0 MIMIC_URDF_RATIO=1 SOFT_MIMIC=1 \
     HAND=inspire HAND_KP=40 HAND_KD=4.0 HAND_EFFORT=30 HAND_ARMATURE=0.001 \
-    python grasp/thumb_free_opus.py
+    python grasp/thumb_free_wb.py
 """
 import os
 import sys
@@ -39,7 +39,7 @@ WATCH = ["R_thumb_proximal_pitch_joint", "R_thumb_intermediate_joint", "R_thumb_
 
 sim = SimulationContext(sim_utils.SimulationCfg(dt=1.0 / 1000.0, device="cpu"))
 cfg = brr.robot_cfg(G1_29DOF_CFG.replace(prim_path="/World/G1"), sim_utils, ImplicitActuatorCfg)
-if os.environ.get("HAND_KD"):                       # play_in_cell_opus.py:173-182, verbatim
+if os.environ.get("HAND_KD"):                       # play_in_cell_wb.py:173-182, verbatim
     _hz = cfg.actuators["hands"]
     _rep = dict(damping=float(os.environ["HAND_KD"]),
                 effort_limit=float(os.environ.get("HAND_EFFORT", "200")))
@@ -49,7 +49,7 @@ if os.environ.get("HAND_KD"):                       # play_in_cell_opus.py:173-1
     print(f"[free] hand drive: kp {_hz.stiffness} kd {_rep['damping']} effort {_rep['effort_limit']}", flush=True)
 
 # --- the hand's simulated velocity limit: the asset says 0.5 rad/s -------------
-# Measured in free air (grasp/thumb_free_opus.py): robot.data.joint_velocity_limits prints
+# Measured in free air (grasp/thumb_free_wb.py): robot.data.joint_velocity_limits prints
 # 0.500 rad/s on every Inspire joint and joint_vel saturates exactly there -- +0.50 on the
 # six masters, +0.67/+0.33 on thumb_intermediate/distal (= 0.5 x the URDF's 1.334/0.667
 # through the mimic gearing). SUB=1 saturates at the same 0.50, so it is a real limit, not
@@ -80,7 +80,7 @@ robot = Articulation(cfg)
 stage = sim_utils.SimulationContext.instance().stage
 brr.stiffen_mimic(stage)
 
-if os.environ.get("MIMIC_URDF_RATIO") == "1":        # play_in_cell_opus.py:435-472, verbatim
+if os.environ.get("MIMIC_URDF_RATIO") == "1":        # play_in_cell_wb.py:435-472, verbatim
     _URDF_MULT = {"thumb_intermediate_joint": 1.334, "thumb_distal_joint": 0.667}
     brr._MIMIC[:] = [(a, b, _URDF_MULT.get(a.split("_", 1)[1], r)) for a, b, r in brr._MIMIC]
     from pxr import Usd as _Usd

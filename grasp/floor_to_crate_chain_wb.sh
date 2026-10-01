@@ -5,7 +5,7 @@
 # measured state (cuRobo: plan from the measured static state). Nothing is welded or teleported.
 #
 #   RUN=fable42 OBJ=drill VDIR=/home/sehoon/Desktop/참고/영상보관/g1-factory-tidy/10/261001/5지/drill/fable/v1 \
-#   bash grasp/floor_to_crate_chain_opus.sh
+#   bash grasp/floor_to_crate_chain_wb.sh
 #
 # Stages (each skipped when its product exists, so a later version can resume; FROM=<n> forces from stage n):
 #   1 walk1 to the vision stand (stand_kneel.json from floor_object_chain.sh step 3) -> measure
@@ -22,7 +22,7 @@
 #   7 place in GraspGenX PickAndDropInBinTask order (lift, hold, move above the crate; v15) solved from the
 #     measured arrival, the wrist target offset so the OBJECT (not the wrist) is over the crate centre, then
 #     the release (settle 30 / open 10 / hold 45) -> final render into VDIR
-# Sources for every number are in the hammer notes (09/260930/5지/hammer/fable/vN/note.txt) and docs/DIAGNOSIS_opus.md.
+# Sources for every number are in the hammer notes (09/260930/5지/hammer/fable/vN/note.txt) and docs/DIAGNOSIS_wb.md.
 set -uo pipefail
 RUN=${RUN:-fable42}; OBJ=${OBJ:-drill}; TAG=${TAG:-${OBJ}1}
 VDIR=${VDIR:?video folder}; FROM=${FROM:-1}
@@ -39,7 +39,7 @@ export FIX_ROOT=0 SONIC_ACTUATORS=1 SONIC_LEGS_ONLY=1 PD_BODY=1 OBJECT_NO_SLEEP=
 export SOLVER_IT=8 SOLVER_VIT=4 OBJ_SOLVER_IT=16 OBJ_SOLVER_VIT=1 OBJ_MAX_DEPEN_VEL=5.0 OBJECT_MU=1.0
 export MIMIC_URDF_RATIO=1 SONIC_LOWER_N=12 HOLD_AFTER_CLOSE=100
 export RETARGET_CFG=unitree_g1_29dof_retarget_floor.yml
-# fingertip floor clearance for the reach (reach_from_pose_opus: FLOOR_CLEAR + TIP_FLESH; defaults 0.005 + 0.04 were measured on the
+# fingertip floor clearance for the reach (reach_from_pose_wb: FLOOR_CLEAR + TIP_FLESH; defaults 0.005 + 0.04 were measured on the
 # Dex3): floor_object_chain.sh:14 runs the chain with FLOOR_CLEAR=0 TIP_FLESH=0.03. At 4.5 cm the drill's grasps (object top at 6 cm)
 # were backed off until the fingers closed on its top surface (drill v1/v2: 17/17 LOST, dz 0.000)
 export FLOOR_CLEAR=${FLOOR_CLEAR:-0} TIP_FLESH=${TIP_FLESH:-0}
@@ -52,7 +52,7 @@ nframes(){ $P -c "import joblib; print(len(list(joblib.load('$1').values())[0]['
 run_isaac(){ # run_isaac LOG MP4 <play_in_cell args...>   (env already exported by the caller)
   local log=$1 mp4=$2; shift 2; local try
   for try in 1 2 3; do
-    timeout 9000 $P -u grasp/play_in_cell_opus.py "$@" --video "$mp4" > "$log" 2>&1 &
+    timeout 9000 $P -u grasp/play_in_cell_wb.py "$@" --video "$mp4" > "$log" 2>&1 &
     local pid=$!; echo $pid > "$VDIR/evidence/isaac.pid"
     while kill -0 $pid 2>/dev/null; do
       sleep 20
@@ -96,7 +96,7 @@ if [ $FROM -le 2 ] && [ ! -f $M/${TAG}_kneel_m.pkl ]; then
     say "stage 2a: measured stand $(state_xy $CUR) is $DIST m from the kneel stand"
     awk "BEGIN{exit !($DIST <= 0.25)}" && break
     if [ ! -f $F/${TAG}_stateS$i.json ]; then
-      $P grasp/clip_tools_opus.py from_state $CUR 4 ${TAG}_stateS${i}_from 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
+      $P grasp/clip_tools_wb.py from_state $CUR 4 ${TAG}_stateS${i}_from 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
       python3 - <<PY | while read -r l; do say "  $l"; done
 import json
 d = json.load(open("$F/stand_kneel.json")); s = json.load(open("$CUR"))["root_pos"]; k = float("${APPROACH_K:-2.0}")
@@ -104,21 +104,21 @@ gx, gy = d["stand"]["x"], d["stand"]["y"]; d["stand"]["x"] = s[0] + k * (gx - s[
 d["note"] = "approach leg $i: kneel stand extended x%.1f along the measured start -> stand (hammer v14 rule)" % k
 json.dump(d, open("$F/${TAG}_stand_S$i.json", "w"), indent=1); print(f"[goal] leg $i: stand {gx:.3f},{gy:.3f} -> planner goal {d['stand']['x']:.3f},{d['stand']['y']:.3f}")
 PY
-      WALK_MODE=${APPROACH_MODE:-2} OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_opus.py $M ${TAG}_walkS$i 0 0 0 0 0 0 --from-clip $M/${TAG}_stateS${i}_from.pkl --stand $F/${TAG}_stand_S$i.json --goal-at $F/${TAG}_stand_S$i.json --hold-target --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|goal  \|Traceback" | while read -r l; do say "  $l"; done
-      $P grasp/clip_tools_opus.py concat $CHAIN $M/${TAG}_walkS$i.pkl ${TAG}_walkchain$i 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
+      WALK_MODE=${APPROACH_MODE:-2} OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_wb.py $M ${TAG}_walkS$i 0 0 0 0 0 0 --from-clip $M/${TAG}_stateS${i}_from.pkl --stand $F/${TAG}_stand_S$i.json --goal-at $F/${TAG}_stand_S$i.json --hold-target --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|goal  \|Traceback" | while read -r l; do say "  $l"; done
+      $P grasp/clip_tools_wb.py concat $CHAIN $M/${TAG}_walkS$i.pkl ${TAG}_walkchain$i 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
       CONTACT_FORCE=1 DUMP_STATE=$F/${TAG}_stateS$i.json OBJ_EVERY=30 run_isaac $F/${TAG}_passS$i.log $F/${TAG}_passS$i.mp4 $F/scene.npy --walk $M/${TAG}_walkchain$i.pkl --hands $M/${TAG}_hands_open.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 2a"; exit 1; }
     fi
     CUR=$F/${TAG}_stateS$i.json; CHAIN=$M/${TAG}_walkchain$i.pkl
   done
   echo "$CUR $CHAIN" > $F/${TAG}_approach.txt
   # 2b. the short walk + two-knee kneel from the measured stand, the goal corrected by the measured kneel error (<= 2 rounds)
-  $P grasp/clip_tools_opus.py from_state $CUR 4 ${TAG}_stateA_clip 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
+  $P grasp/clip_tools_wb.py from_state $CUR 4 ${TAG}_stateA_clip 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
   cp $F/stand_kneel.json $F/${TAG}_stand_k0.json
   for round in 0 1 2; do
     S=$F/${TAG}_stand_k$round.json
     say "stage 2b round $round: walk2 + two-knee kneel toward $(python3 -c "import json;d=json.load(open('$S'))['stand'];print('%.3f %.3f %.1f'%(d['x'],d['y'],d['yaw_deg']))")"
-    WALK_MODE=${APPROACH_MODE:-2} OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_opus.py $M ${TAG}_walk2_k$round 0 0 0 0 0 0 --from-clip $M/${TAG}_stateA_clip.pkl --stand $S --hold-mode 5 --squat-to 0.35 --hold-target --goal-at $S --hold-max 6 2>&1 | /usr/bin/grep -a "frames (\|goal  \|root height\|Traceback" | while read -r l; do say "  $l"; done
-    $P grasp/clip_tools_opus.py concat $CHAIN $M/${TAG}_walk2_k$round.pkl ${TAG}_walk12_k$round 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
+    WALK_MODE=${APPROACH_MODE:-2} OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_wb.py $M ${TAG}_walk2_k$round 0 0 0 0 0 0 --from-clip $M/${TAG}_stateA_clip.pkl --stand $S --hold-mode 5 --squat-to 0.35 --hold-target --goal-at $S --hold-max 6 2>&1 | /usr/bin/grep -a "frames (\|goal  \|root height\|Traceback" | while read -r l; do say "  $l"; done
+    $P grasp/clip_tools_wb.py concat $CHAIN $M/${TAG}_walk2_k$round.pkl ${TAG}_walk12_k$round 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
     N=$(nframes $M/${TAG}_walk12_k$round.pkl)
     CONTACT_FORCE=1 SETTLE_AT=$((N-1)) SETTLE_FRAMES=160 DUMP_STATE=$F/${TAG}_stateK_k$round.json OBJ_EVERY=30 run_isaac $F/${TAG}_passK_k$round.log $F/${TAG}_passK_k$round.mp4 $F/scene.npy --walk $M/${TAG}_walk12_k$round.pkl --hands $M/${TAG}_hands_open.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 2b"; exit 1; }
     ERR=$(python3 - <<PY
@@ -139,18 +139,18 @@ PY
     [ $round -eq 2 ] && say "  kneel error still $E m after 3 rounds; using the last"
   done
   ln -sf $M/${TAG}_walk12_k$round.pkl $M/${TAG}_walk12.pkl; cp $F/${TAG}_stateK_k$round.json $F/${TAG}_stateK.json; cp $F/${TAG}_passK_k$round.log $F/${TAG}_passK.log
-  $P grasp/kneel_from_state_opus.py $M/${TAG}_walk12.pkl $F/${TAG}_stateK.json 160 ${TAG}_kneel_m 2>&1 | /usr/bin/grep "\[kneel\]\|Error" | while read -r l; do say "  $l"; done
+  $P grasp/kneel_from_state_wb.py $M/${TAG}_walk12.pkl $F/${TAG}_stateK.json 160 ${TAG}_kneel_m 2>&1 | /usr/bin/grep "\[kneel\]\|Error" | while read -r l; do say "  $l"; done
 fi
 # ---------------------------------------------------------------- 3. grasps from the measured kneel -> c0
 if [ $FROM -le 3 ] && [ ! -f $M/${TAG}c0.pkl ]; then
   NOW=$(python3 -c "import json; d=json.load(open('$F/${TAG}_stateK.json')); print(','.join('%.5f'%v for v in d['object_pos']+d['object_quat_wxyz']))")
   # OBJECT_NOW_OVERRIDE="x,y,z,qw,qx,qy,qz": the object pose shifted by the hand error measured in a pick run
-  # (grasp/hand_error_opus.py) -- the walk/kneel correction applied to the hand: the render's arm lands ~2.5 cm off
+  # (grasp/hand_error_wb.py) -- the walk/kneel correction applied to the hand: the render's arm lands ~2.5 cm off
   # the planned wrist and a fingertip pinch shoves a 4 cm handle instead of catching it (drill v3/v4)
   [ -n "${OBJECT_NOW_OVERRIDE:-}" ] && { NOW=$OBJECT_NOW_OVERRIDE; say "  object pose for the reach overridden (hand error): $NOW"; }
   PLAN=$(frame0_obj $F/${TAG}_passA.log)
   say "stage 3: reach for all grasps from the measured kneel; object now $NOW (planned at $PLAN)"
-  [ -f $F/${TAG}_reach_all.npz ] || OBJECT_POSE_NOW=$NOW OBJECT_POSE_PLAN=$PLAN BODY_W=1.0 PELVIS_W=0.1 timeout 3600 $G grasp/reach_from_pose_opus.py $M/${TAG}_kneel_m.pkl $F/grasps_all.json $F/near --all-out $F/${TAG}_reach_all.npz > $F/${TAG}_solve_all.log 2>&1
+  [ -f $F/${TAG}_reach_all.npz ] || OBJECT_POSE_NOW=$NOW OBJECT_POSE_PLAN=$PLAN BODY_W=1.0 PELVIS_W=0.1 timeout 3600 $G grasp/reach_from_pose_wb.py $M/${TAG}_kneel_m.pkl $F/grasps_all.json $F/near --all-out $F/${TAG}_reach_all.npz > $F/${TAG}_solve_all.log 2>&1
   /usr/bin/grep -a "grasps moved\|clip ends\|wrote\|Traceback" $F/${TAG}_solve_all.log | cut -c1-140 | while read -r l; do say "  $l"; done
   $G grasp/rank_handle.py $F/near $F/${TAG}_reach_all.npz --out $F/${TAG}_order.txt 2>&1 | /usr/bin/grep -a "\[rank\]" | cut -c1-160 | while read -r l; do say "  $l"; done
   # candidates: rank_handle order, reach error under 10 mm; then the chain's own physics test (floor_object_chain.sh step 7,
@@ -184,7 +184,7 @@ seq = np.concatenate([q[:n_go], np.repeat(q[n_go-1:n_go], 150, axis=0), np.array
 np.savez("$F/${TAG}_reach_pick.npz", q=seq, joint_names=d["joint_names"], err=np.zeros(len(seq)), close_from=n_go, lift_from=n_go + 150, grasp=d["grasps"][k], best=k)
 PY
   echo $K > $F/${TAG}_grasp.txt
-  $P grasp/build_reach_reference_opus.py $M/${TAG}_kneel_m.pkl $F/${TAG}_reach_pick.npz ${TAG}c0 2>&1 | /usr/bin/grep -aE 'frames at 30|hands close|HOLD_AFTER|Traceback|Error' | cut -c1-140 | while read -r l; do say "  $l"; done
+  $P grasp/build_reach_reference_wb.py $M/${TAG}_kneel_m.pkl $F/${TAG}_reach_pick.npz ${TAG}c0 2>&1 | /usr/bin/grep -aE 'frames at 30|hands close|HOLD_AFTER|Traceback|Error' | cut -c1-140 | while read -r l; do say "  $l"; done
 fi
 KN=$(nframes $M/${TAG}_kneel_m.pkl); C0=$(nframes $M/${TAG}c0.pkl)
 export SONIC_LEGS_DIRECT=$((KN-17)),$((C0-71))     # legs PD to the clip at cuRobo gains only while kneeling static (hammer 671,1300 of 688/1371)
@@ -200,7 +200,7 @@ fi
 # ---------------------------------------------------------------- 5. rise from the measured pose -> c0r -> standing
 if [ -z "${STOP:-}" ] && [ $FROM -le 5 ] && [ ! -f $F/${TAG}_stateStand.json ]; then
   GX=$(python3 -c "import json;d=json.load(open('$CRATE'))['stand'];print('%.3f %.3f %.1f'%(d['x'],d['y'],d['yaw_deg']))")
-  $P grasp/clip_tools_opus.py from_state $F/${TAG}_stateRise.json 4 ${TAG}_stateRise_clip 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
+  $P grasp/clip_tools_wb.py from_state $F/${TAG}_stateRise.json 4 ${TAG}_stateRise_clip 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
   RISE_FROM=$M/${TAG}_stateRise_clip.pkl
   if [ "${RISE_STRAIGHTEN:-0}" = "1" ]; then
     # RISE_STRAIGHTEN: before the rise, a 2 s planner two-knee hold at the measured pose (mode 5, hammer v8 note's alternative):
@@ -213,7 +213,7 @@ yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
 json.dump({"stand": {"x": d["root_pos"][0], "y": d["root_pos"][1], "yaw_deg": yaw}, "base_path": None, "grasp_index": -1, "confidence": 0.0,
            "reachable": 0, "total": 0, "note": "two-knee hold at the measured pre-rise pose (RISE_STRAIGHTEN)"}, open("$F/${TAG}_hold_here.json", "w"), indent=1)
 PY
-    WALK_MODE=2 OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_opus.py $M ${TAG}_hold 0 0 0 0 0 0 --from-clip $M/${TAG}_stateRise_clip.pkl --stand $F/${TAG}_hold_here.json --hold-mode 5 --squat-to 0.35 --hold-target --goal-at $F/${TAG}_hold_here.json --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|root height\|Traceback" | while read -r l; do say "  hold: $l"; done
+    WALK_MODE=2 OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_wb.py $M ${TAG}_hold 0 0 0 0 0 0 --from-clip $M/${TAG}_stateRise_clip.pkl --stand $F/${TAG}_hold_here.json --hold-mode 5 --squat-to 0.35 --hold-target --goal-at $F/${TAG}_hold_here.json --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|root height\|Traceback" | while read -r l; do say "  hold: $l"; done
     RISE_FROM=$M/${TAG}_hold.pkl
   fi
   PRE=""
@@ -229,13 +229,13 @@ yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
 json.dump({"stand": {"x": d["root_pos"][0], "y": d["root_pos"][1], "yaw_deg": yaw}, "base_path": None, "grasp_index": -1, "confidence": 0.0,
            "reachable": 0, "total": 0, "note": "hold at the measured pre-rise pose"}, open("$F/${TAG}_hold_here.json", "w"), indent=1)
 PY
-    WALK_MODE=2 OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_opus.py $M ${TAG}_knee1 0 0 0 0 0 0 --from-clip $RISE_FROM --stand $F/${TAG}_hold_here.json --hold-mode 6 --squat-to 0.35 --hold-target --goal-at $F/${TAG}_hold_here.json --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|root height\|Traceback" | while read -r l; do say "  one-knee: $l"; done
-    if [ -n "$PRE" ]; then $P grasp/clip_tools_opus.py concat $PRE $M/${TAG}_knee1.pkl ${TAG}_pre 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done; PRE=$M/${TAG}_pre.pkl; else PRE=$M/${TAG}_knee1.pkl; fi
+    WALK_MODE=2 OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_wb.py $M ${TAG}_knee1 0 0 0 0 0 0 --from-clip $RISE_FROM --stand $F/${TAG}_hold_here.json --hold-mode 6 --squat-to 0.35 --hold-target --goal-at $F/${TAG}_hold_here.json --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|root height\|Traceback" | while read -r l; do say "  one-knee: $l"; done
+    if [ -n "$PRE" ]; then $P grasp/clip_tools_wb.py concat $PRE $M/${TAG}_knee1.pkl ${TAG}_pre 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done; PRE=$M/${TAG}_pre.pkl; else PRE=$M/${TAG}_knee1.pkl; fi
     RISE_FROM=$M/${TAG}_knee1.pkl
   fi
   OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip.py $M ${TAG}_rise0 0 0 0 0 0 0 --from-clip $RISE_FROM --rise-first 2 --goal-at $GX 2>&1 | /usr/bin/grep -a "root height\|frames (\|Traceback" | while read -r l; do say "  $l"; done
-  if [ -n "$PRE" ]; then $P grasp/clip_tools_opus.py concat $PRE $M/${TAG}_rise0.pkl ${TAG}_rise 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done; else cp $M/${TAG}_rise0.pkl $M/${TAG}_rise.pkl; fi
-  RISE_SLOW=2 $P grasp/rise_reference_opus.py $M/${TAG}c0.pkl $M/${TAG}c0_hands.npy $M/${TAG}_rise.pkl ${TAG}c0r 2>&1 | /usr/bin/grep -a "\[rise\]\|Traceback" | while read -r l; do say "  $l"; done
+  if [ -n "$PRE" ]; then $P grasp/clip_tools_wb.py concat $PRE $M/${TAG}_rise0.pkl ${TAG}_rise 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done; else cp $M/${TAG}_rise0.pkl $M/${TAG}_rise.pkl; fi
+  RISE_SLOW=2 $P grasp/rise_reference_wb.py $M/${TAG}c0.pkl $M/${TAG}c0_hands.npy $M/${TAG}_rise.pkl ${TAG}c0r 2>&1 | /usr/bin/grep -a "\[rise\]\|Traceback" | while read -r l; do say "  $l"; done
   C0R=$(nframes $M/${TAG}c0r.pkl)
   say "stage 5: run the rise (c0r $C0R frames) and measure standing"
   CONTACT_FORCE=1 DUMP_STATE=$F/${TAG}_stateStand.json DUMP_STATE_AT=$((C0R-1)) OBJ_EVERY=30 run_isaac $F/${TAG}_passStand.log $F/${TAG}_passStand.mp4 $F/scene.npy --walk $M/${TAG}c0r.pkl --hands $M/${TAG}c0r_hands.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 5"; exit 1; }
@@ -245,8 +245,8 @@ PY
 fi
 # ---------------------------------------------------------------- 6. carry pose + carry walk -> walk end
 if [ -z "${STOP:-}" ] && [ $FROM -le 6 ] && [ ! -f $F/${TAG}_stateCrate.json ]; then
-  $P grasp/carry_pose_opus.py $M/${TAG}c0r.pkl $M/${TAG}c0r_hands.npy ${TAG}a 60 30 2>&1 | /usr/bin/grep "\[carry-pose\]\|Traceback" | cut -c1-200 | while read -r l; do say "  $l"; done
-  $P grasp/clip_tools_opus.py from_state $F/${TAG}_stateStand.json 4 ${TAG}_stand_clip 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
+  $P grasp/carry_pose_wb.py $M/${TAG}c0r.pkl $M/${TAG}c0r_hands.npy ${TAG}a 60 30 2>&1 | /usr/bin/grep "\[carry-pose\]\|Traceback" | cut -c1-200 | while read -r l; do say "  $l"; done
+  $P grasp/clip_tools_wb.py from_state $F/${TAG}_stateStand.json 4 ${TAG}_stand_clip 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
   python3 - <<PY
 import json
 d = json.load(open("$CRATE")); st = json.load(open("$F/${TAG}_stateStand.json")); sx, sy = st["root_pos"][:2]
@@ -258,8 +258,8 @@ PY
   OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip.py $M ${TAG}_walk 0 0 0 0 0 0 --from-clip $M/${TAG}_stand_clip.pkl --stand $F/${TAG}_stand_ext.json --goal-at $F/${TAG}_stand_ext.json --hold-target --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|goal  \|Traceback" | while read -r l; do say "  $l"; done
   # a kinematic placeholder place from the planned walk end, only so the reference can be built (the real one comes from the measured arrival)
   DROP=$(python3 -c "import json;d=json.load(open('$CRATE'));print('%.3f %.3f %.3f'%(d['drop'][0],d['drop'][1],d['rim_z']+0.30))")
-  BODY_W=0.1 timeout 1200 $G grasp/reach_from_pose_opus.py $M/${TAG}_walk.pkl none none --place $DROP --out $F/${TAG}_place0.npz > $F/${TAG}_solve_place0.log 2>&1
-  $P grasp/carry_place_reference_opus.py $M/${TAG}a.pkl $M/${TAG}a_hands.npy $M/${TAG}_walk.pkl $F/${TAG}_place0.npz ${TAG}c1 2>&1 | /usr/bin/grep -a "\[carry\]\|Traceback" | cut -c1-160 | while read -r l; do say "  $l"; done
+  BODY_W=0.1 timeout 1200 $G grasp/reach_from_pose_wb.py $M/${TAG}_walk.pkl none none --place $DROP --out $F/${TAG}_place0.npz > $F/${TAG}_solve_place0.log 2>&1
+  $P grasp/carry_place_reference_wb.py $M/${TAG}a.pkl $M/${TAG}a_hands.npy $M/${TAG}_walk.pkl $F/${TAG}_place0.npz ${TAG}c1 2>&1 | /usr/bin/grep -a "\[carry\]\|Traceback" | cut -c1-160 | while read -r l; do say "  $l"; done
   A=$(nframes $M/${TAG}a.pkl); W=$(nframes $M/${TAG}_walk.pkl); WEND=$((A+W-1)); echo $WEND > $F/${TAG}_wend.txt
   say "stage 6: run the carry walk (waist on the policy from $A) and measure the arrival at frame $WEND"
   SONIC_WAIST_POLICY_FROM=$A CONTACT_FORCE=1 DUMP_STATE=$F/${TAG}_stateCrate.json DUMP_STATE_AT=$WEND WALK_MAX_FRAMES=$((WEND+2)) OBJ_EVERY=30 run_isaac $F/${TAG}_passWalk.log $F/${TAG}_passWalk.mp4 $F/scene.npy --walk $M/${TAG}c1.pkl --hands $M/${TAG}c1_hands.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 6"; exit 1; }
@@ -274,7 +274,7 @@ fi
 # ---------------------------------------------------------------- 7. place from the measured arrival -> final render
 if [ -z "${STOP:-}" ] && [ $FROM -le 7 ]; then
   A=$(nframes $M/${TAG}a.pkl); WEND=$(cat $F/${TAG}_wend.txt)
-  $P grasp/clip_tools_opus.py from_state $F/${TAG}_stateCrate.json 1 ${TAG}_state 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
+  $P grasp/clip_tools_wb.py from_state $F/${TAG}_stateCrate.json 1 ${TAG}_state 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
   TARGET=$(python3 - <<PY
 import json, re
 d = json.load(open("$CRATE")); st = json.load(open("$F/${TAG}_stateCrate.json"))
@@ -290,12 +290,12 @@ print(f"{tx:.3f} {ty:.3f} {d['rim_z']+0.30:.3f}")
 PY
 )
   say "stage 7: place (GraspGenX order) from the measured arrival, wrist target $TARGET (object over the crate centre)"
-  ORI_W=0.005 PLACE_GRASPGEN=1 BODY_W=0.1 timeout 1200 $G grasp/reach_from_pose_opus.py $M/${TAG}_state.pkl none none --place $TARGET --out $F/${TAG}_place.npz > $F/${TAG}_solve_place.log 2>&1
+  ORI_W=0.005 PLACE_GRASPGEN=1 BODY_W=0.1 timeout 1200 $G grasp/reach_from_pose_wb.py $M/${TAG}_state.pkl none none --place $TARGET --out $F/${TAG}_place.npz > $F/${TAG}_solve_place.log 2>&1
   /usr/bin/grep -a "\[reach\] place\|Traceback" $F/${TAG}_solve_place.log | cut -c1-200 | while read -r l; do say "  $l"; done
-  $P grasp/clip_tools_opus.py cut $M/${TAG}c1.pkl 0 $((WEND+1)) 0 ${TAG}_base 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
+  $P grasp/clip_tools_wb.py cut $M/${TAG}c1.pkl 0 $((WEND+1)) 0 ${TAG}_base 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
   $P -c "import numpy as np; h=np.load('$M/${TAG}c1_hands.npy'); np.save('$M/${TAG}_base_hands.npy', h[:$((WEND+1))])"
-  $P grasp/clip_tools_opus.py cut $M/${TAG}_base.pkl $WEND $((WEND+1)) 0 ${TAG}_dummy > /dev/null 2>&1
-  PLACE_BLEND=30 $P grasp/carry_place_reference_opus.py $M/${TAG}_base.pkl $M/${TAG}_base_hands.npy $M/${TAG}_dummy.pkl $F/${TAG}_place.npz ${TAG}c2 2>&1 | /usr/bin/grep -a "\[carry\]\|Traceback" | cut -c1-160 | while read -r l; do say "  $l"; done
+  $P grasp/clip_tools_wb.py cut $M/${TAG}_base.pkl $WEND $((WEND+1)) 0 ${TAG}_dummy > /dev/null 2>&1
+  PLACE_BLEND=30 $P grasp/carry_place_reference_wb.py $M/${TAG}_base.pkl $M/${TAG}_base_hands.npy $M/${TAG}_dummy.pkl $F/${TAG}_place.npz ${TAG}c2 2>&1 | /usr/bin/grep -a "\[carry\]\|Traceback" | cut -c1-160 | while read -r l; do say "  $l"; done
   say "stage 7: final render ($(nframes $M/${TAG}c2.pkl) frames)"
   SONIC_WAIST_POLICY_FROM=$A CONTACT_FORCE=1 OBJ_EVERY=5 run_isaac $F/${TAG}c2.log $F/${TAG}c2.mp4 $F/scene.npy --walk $M/${TAG}c2.pkl --hands $M/${TAG}c2_hands.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 7"; exit 1; }
   /usr/bin/grep -a '^\[eval\]' $F/${TAG}c2.log | while read -r l; do say "  final: $l"; done

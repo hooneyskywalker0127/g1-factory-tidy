@@ -27,7 +27,7 @@ GraspGenX의 손가락 게인(kp 2000 / kd 200 / effort 200)은 Newton(MuJoCo-wa
 위에서 정한 값이라 PhysX로 옮기면 관통 조임이 됩니다. 실제로 그렇게 쥔 0.2 kg 망치에는 접촉력
 1.2~2.6 kN이 걸리고 정지 상태에서도 물체가 떨다가 튕겨 나갔습니다. Isaac Lab 자신도 같은
 이유로 G1 손가락 게인을 4000/50에서 20/2로 내렸습니다(커밋 1f56bf0bdf). 자세한 측정은
-[DIAGNOSIS_opus.md](DIAGNOSIS_opus.md)의 2026-09-30 항목에 있습니다.
+[DIAGNOSIS_wb.md](DIAGNOSIS_wb.md)의 2026-09-30 항목에 있습니다.
 
 ## camera
 
@@ -102,7 +102,7 @@ GR00T의 무릎 자세와 cuRobo 전신 도달을 씁니다.
 
 SONIC의 한쪽 무릎(planner mode 6)은 플래너 클립보다 골반이 6 cm 높아(0.48 m) 이 자세에서는
 망치 파지 156개가 전부 17 mm 이상 빗나갑니다. 양무릎(mode 5, 0.40 m)에서는 3~6 mm로
-닿습니다. 측정은 [DIAGNOSIS_opus.md](DIAGNOSIS_opus.md) 2026-09-30 17:05 항목에 있습니다.
+닿습니다. 측정은 [DIAGNOSIS_wb.md](DIAGNOSIS_wb.md) 2026-09-30 17:05 항목에 있습니다.
 
 ## Troubleshooting
 
@@ -113,6 +113,6 @@ SONIC의 한쪽 무릎(planner mode 6)은 플래너 클립보다 골반이 6 cm 
   `quat_w_ros`가 0으로 나옵니다(Fabric이 CPU에서 비활성). camera pose는 stage에서 직접 읽습니다.
 - articulation 생성 실패(`PhysxMimicJointAPI` 12건 → `Failed to create articulation at /World/G1/root_joint`)
   → 부유 베이스는 `/World/G1/root_joint`를 비활성화하고 articulation root를 pelvis에 둡니다
-  (`grasp/play_in_cell_opus.py`; SONIC 원본의 `fix_base=False`와 같은 형태).
+  (`grasp/play_in_cell_wb.py`; SONIC 원본의 `fix_base=False`와 같은 형태).
 - 영상 없는 측정 실행과 영상 렌더가 다르게 걷습니다 → 재계획에 쓰는 상태 덤프는 렌더와
   같은 플래그(`--video`)로 뜬 실행에서 받습니다.

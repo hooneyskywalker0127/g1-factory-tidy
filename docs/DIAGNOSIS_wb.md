@@ -1,15 +1,15 @@
-# 진단 (Opus 이어쓰기)
+# 진단 (부유 베이스 작업본 이어쓰기)
 
-페이블(Fable 5.1)이 쓴 `docs/DIAGNOSIS.md`는 **보존 대상**이라 손대지 않는다. 2026-09-28 17:00 이후 Opus가 쓰는
-진단은 모두 이 파일에 이어 쓴다. 보존 규칙과 위치는 `docs/HANDOVER_MODEL.md` 참고.
+이전 세션이 쓴 `docs/DIAGNOSIS.md`는 **보존 대상**이라 손대지 않는다. 2026-09-28 17:00 이후 이후 쓰는
+진단은 모두 이 파일에 이어 쓴다. 이전 코드는 태그 `preserved-260928` 에 보존돼 있다.
 
-## 2026-09-28 17:00 — 모델이 Fable → Opus로 바뀜; 페이블 산출물 보존, 운반으로 이동
+## 2026-09-28 17:00 — 작업 사본(_wb)으로 전환; 이전 산출물 보존, 운반으로 이동
 
-- **세훈님: 페이블이 만든 코드와 진단 파일은 건드리지 말고 보존하고, 복사해서 그 사본에 작업하라.** 커밋되지 않은 채
-  남아 있던 페이블의 마지막 작업 트리(`grasp/reach_from_pose.py` +121줄, `grasp/test_grasps_in_isaac.py` +33줄: 실제
+- **세훈님: 이전 세션이 만든 코드와 진단 파일은 건드리지 말고 보존하고, 복사해서 그 사본에 작업하라.** 커밋되지 않은 채
+  남아 있던 이전 세션의 마지막 작업 트리(`grasp/reach_from_pose.py` +121줄, `grasp/test_grasps_in_isaac.py` +33줄: 실제
   기립 재생 `TEST_RISE_PKL`, `--regrasp-wrap`, `--assist-wrap`)를 그대로 커밋(`162c21d`)하고 태그
-  `fable-260928-preserved`를 달았다. 이후 Opus가 바꾸는 것은 사본에만 한다: `grasp/*_opus.py`, 이 파일.
-- **세훈님: 되는지 안 되는지 사실 모른다 — 랜더로 확인을 못 했다. 페이블이 한참 공부하고 시험은 안 해봤을 수 있다.**
+  `preserved-260928`를 달았다. 이후 이후 바꾸는 것은 사본에만 한다: `grasp/*_wb.py`, 이 파일.
+- **세훈님: 되는지 안 되는지 사실 모른다 — 랜더로 확인을 못 했다. 이전 세션이 한참 공부하고 시험은 안 해봤을 수 있다.**
   맞는 지적이다. 14:00~17:00 사이 납품된 영상은 hammer/v8 하나뿐이고, 그 사이 파워 그립 변형(팜다운 감싸기, 양손 보조,
   GraspGen-X 팜 주석, 그리드 24개, 스쿱, 공중 재파지)은 전부 테스터에서만 LOST로 끝나 영상이 없다.
 - **세훈님: 드는 것까지는 확인했고, 그 다음은 크레이트로 옮기는 것.** 그래서 파지 반복은 중단한다. 세훈님이 영상으로
@@ -19,7 +19,7 @@
   (-0.9, -0.5, 0.7)으로 두어 경로 전체가 프레임에 들어오게 했다.
 - 해머 운반 클립: 크레이트까지 보행 184프레임(위치 오차 0.052 m, 방향 1.1°), 놓는 손목 오차 평균 3.6 mm·최대 7.5 mm,
   기립 86프레임을 2배로 늘려 172프레임, 전체 1184프레임, 37.0 s에 손가락 열림.
-- 진단용으로 만들어 두고 지금은 쓰지 않는 것: `test_grasps_in_isaac_opus.py`의 `RISE_PROBE` — 기립 5지점에서 물체를
+- 진단용으로 만들어 두고 지금은 쓰지 않는 것: `test_grasps_in_isaac_wb.py`의 `RISE_PROBE` — 기립 5지점에서 물체를
   **손바닥 자신의 좌표계**로 찍어 어느 방향으로 빠지는지(손가락 축 방향 = 손끝에서 미끄러짐, 손바닥 법선 방향 = 케이지
   밖으로 떨어짐) 구분한다. 세훈님이 운반을 먼저 보자고 해서 큐에서 내렸다.
 
@@ -42,7 +42,7 @@
 
 ## 2026-09-28 17:35 — 그립이 느슨한 이유: 조임 게인이 GraspGenX 자신의 값보다 50배 약했다
 
-세훈님이 hammer/v9 를 보고: "20초 쫌 지나서 해머는 떨어지네 파워그립이라고 좀 꽉지는걸 추가하려고했었는데 페이블이",
+세훈님이 hammer/v9 를 보고: "20초 쫌 지나서 해머는 떨어지네 파워그립이라고 좀 꽉지는걸 추가하려고했었는데 이전 세션이",
 "너무 그립이 느슨함", "25초쯤에 그립이 살짝 풀리는것 같은데. 오히려 꽉잡아야하는데".
 그리고 방법 지시: **"그런걸 확인할때 해당부분 오픈소스를 봐야해. 그립이지? 그럼 graspgenx 코드를 읽어."**
 
@@ -66,7 +66,7 @@
 렌더와 테스터는 같은 `robot_cfg()`(build_reach_reference.py:99-103)를 쓰므로 두 경로의 게인은 일치했다.
 즉 이번엔 "두 실행의 차이"가 아니라 **양쪽이 같이 약했다**. 확인 방법: `[hand] squeeze` 로그 줄.
 
-변경: 페이블 파일은 건드리지 않고 `grasp/play_in_cell_opus.py`(새 사본)와 `grasp/test_grasps_in_isaac_opus.py` 에
+변경: 이전 세션 파일은 건드리지 않고 `grasp/play_in_cell_wb.py`(새 사본)와 `grasp/test_grasps_in_isaac_wb.py` 에
 `robot_cfg()` 직후 오버라이드를 넣었다 — `HAND_KD` 가 설정될 때만 동작하므로 없으면 기존과 동일하다.
 `HAND_KP=2000 HAND_KD=200 HAND_EFFORT=200`. 파지·클립·카메라·보행·드롭은 v9/v6 과 동일, 손 게인만 바뀐다.
 
@@ -220,7 +220,7 @@ v13 = v12 에서 armature 만 0.5 -> 0.001. 결과는 개선이 아니라 파지
 - 우리는 준 적이 없다: v12 의 `[phys] /World/GraspTarget … ` 덤프에 그 속성이 없다.
 - v12 의 실패는 손가락이 아직 닫힌 상태에서 0.2 kg 물체가 약 6 m/s 로 떠난 것이고, 이는 관통 복구가
   만드는 속도의 모양이다. 유일한 임펄스 출처가 손이라는 위 사실과 맞는다.
-- 구현은 `grasp/play_in_cell_opus.py` 의 `OBJ_MAX_DEPEN_VEL`(미설정이면 속성을 쓰지 않아 기존과 동일).
+- 구현은 `grasp/play_in_cell_wb.py` 의 `OBJ_MAX_DEPEN_VEL`(미설정이면 속성을 쓰지 않아 기존과 동일).
   물체 로그는 10 프레임마다 남겨 사출 시점을 10 프레임 안으로 좁힌다.
 
 ## 20:05 — 손가락 콜라이더가 전부 볼록껍질이었다 (해머 v14 / 드릴 v11)
@@ -246,7 +246,7 @@ coacd_link_keywords = ("intermediate", "distal") 을 지정하고, 주석에
 물체 콜라이더가 볼록껍질이었던 것과 같은 종류의 문제가 접촉의 반대편(손)에 남아 있었다.
 
 **다음 (v15 / v12).** 바꾸는 값은 하나: R_*_intermediate / R_*_distal 링크의 콜라이더를
-convexDecomposition 으로 (play_in_cell_opus.py 의 FINGER_COACD, 기본값 없음 -> 끄면 종전과 동일).
+convexDecomposition 으로 (play_in_cell_wb.py 의 FINGER_COACD, 기본값 없음 -> 끄면 종전과 동일).
 USD 가 instanceable 이라 각 링크의 collisions 스코프를 먼저 de-instance 한다
 (plan_scene.py:266 이 그 제약을 적어 두었다). 나머지는 v14/v11 그대로:
 kp 650 kd 100 effort 20 armature 0.5, solver 100/50, maxDepenetrationVelocity 5.
@@ -271,7 +271,7 @@ R_thumb_proximal_pitch 가 프레임 560 에 목표 0.5 rad 에 도달하고 끝
 end2end/robots/g1_inspire_arm.yaml 은 이 손에 `gripper_control_mode: velocity` 와
 `gripper_close_velocity` thumb_0 = 0.0 / 나머지 +-0.25 rad/s 를 지정하고,
 end2end/dynamic_playback.py:71 은 FINGER_KD_DEFAULT = 200.0 이다.
-play_in_cell_opus.py:735-741 에 GraspGenX 자신의 이유가 이미 적혀 있다 --
+play_in_cell_wb.py:735-741 에 GraspGenX 자신의 이유가 이미 적혀 있다 --
 position mode 는 "snaps the fingers to the closed angles and they bat the object away".
 v15 의 0.55 rad/s 는 그들의 0.25 rad/s 의 2.2 배다.
 바꾸는 것: CLOSE_MODE=velocity CLOSE_VEL=0.25 CLOSE_KD=200 (코드는 이미 구현되어 있다).
@@ -384,8 +384,8 @@ v9 가 지정한 다음 측정(팔 기준 좌표계에서의 물체 위치)은 �
 - `end2end/robots/g1_inspire_arm.yaml:39-51` `gripper_control_mode: velocity`, thumb_0 은 **0.0**(구동하지
   않음), thumb_1/2 는 -0.25, 네 손가락은 +0.25.
 
-우리 구현은 이 설계에 충실하다. `play_in_cell_opus.py:797-805, 828-829` 는 프레임마다 그리고 substep
-마다 velocity target 을 다시 넣고, `test_grasps_in_isaac_opus.py` 의 `put()`(:289)도 SQUEEZING 인 동안
+우리 구현은 이 설계에 충실하다. `play_in_cell_wb.py:797-805, 828-829` 는 프레임마다 그리고 substep
+마다 velocity target 을 다시 넣고, `test_grasps_in_isaac_wb.py` 의 `put()`(:289)도 SQUEEZING 인 동안
 substep 마다 다시 넣으며 `squeeze(True)` 는 꺼지지 않는다. 다만 **우리 기본값 CLOSE_KD 는 8.0 으로
 GraspGenX 의 800 보다 100 배 작다.**
 
@@ -419,7 +419,7 @@ n_go 가 프레임 수에 따라 달라진다. 해가 바뀐 증거가 아니므
 앞서므로 인덱스 138 은 같은 파지다.)
 
 **2) 그런데 내 probe 는 손실의 순간을 볼 수 없었다. 첫 관측이 이미 사후였다.**
-`test_grasps_in_isaac_opus.py:537` 의 `_checks = {int(round(len(_seq) * _fr)) - 1 for _fr in (0.001, ...)}` 에서
+`test_grasps_in_isaac_wb.py:537` 의 `_checks = {int(round(len(_seq) * _fr)) - 1 for _fr in (0.001, ...)}` 에서
 선두 항 0.001 은 실제 N(150~260)에서 `round(N*0.001) - 1 == -1` 이 되어 **한 번도 발화하지 않았다.**
 그래서 가장 이른 관측이 일어서기의 24% 다. 그 시점에 물체는 이미 손바닥 좌표계로 304 mm 밖이고 정지해 있으며,
 24/50/75/100% 네 점이 서로 같은 값을 주는 이유가 이것이다(물체 `[-0.282 0.047 0.153]` 고정, tilt 6.8 deg 고정,
@@ -435,7 +435,7 @@ velocity close: kd 800, 0.25 rad/s)를 해머 먼저, 각 arm 마다 일어서�
 which at 60 fps plays in 0.7 sec — too fast for the gripper to keep grip on the object under physics."
 접근(APPROACH_FRAMES)과 최종 직진(GRASP_FRAMES)도 각각 120 프레임 = 2 초로 늘린다.
 우리 일어서기는 플래너 ~1.4 초를 `build_place_reference.py:66-69` 의 RISE_SLOW=2 로 늘린 ~2.8 초다.
-RISE_SLOW 는 환경변수이므로 페이블 파일을 고치지 않고 올릴 수 있다. probe 결과가 "상승 가속도에 접촉을
+RISE_SLOW 는 환경변수이므로 이전 세션 파일을 고치지 않고 올릴 수 있다. probe 결과가 "상승 가속도에 접촉을
 잃는다"로 나오면 이것이 다음 한 가지다.
 
 ## "충분히 꽉 쥐었다"를 판정하는 오픈소스는 IsaacLab 안에 있다 (260928 21:40)
@@ -482,7 +482,7 @@ tactile 관련 없나. 어느정도면 충분히 꽉쥐었다를 판단할 수 �
    손끝에 젤시트를 붙여 변형 영상을 렌더하는 방식이라 우리 5지 손에는 자산부터 새로 필요하다.
 
 ### 우리 코드에 붙는가
-`grasp/play_in_cell_opus.py:84` 는 이미 `from isaaclab.sensors import Camera, CameraCfg` 를 쓴다.
+`grasp/play_in_cell_wb.py:84` 는 이미 `from isaaclab.sensors import Camera, CameraCfg` 를 쓴다.
 같은 패키지의 `ContactSensorCfg` 를 손끝 링크마다 `filter_prim_paths_expr=["/World/GraspTarget"]`
 로 달면 `data.force_matrix_w` 가 나온다. 새 의존성은 없다.
 다음 한 걸음은 게인을 또 만지는 것이 아니라 **힘을 계측하는 것**이다: 사출 직전 구간(v14 frame
@@ -493,7 +493,7 @@ tactile 관련 없나. 어느정도면 충분히 꽉쥐었다를 판단할 수 �
 
 세훈님 질문("어느정도면 충분히 꽉쥐었다를 판단할수 있음 좋은데")에 대한 답을 추측이 아니라
 계측으로 적는다. IsaacLab 의 ContactSensor 를 오른손 링크 전체에 달고 물체 하나로 필터해서
-(`play_in_cell_opus.py`, CONTACT_FORCE=1 일 때만 동작) v14 와 물리 설정이 한 글자도 다르지 않은
+(`play_in_cell_wb.py`, CONTACT_FORCE=1 일 때만 동작) v14 와 물리 설정이 한 글자도 다르지 않은
 렌더를 다시 돌렸다.
 
 측정치 (results/fable40/g.log, 프레임 = 60 fps):
@@ -571,7 +571,7 @@ arm A(position, kp 40/kd 0.4)와 arm B(velocity, kd 800) 둘 다
 손이 0.5 m 움직이는 동안 물체는 mm 단위로 움직이지 않았고, 손가락은 아무 저항 없이 목표까지
 닫혔다. hammer 실행의 파지 시점 출력은 `at grasp: palm - object [0.147 -0.053 0.136]` — 0.206 m 다.
 
-같은 파지를 렌더(`play_in_cell_opus.py`)로 돌리면 반대 결과가 나온다: hammer v17 에서 물체는
+같은 파지를 렌더(`play_in_cell_wb.py`)로 돌리면 반대 결과가 나온다: hammer v17 에서 물체는
 0.1996 m 올라갔고 접촉 센서는 kN 을 읽었다. 즉 **렌더는 물체를 잡고, 테스터의 일어서기 단계는
 잡지 않는다.**
 
@@ -734,7 +734,7 @@ f700 이후에도 유지된다 (c) f760 에 시작 높이 +0.05 m 이상 (d) 스
 
 ## 파워 그립 후보는 v19 게인으로 버려졌다 (260928 22:45, v21 렌더 중 조사)
 
-`docs/DIAGNOSIS.md:765-786` 에 페이블이 정리해 둔 대로, NVIDIA 가 배포하는
+`docs/DIAGNOSIS.md:765-786` 에 이전 세션이 정리해 둔 대로, NVIDIA 가 배포하는
 `gripper_descriptions/assets/x_grippers/inspire_hand/config.json` 의 sweep volume 은
 손끝에만 달려 있다:
 
@@ -746,7 +746,7 @@ f700 이후에도 유지된다 (c) f760 에 시작 높이 +0.05 m 이상 (d) 스
 v20 에서 측정한 손바닥-물체 거리 10.5 cm 는 이 사양 안이다. **손끝 파지는 버그가 아니라
 NVIDIA 기술서가 요청한 결과다.** 그래서 v20 의 낙하는 파지 생성 쪽을 봐야 하는 문제다.
 
-페이블이 만든 로컬 변형 `inspire_hand_palm`(같은 URDF, sweep box 를 손바닥면~손끝 전체로:
+이전 세션이 만든 로컬 변형 `inspire_hand_palm`(같은 URDF, sweep box 를 손바닥면~손끝 전체로:
 open 5x7.7x10 cm @ z 0.10, half-open 4x7.7x7 cm @ z 0.095)로 파워 그립 후보가 이미
 생성돼 디스크에 있다: `results/fable40/grasps_palm.json` (14:58),
 `order_palm.txt` / `reach_palm.npz` (15:15), `test_palm.txt` (15:40, 40 후보).
@@ -799,8 +799,8 @@ v20 에서 엄지 접촉이 R_thumb_intermediate -> R_thumb_distal 로 옮겨간
 말단이 과하게 말리면 물체를 손아귀 안쪽이 아니라 바깥쪽으로 밀어낸다. 다만 이것이
 원인이라는 증거는 아직 없다 — 접촉 링크 이동은 물체가 굴러 나간 결과일 수도 있다.
 
-v21 이 실패하면 v22 후보: `_MIMIC` 배수를 URDF 값 1.334 / 0.667 로. 페이블 파일은 건드리지
-않고 `play_in_cell_opus.py` 에서 `build_reach_reference._MIMIC` 을 import 후 치환한다.
+v21 이 실패하면 v22 후보: `_MIMIC` 배수를 URDF 값 1.334 / 0.667 로. 이전 세션 파일은 건드리지
+않고 `play_in_cell_wb.py` 에서 `build_reach_reference._MIMIC` 을 import 후 치환한다.
 
 ## 엄지가 한 번도 굽지 않았다 (hammer v21, 측정)
 
@@ -820,7 +820,7 @@ q 0.03(f510) → -0.00(f530) → 0.00(f750) 으로 **한 번도 굽지 않았다
 일어서기 가속(f760)에서 빠졌다. dexsuite_good 은 f520~f740 내내 True 였다 — 이 기준은 놓치기
 직전까지 참이므로, 놓침을 예고하지 못한다.
 
-## 파워 그립 후보는 v19 조건에서 버려졌다 (Fable 테스터가 게인 변수를 읽지 않는다)
+## 파워 그립 후보는 v19 조건에서 버려졌다 (원본 테스터가 게인 변수를 읽지 않는다)
 
 `results/fable40/test_palm.txt`(15:40, 0/40 held)가 팜 표기 후보들에 대한 유일한 판정이다.
 그 판정을 낸 `grasp/test_grasps_in_isaac.py` 에는 `HAND_KD`, `SOLVER_IT`, `FINGER_COACD` 가
@@ -833,7 +833,7 @@ v19 에서 약지 접촉력이 0↔1,571.78 N 로 진동하고 24,588 N 스파�
 따라서 "파워 그립은 안 된다"는 결론에는 아직 근거가 없다. 40 개 중 28 개는
 `object followed +0.000 m` = 접촉조차 없었다.
 
-v22 = 사본 `grasp/test_grasps_in_isaac_opus.py`(게인 오버라이드 + 솔버 100/50 + CoACD 손끝, 세 곳만 추가)
+v22 = 사본 `grasp/test_grasps_in_isaac_wb.py`(게인 오버라이드 + 솔버 100/50 + CoACD 손끝, 세 곳만 추가)
 으로 같은 40 개를 kp 40 / kd 4.0 / effort 30 / armature 0.001 에서 재판정하고, 가장 많이 들어올린
 후보를 carry+place 까지 렌더한다.
 
@@ -944,7 +944,7 @@ v19~v22 네 번 연속이다.
 
 ## 마찰은 한 번도 한계가 아니었다 (마찰 계열 노브 전부 제외)
 
-`play_in_cell_opus.py:441` 의 손 재질은 `friction_combine_mode="max"`, 물체 재질
+`play_in_cell_wb.py:441` 의 손 재질은 `friction_combine_mode="max"`, 물체 재질
 (`plan_scene.py:116`)은 조합 모드를 설정하지 않아 기본 `"average"` 다. PhysX 조합 우선순위는
 average < min < multiply < **max** 이므로 max 가 이겨 접촉 마찰계수는 `max(10, 3) = 10` 이다.
 0.2 kg 물체를 들기 위한 접선력은 ~2 N 인데 측정된 수직력은 300~800 N 이었다. 마찰 용량은 필요량의
@@ -971,7 +971,7 @@ negated)" 는 저장된 값이 이미 양수임을 뜻한다. 크기만 다르�
 
 ## v24 = 종동 게인만 NVIDIA 비율로 (디스크 폴더는 hammer/v23 이 된다)
 
-`grasp/play_in_cell_opus.py` 에 `MIMIC_SPLIT` 을 넣었다. `HAND=inspire` 이고 `MIMIC_SPLIT=1` 일 때
+`grasp/play_in_cell_wb.py` 에 `MIMIC_SPLIT` 을 넣었다. `HAND=inspire` 이고 `MIMIC_SPLIT=1` 일 때
 `.*_intermediate_joint` / `.*_thumb_distal_joint` 를 `hands` 그룹에서 떼어 `hands_mimic` 그룹으로
 옮기고, 게인만 GraspGenX 비율로 내린다:
 
@@ -990,7 +990,7 @@ negated)" 는 저장된 값이 이미 양수임을 뜻한다. 크기만 다르�
 
 ## 손바닥 접근 후보 재선별 결과: 40개 중 진짜 성공 0개
 
-`test_grasps_in_isaac_opus.py --top 40 --order order_palm.txt` (solver 100/50, kp 40 / kd 4.0):
+`test_grasps_in_isaac_wb.py --top 40 --order order_palm.txt` (solver 100/50, kp 40 / kd 4.0):
 
 ```
 [test] 1/40 grasps held: #46 (589067 mm)
@@ -1042,7 +1042,7 @@ self.assertAlmostEqual(linkAAngleDegree, -linkBAngleDegree, delta=posErrToleranc
 v23 의 `[force] frame` 라인을 전부 diff 해도 한 줄도 다르지 않고 관절값·최고
 상승·`[eval]` 이 모두 일치한다. **종동 kp 를 40배 내려도 측정 가능한 변화가 없다** =
 종동 PD 토크는 파지를 제한하는 요인이 아니다. 왜 완전히 동일한지는 아직 설명하지
-못했다. `play_in_cell_opus.py` 245–345 의 이후 액추에이터 블록을 모두 읽었고 전부
+못했다. `play_in_cell_wb.py` 245–345 의 이후 액추에이터 블록을 모두 읽었고 전부
 `"arms"/"legs"/"feet"` 만 건드리므로 `hands_mimic` 를 덮어쓰는 코드는 없다.
 
 ## v23 측정: 손가락은 작동하고 엄지 사슬만 접혀 막힌다
@@ -1092,9 +1092,9 @@ best-opposing 234.95 N). v19~v23 **다섯 번 연속** 낙하를 예측하지 �
 
 0.5 rad 닫힘이 `thumb_distal` 에 **1.2 rad** 를 명령한다 — 실제 관절 전체 가동범위
 0.4 rad 의 3 배이고, URDF 배율의 3.6 배다. `MIMIC_URDF_RATIO=1` 이
-`play_in_cell_opus.py` 에서 (1) `build_reach_reference._MIMIC` 의 엄지 두 항목을
+`play_in_cell_wb.py` 에서 (1) `build_reach_reference._MIMIC` 의 엄지 두 항목을
 1.334 / 0.667 로 바꾸고 (2) USD 의 해당 `physxMimicJoint:*:gearing` 을
-−1.334 / −0.667 로 다시 쓴다. Fable 파일은 런타임 몽키패치로만 건드린다.
+−1.334 / −0.667 로 다시 쓴다. 원본 파일은 런타임 몽키패치로만 건드린다.
 
 **한계를 분명히 적는다:** 유지 구간에는 마스터가 0.000 이었으므로 두 배율 모두 종동
 목표를 0 으로 만든다. 이 배율 오차가 유지 구간의 직접 원인이라는 증거는 없다.
@@ -1121,7 +1121,7 @@ v22 의 실패가 이 가설을 기각하지는 못한다. 다음에는 두 관�
 `robot_cfg()` 가 주는 `velocity_limit=10.0` 은 시뮬레이터에 도달하지 않는다. 그래서
 지금까지의 모든 파지 시도는 손이 다 닫히기 전에 일어서기 구간에 들어갔다.
 
-측정 (`grasp/thumb_free_opus.py`, 자유공간·물체 없음·루트 고정, 20 s/설정):
+측정 (`grasp/thumb_free_wb.py`, 자유공간·물체 없음·루트 고정, 20 s/설정):
 
 - `robot.data.joint_velocity_limits` → **0.500 rad/s** (12 관절 전부).
 - 실측 `joint_vel` 이 구동 6 관절에서 정확히 +0.50 에 포화. 종동절은
@@ -1152,7 +1152,7 @@ v22 의 실패가 이 가설을 기각하지는 못한다. 다음에는 두 관�
 산수로 확인: proximal 전폐 1.47 rad 에 ≥ 2.94 s, 엄지 0.5 rad 에 ≥ 1.0 s. v24 의
 파지 창은 f460~f760 = 10 s, 접촉을 밀며 닫는 데 걸린 시간은 f460~f840 = **12.7 s**.
 
-`HAND_VEL` (내 `play_in_cell_opus.py`, `thumb_free_opus.py`)이
+`HAND_VEL` (내 `play_in_cell_wb.py`, `thumb_free_wb.py`)이
 `velocity_limit_sim` 을 설정한다. `velocity_limit=None` 을 함께 넘겨야 한다 —
 ImplicitActuator 는 두 값이 다르면 `ValueError` 를 던진다(`actuator_pd.py:96-101`).
 
@@ -1188,7 +1188,7 @@ USD 한계는 도(degree)로 저작돼 있다: `thumb_proximal_pitch 0..28.6479 
 ## 닫기는 끝난 적이 없다 — 멈추는 것은 힘 상한이고, 우리는 그 20 % 만 쓴다 (v25 측정, 결론)
 
 **v25 (HAND_VEL=5.0 만 바꾼 렌더) 판정: `[eval] dz -0.0090 m → LOST`.** 판정식은
-`play_in_cell_opus.py:1633`, `dz = 끝 z − 시작 z > +0.05 m` 일 때만 HELD 다. 해머는 출발점
+`play_in_cell_wb.py:1633`, `dz = 끝 z − 시작 z > +0.05 m` 일 때만 HELD 다. 해머는 출발점
 근처 바닥(z 0.153)에 다시 누웠다.
 
 그런데 실패 방식이 처음으로 바뀌었다:
@@ -1257,7 +1257,7 @@ drill / crate / flat_screwdriver 는 같은 0.5 rad/s 원인으로 LOST 였으�
 않았고, **물체가 사출된 다음 프레임 f770 에 +0.480 으로 풀린다.** kp 200 에서는
 `CLOSE_ORDER=thumb_first` 의 순서 효과가 한 제어 스텝 안에 사라진다.
 
-같은 잠김은 이미 `play_in_cell_opus.py:211-214` 에 v21/v22 증상으로 적혀 있었다. 그래서
+같은 잠김은 이미 `play_in_cell_wb.py:211-214` 에 v21/v22 증상으로 적혀 있었다. 그래서
 **MIMIC_SPLIT(종동절 게인 분리)을 함께 켜는 후속안은 버렸다**: `v23` 이 kp 40 에서 그것을
 켰고 같은 잠김이었다(T.pitch 최대 +0.030, T.int −0.160 이 f550~f750 유지). MIMIC_SPLIT 이
 켜진 렌더는 v23 뿐이므로 v25→v26 은 게인 단일 변수다.
@@ -1278,7 +1278,7 @@ f750→f760→f770 에 root z 0.4210 → 0.4280 → 0.4680 으로 시작하고, 
 파지를 판정한다(`:128-129` 접촉 평형은 움직임이 멈춘 뒤 생긴다).
 
 **v27 = v25 게인(kp 40 kd 4.0) + `SETTLE_AT=750 SETTLE_FRAMES=150`.** 클립 인덱스만 remap 하고
-진단 프레임 번호는 계속 증가시킨다(`play_in_cell_opus.py:955-965`). 150 프레임의 근거: v25 의
+진단 프레임 번호는 계속 증가시킨다(`play_in_cell_wb.py:955-965`). 150 프레임의 근거: v25 의
 T.pitch 는 f460~f760 300 프레임에 0.350 올랐다 = 평균 0.00117 rad/프레임, 남은 0.150 rad 를 같은
 평균으로 **외삽**하면 약 128 프레임(측정값이 아니라 외삽). 기준: (a) T.pitch ≥ 0.45 (b) f900 이전
 도달 (c) 접촉 합 ≤ 4000 / 단일 ≤ 2000 (d) 엄지 패드 ≥ 13 프레임 (e) dz > +0.05 → HELD
@@ -1301,7 +1301,7 @@ f760 에서야** 나온 값이므로, 파지 구간의 엄지 상태를 대표�
 소수점까지 동일하다 — 정착(settle)은 f750 이후에만 갈라지므로 단일 변수가 맞다.
 
 그래서 **kp 가 아니라 이 잠김 자체가 공통 원인이다.** 소스에 이미 적혀 있던 기구는
-`play_in_cell_opus.py:711-713`: T.int 가 USD 하한 −0.160 에 걸리면 **하드 PhysX 미믹이 마스터
+`play_in_cell_wb.py:711-713`: T.int 가 USD 하한 −0.160 에 걸리면 **하드 PhysX 미믹이 마스터
 pitch 를 0 에 못 박는다**(q_follower = −gearing × q_reference). 제조사 URDF
 (`x_grippers/inspire_hand/gripper_spherical_dof.urdf`)는 이 관절에 **역방향 가동이 없다**:
 thumb_intermediate 0 ~ 0.8, thumb_distal 0 ~ 0.4, master thumb_proximal_pitch 0 ~ 0.6.
@@ -1361,7 +1361,7 @@ v27 판정을 기록한 뒤 이것을 v28 의 단일 변경으로 넣는다.
 
 ## v28: 힘 상한을 제조사 값으로 — 이 수정은 5지 손에 한 번도 들어간 적이 없다
 
-진단은 이 저장소에 **이미** 적혀 있었다. `play_in_cell_opus.py:267-273`:
+진단은 이 저장소에 **이미** 적혀 있었다. `play_in_cell_wb.py:267-273`:
 
 > Dex3-1 finger torque, from Unitree's own URDF: every hand joint … is `effort="1.4"`.
 > IsaacLab's G1_29DOF_CFG leaves the hands at effort_limit=300, 214x the real actuator,
@@ -1461,7 +1461,7 @@ finger_effort_limit: 1000.0
 naturally limits how far the close actually goes when there's contact". **속도 모드에는 붙잡아 둘
 위치 오차가 없다.** 접촉이 속도 명령과 평형을 이루면 그 자리에서 멈추고, 상시 압박이 사라진다.
 
-우리 쪽 구현은 이미 배선돼 있다: `play_in_cell_opus.py:915-934`(설정), `:1001-1009`(프레임
+우리 쪽 구현은 이미 배선돼 있다: `play_in_cell_wb.py:915-934`(설정), `:1001-1009`(프레임
 전환), `:1033`(substep 재발행) — squeeze 구간에 stiffness 0 / damping `CLOSE_KD`, thumb_0 제외.
 
 **v29 = v27 + `CLOSE_MODE=velocity CLOSE_VEL=0.25 CLOSE_KD=40`** (EFF 는 v27 의 30 으로 복귀).
@@ -1594,7 +1594,7 @@ v29 가 놓친 f710 을 접촉 216 N 으로 통과했다. 쥐는 힘이 아니�
 이므로 새 물체와의 충돌도 아니다. 책상은 `[-1.53 -0.946]` top z 0.764, 물체는 `[-0.2758 0.1304 0.2728]`.
 
 가설 두 개를 반증했다:
-- "정착 해제에서 팔이 튄다" — 아니다. `play_in_cell_opus.py:961-963` 의 `_idx` 는 811 에서 812 로
+- "정착 해제에서 팔이 튄다" — 아니다. `play_in_cell_wb.py:961-963` 의 `_idx` 는 811 에서 812 로
   연속 재개한다. 명령 점프가 없다.
 - "클립에 불연속이 있다" — 아니다. `fable40pwplace` 의 클립 810~830 프레임차 최대 0.0254 rad,
   `fable40v2place` 는 0.0234 rad. 둘 다 매끄럽다.
@@ -1669,7 +1669,7 @@ z +0.2824, 54.0°). 정착 길이 외에 변경이 없었고 시뮬은 결정적
 대응물이 없는 우리 구성물이며, 넣은 이유는 위치 모드 닫기의 누르는 힘(v27 387 N)을 정지한 몸에서
 재기 위해서였다. v29 부터의 속도 닫기에는 그 누름이 없다.
 
-`SETTLE_AT=-1 SETTLE_FRAMES=0` (`play_in_cell_opus.py:959-963` 의 `_clip_i` 가 항등이 된다).
+`SETTLE_AT=-1 SETTLE_FRAMES=0` (`play_in_cell_wb.py:959-963` 의 `_clip_i` 가 항등이 된다).
 기준: (a) sim f812~820 에 접촉 0 N 프레임이 없다 (b) 일어서기(클립 839~849, root 0.324 m/s)를
 접촉 유지로 통과한다 (c) `[eval] dz > +0.05 m`.
 갈림: (a) 실패면 원인은 클립 812~820 프레임 자체다. 통과하면 중간 해제가 원인이었고 영구히 뺀다.
@@ -1698,7 +1698,7 @@ f800/f810 접촉은 세 번 모두 443.67 / 425.46 N 로 소수점까지 같다 
 200~510 N 은 전부 "설계된 자세에서 52도 돌아간 물체"를 쥔 것이다. 접촉 센서가
 f520 에 0 N 을 읽는 것은 샘플이 10프레임 간격이라 그 사이 충격이 안 보이는 것이다.
 
-### 원인은 손바닥이 손잡이 위에 없다는 것 — 페이블 자신의 측정에 있었다
+### 원인은 손바닥이 손잡이 위에 없다는 것 — 이전 세션 자신의 측정에 있었다
 `results/fable40/test_pw3.txt` 파지 #3: `at grasp: palm - object [0.165 -0.108 0.184]`
 (검산: palm z 0.215 - object z 0.032 = 0.183 = 세 번째 성분, 같은 좌표계).
 
@@ -1730,9 +1730,9 @@ f520 에 0 N 을 읽는 것은 샘플이 10프레임 간격이라 그 사이 충
 calls it, so until now this pipeline handed cuRobo raw candidates. ... which is why the
 hand could arrive already through the box."* 두 검사 모두 이 자세에 적용된 적이 없다.
 
-## v33: POWER_X 0.10 -> 0.127 (페이블이 실측해 둔 너클 위치)
+## v33: POWER_X 0.10 -> 0.127 (이전 세션이 실측해 둔 너클 위치)
 
-`reach_from_pose.py:519-520` 주석, 페이블 2026-09-28 실측:
+`reach_from_pose.py:519-520` 주석, 이전 세션 2026-09-28 실측:
 *"the handle sits under the finger base (knuckles at x 0.127), not under the palm heel
 (x 0.10 put the fingertips on the floor beyond the handle: power_chain, 16/16 LOST)."*
 `pxs` 기본값이 0.10 이고 pw3 는 기본값으로 만들어졌다. 위에서 측정한 "손잡이 옆
@@ -1864,7 +1864,7 @@ npz 의 `grasps[1]` 이 `[-0.1085 0.0192 0.0632]` 로 일치한다.
 
 **다음 한 가지**
 29개 관절의 명령값 대 실제값(+ Isaac 쪽 관절 한계)을 close 자세에서 찍어, 어느 관절이 안 따라오는지
-또는 한계에 걸리는지를 숫자로 만든다. Fable 파일은 건드리지 않고 `test_grasps_in_isaac_opus.py` 에
+또는 한계에 걸리는지를 숫자로 만든다. 원본 파일은 건드리지 않고 `test_grasps_in_isaac_wb.py` 에
 `JOINT_TRACE` 출력만 추가했다(24줄, 명령하는 값은 하나도 바뀌지 않음). 아직 확인 못 한 단서:
 허리가 한계 근처로 명령된다(`waist_roll` 0.49~0.51, `waist_pitch` 0.50 rad, G1 한계 ±0.52 부근),
 그리고 `ARM_KP_SCALE` 은 `cfg.actuators["arms"]` 만 건드리는데 허리가 그 그룹인지 확인되지 않았다.
@@ -1914,9 +1914,9 @@ npz 의 `grasps[1]` 이 `[-0.1085 0.0192 0.0632]` 로 일치한다.
 닫기 시작해 180 에 다 닫힌다. 정지 30프레임째인 195 에서도 35 mm 가 남아 있으므로
 단순한 추종 지연이 아니다(정지 끝 224 프레임에서 재측정 중).
 
-**도구.** `test_grasps_in_isaac_opus.py` 의 진단 출력을 `_jtrace(frame)` 함수로 빼서
+**도구.** `test_grasps_in_isaac_wb.py` 의 진단 출력을 `_jtrace(frame)` 함수로 빼서
 재생 루프 안의 임의 프레임(`TRACE_FRAME`)과 기존 `n_go-1` 양쪽에서 부를 수 있게 했다.
-출력만 하고 명령하는 값은 하나도 바꾸지 않는다. Fable 파일은 건드리지 않았다.
+출력만 하고 명령하는 값은 하나도 바꾸지 않는다. 원본 파일은 건드리지 않았다.
 
 ## v36 — 허리는 무른 게 아니라 토크가 없다. 그리고 그래서 계획 한계를 조여도 안 된다
 
@@ -1958,10 +1958,10 @@ npz 의 `grasps[1]` 이 `[-0.1085 0.0192 0.0632]` 로 일치한다.
 
 ### 도구
 
-`test_grasps_in_isaac_opus.py` 에 `WAIST_HISTORY` 를 추가했다. 프레임 120 부터 5프레임마다
+`test_grasps_in_isaac_wb.py` 에 `WAIST_HISTORY` 를 추가했다. 프레임 120 부터 5프레임마다
 허리 3관절의 명령·실측·속도·`applied_torque` 를 찍는다. 스냅샷 하나로는 상한에 눌린 관절과
 명령 주위로 진동하는 관절을 구분할 수 없어서(waist 는 stiffness 5000 / damping 5, ζ≈0.02)
-구간 전체를 읽어야 했다. 출력만 하고 명령값은 바꾸지 않는다. Fable 파일은 건드리지 않았다.
+구간 전체를 읽어야 했다. 출력만 하고 명령값은 바꾸지 않는다. 원본 파일은 건드리지 않았다.
 기록: `results/fable40/waisth_pw35.txt`, `waisth_pw36.txt`.
 
 ## v37 — 상체를 세우면 허리 두 관절은 풀린다. 그런데 그래도 못 잡는다. 허리는 범인이 아니다
@@ -2026,7 +2026,7 @@ w10 cand0 **+2.95 N·m**, pw35 cand1 **+9.88 N·m**. 상한은 50. 허리 위 �
 
 `scratchpad/rollmoment.py` (URDF 질량으로 허리 축 둘레 중력 모멘트를 링크별 분해),
 `scratchpad/whohits.py` (명령 FK로 물체에 가장 가까운 링크 추적). 둘 다 읽기 전용이고
-Fable 파일은 건드리지 않았다. 기록: `results/fable40/test_w10.txt`.
+원본 파일은 건드리지 않았다. 기록: `results/fable40/test_w10.txt`.
 
 ## v37 렌더 결과, 그리고 v37 결론의 철회
 
@@ -2063,7 +2063,7 @@ npz 안의 cuRobo 자기 잔차(`err`)를 닫힘/유지 프레임에서 읽으�
 
 즉 v30–v37에서 게인·effort·close mode·허리 한계·허리 토크·POWER_* 로 갔던 조정은 전부
 **잘못된 단계**를 겨눴다. 실패는 실행이 아니라 **솔버 잔차**다. (도구: `scratchpad/fkgap.py`,
-`grasp/test_grasps_in_isaac_opus.py` 의 `ARM_HISTORY`.)
+`grasp/test_grasps_in_isaac_wb.py` 의 `ARM_HISTORY`.)
 
 ## v38 — 골반과 몸통만 풀어서 잔차를 깎는다
 
@@ -2071,7 +2071,7 @@ Fable의 `build()` docstring이 이 가중치의 양끝을 이미 재 놓았다:
 손목이 17 mm 벗어나고, **전신을 0.005로 풀면 9 mm까지 들어오지만 다리가 뒤로 빠져 무릎
 자세가 한 다리로 서는 자세로 무너진다.** 그래서 docstring이 "마지막 몇 cm"의 공을 돌린 두
 링크(손 위로 기우는 골반과 몸통)만 `PELVIS_W=0.005`로 떼어내고 엉덩이·무릎은 `BODY_W=0.1`에
-남겼다 (내 사본 `grasp/reach_from_pose_opus.py`, 새 환경변수 하나).
+남겼다 (내 사본 `grasp/reach_from_pose_wb.py`, 새 환경변수 하나).
 
 솔버 잔차, 유지 프레임 (mm):
 
@@ -2250,7 +2250,7 @@ right_ankle_roll, right_wrist_roll, right_wrist_yaw` 4개는 Isaac 한계
 있고 테스터는 z 0.032 로 앉힌다 → 모든 영상이 118 mm 위의 물체를 상대로 채점됐다"
 는 **틀렸다. 철회한다.** 두 숫자는 같은 물리 상태다.
 
-근거는 추측이 아니라 페이블이 그 자리에 적어 둔 주석이다.
+근거는 추측이 아니라 이전 세션이 그 자리에 적어 둔 주석이다.
 `test_grasps_in_isaac.py:90-93`:
 
 ```
@@ -2446,9 +2446,9 @@ eff 4000 ->  75.5 mrad   (요구 -901 Nm, 클램프 없음 -> 1000 에서 효용
 간극이 이것으로 닫히면 답은 40배를 쓰는 것이 아니라 **25 Nm 가 버티는 자세로 다시 계획**하는 것이다.
 
 -> **v43 = `ARM_EFFORT=1000`**, 자세는 v42 그대로 재사용(재solve 없음).
-렌더는 knob 하나 때문에 `play_in_cell_opus.py` 로 가지만 교란은 없다:
-`SOLVER_IT/SOLVER_VIT` 기본값 12/4 는 Fable 의 `play_in_cell.py:164-167`, `:328-330`
-하드코딩과 동일하고, 다른 `_opus` 추가분은 전부 env 게이트 + 기본 off 다.
+렌더는 knob 하나 때문에 `play_in_cell_wb.py` 로 가지만 교란은 없다:
+`SOLVER_IT/SOLVER_VIT` 기본값 12/4 는 이전 세션의 `play_in_cell.py:164-167`, `:328-330`
+하드코딩과 동일하고, 다른 `_wb` 추가분은 전부 env 게이트 + 기본 off 다.
 
 ### 오픈소스와의 차이는 차이로만 적는다 (원인으로 적지 않는다)
 
@@ -2477,7 +2477,7 @@ c2~c4 거의 그대로, **c5 tilt 7.8 -> 165.4deg (나빠짐)**. 둘 줄이고 �
    있는 상태로 멈췄다**. 멈춤은 손가락끼리 또는 손바닥에 걸려도 생긴다. `ARM_EFFORT` 가 바꾼 것은
    *어느 후보가* 멈추느냐이지 멈춤의 유무가 아니다(c0 1.47->1.34, c2 1.47->1.32, c3 ->1.46, c5 ->1.43).
    후보 하나를 자기 자신과만 비교하고 나머지 일곱을 보지 않은 잘못이다.
-2. **`box-relative` 를 닫는 순간의 값으로 읽은 것** — `test_grasps_in_isaac_opus.py:570` 의
+2. **`box-relative` 를 닫는 순간의 값으로 읽은 것** — `test_grasps_in_isaac_wb.py:570` 의
    `_bp = box.data.root_pos_w[0]` 는 물체의 *현재* 위치이고, 출력 순서상 `after lift (frame 255)`
    뒤에 찍힌다. v42 의 `[0.669 ...]` 는 들어올리는 동안 망치가 쓸려 나간 뒤의 값이다.
 
@@ -2499,7 +2499,7 @@ Newton/MuJoCo 의 solver iteration 과 **가장 가까운 대응물이지 같은
 ### 그 전에 필요한 것은 knob 이 아니라 계기다
 
 손가락이 망치에 닿기는 하는지를 재는 것이 이 실행 어디에도 없다. 멈춤은 위와 같이 애매하고,
-물체 위치는 밀린 *뒤*만 보여준다. `play_in_cell_opus.py:461-468` 이 IsaacLab 자신의
+물체 위치는 밀린 *뒤*만 보여준다. `play_in_cell_wb.py:461-468` 이 IsaacLab 자신의
 덱스터러스 과제(`dexsuite_kuka_allegro_env_cfg.py:43-56`, `mdp/rewards.py:50-71`, 임계값 `:111`)를
 따른다: 손끝마다 ContactSensor 를 물체로 필터링하고, **엄지 > 1.0 N 이고 마주보는 손가락 하나 > 1.0 N**
 일 때 파지로 친다(관측은 20 N 에서 클립, "contact force in finger tips is under 20N normally").
@@ -2556,7 +2556,7 @@ mimic 관절이 소속 articulation 을 못 찾는 순서로 읽힌다 — 다�
 **원인을 찾았다: 내가 떨어뜨린 환경변수 `FIX_ROOT=1`.**
 
 먼저 내 파일을 무혐의로 만들었다. ae43c0 를 만든 바로 그 백업 바이트
-(`play_in_cell_opus.py.bak`)를 같은 명령으로 돌렸더니 **똑같이 죽었다**
+(`play_in_cell_wb.py.bak`)를 같은 명령으로 돌렸더니 **똑같이 죽었다**
 (`bak_ab.log`: `mimic=12 disjoint=1`). 파일이 아니면 실행 환경이다.
 
 성공한 렌더를 만든 체인 `ae43_chain.sh:45` 이 그 답을 갖고 있었다:
@@ -2566,7 +2566,7 @@ export FIX_ROOT=1 ARM_KP_SCALE=4 CLOSE_MODE=position PD_BODY=1 HAND_KP=40 \
        OBJECT_NO_SLEEP=1 SETTLE_IDLE=400 TEST_VERBOSE=1 TRACE_FRAME=195 ARM_EFFORT=1000
 ```
 
-`FIX_ROOT` 는 `play_in_cell_opus.py:441` 에서
+`FIX_ROOT` 는 `play_in_cell_wb.py:441` 에서
 `ArticulationRootPropertiesCfg(..., fix_root_link=(os.environ.get("FIX_ROOT","0")=="1"))`
 로 들어간다. 접촉 계측용으로 내가 새로 쓴 여섯 개 스크립트는 env 블록을 짧게 다시
 쓰면서 이 export 를 전부 빠뜨렸다. 즉 `fix_root_link=True` -> `False` 가 됐고,
@@ -2582,7 +2582,7 @@ export FIX_ROOT=1 ARM_KP_SCALE=4 CLOSE_MODE=position PD_BODY=1 HAND_KP=40 \
 
 ### 아직 측정하지 못한 것: 손가락이 망치에 닿는가
 
-`play_in_cell_opus.py:461-468` 이 인용하는 dexsuite 기준(엄지 > 1.0 N **및** 마주보는
+`play_in_cell_wb.py:461-468` 이 인용하는 dexsuite 기준(엄지 > 1.0 N **및** 마주보는
 손가락 하나 > 1.0 N, 관측 20 N 클립; `dexsuite_kuka_allegro_env_cfg.py:43-56`,
 `mdp/rewards.py:50-71`, 임계값 `:111`)은 여섯 번 시도해 한 번도 얻지 못했다.
 접촉 리포트가 계속 막히면 **접촉 센서가 전혀 필요 없는 대체 계측**으로 간다:
@@ -2641,11 +2641,11 @@ close 와 lift 구간에는 이미 힘이 없다.
 
 **기하가 그 타이밍을 설명한다.** 테스터의 box-relative(=
 `robot.data.body_pos_w - box.data.root_pos_w`, 월드축, 회전 없음:
-`test_grasps_in_isaac_opus.py:571-580`) 로 v43 의 8 후보 전부에서 엄지끝이 손의
+`test_grasps_in_isaac_wb.py:571-580`) 로 v43 의 8 후보 전부에서 엄지끝이 손의
 최하점이다 — 너클보다 아래로 `c0 15.0 / c1 46.0 / c2 14.0 / c3 25.0 / c4 16.0 /
 c5 31.0 / c6 16.0 / c7 29.0` mm. 한 후보의 우연이 아니라 자세의 성질이다.
 
-원인은 `reach_from_pose_opus.py:608` 한 줄이다:
+원인은 `reach_from_pose_wb.py:608` 한 줄이다:
 
 ```python
 _hookq = _open.copy(); _hookq[[0, 1, 2, 3]] = hook; _hookq[[6, 7, 8, 9]] = 1.064 * hook - 0.045
@@ -2666,7 +2666,7 @@ _hookq = _open.copy(); _hookq[[0, 1, 2, 3]] = hook; _hookq[[6, 7, 8, 9]] = 1.064
 파지 정렬을 측정하지 않는다. `[abs]` 는 강체 원점(z 0.15), `[near]` 는 무게중심
 (z 0.031) — 12 cm 차이. 커밋 `684fdf2` 에서 이미 닫힌 구분이다.
 
-`--walk-only` 도 함정이다. `play_in_cell_opus.py:1257` 이
+`--walk-only` 도 함정이다. `play_in_cell_wb.py:1257` 이
 `"walk-only: 669 frames, stopping before the pick"` 을 찍고 `os._exit(0)` 하지만,
 `:949` 의 주석대로 `--clip-arms` 는 *"클립이 팔까지 담고 있다(cuRobo 리타게터가
 푼 전신 리치)"* 는 뜻이다. reach/close/lift 는 클립의 관절각에 구워져 있고 손가락
@@ -2689,7 +2689,7 @@ _hookq = _open.copy(); _hookq[[0, 1, 2, 3]] = hook; _hookq[[6, 7, 8, 9]] = 1.064
 
 ### v44 의 한 가지 변경
 
-`reach_from_pose_opus.py` 에 `POWER_THUMB_HOOK` (기본 0.0 = 무변경)을 넣어 하강·슬라이드
+`reach_from_pose_wb.py` 에 `POWER_THUMB_HOOK` (기본 0.0 = 무변경)을 넣어 하강·슬라이드
 구간에서 엄지 슬롯 5/10/11 을 `_closed` 의 그 비율만큼 말아 둔다(슬롯 4 는 외전,
 `_open`/`_closed` 둘 다 1.308 이라 제외). v44 = 0.5. 나머지는 v42 해 + v43 의
 `ARM_EFFORT=1000` 그대로, 렌더에 `CONTACT_FORCE=1` 유지.
@@ -2735,11 +2735,11 @@ Nothing has ever HELD, so v33-v45 rendered c0 every time. Measured at the close 
 
 ### Two settings silently off since v33
 
-- `FINGER_COACD` unset -> `play_in_cell_opus.py:581` never ran, so the finger
+- `FINGER_COACD` unset -> `play_in_cell_wb.py:581` never ran, so the finger
   intermediate/distal colliders stayed convex hulls for all 12 renders. Its own print
   cites GraspGenX's `coacd_link_keywords`; v27-v32 had it on. Same failure class as the
   object collider that was a convex hull.
-- The hand-gain block at `play_in_cell_opus.py:173` is gated on `HAND_KD` being set.
+- The hand-gain block at `play_in_cell_wb.py:173` is gated on `HAND_KD` being set.
   No run since v33 set it, so the fingers ran at the default kp 10 / kd 0.2 / effort 30
   (build_reach_reference.py:102). Note the block replaces only `damping` and
   `effort_limit`, never `stiffness` -- so it is not a kp fix either.
@@ -2796,7 +2796,7 @@ wrong; the log mtime refutes that assumption.
 
 What this render alone had:
 
-    play_in_cell_opus.py:254-255   SOLVER_IT defaults to 12, SOLVER_VIT to 4
+    play_in_cell_wb.py:254-255   SOLVER_IT defaults to 12, SOLVER_VIT to 4
     mix46_chain.sh:71-75 exports at script scope, so the render at :102 inherited
     SOLVER_IT=100 SOLVER_VIT=50 -- 8.3x the position iterations, 12.5x the velocity
     iterations.
@@ -2862,7 +2862,7 @@ Corrections to what I wrote earlier today:
   deliberately, to match the twelve renders the pre-registered criterion compared
   against. That was my decision, not an accident.
 * The floor wrap is not something I invented against the open source:
-  `grasp/reach_from_pose_opus.py:477` records it as Sehoon's instruction after
+  `grasp/reach_from_pose_wb.py:477` records it as Sehoon's instruction after
   GraspGen-X's fingertip pinches slipped. What it lacks is any check that the
   pose clears the object. GraspGenX's own filter
   (`graspgenx/utils/collision_filter.py`) would not have caught this either --
@@ -2881,10 +2881,10 @@ Two measurements already in the repository point at one path:
   the whole-body stand-up (+0.000 of 0.36 m), which is why a wrap is needed.
 * The floor wrap cannot be formed without penetrating the handle (above).
 
-`grasp/reach_from_pose_opus.py:490 --regrasp-wrap` does exactly this: take the
+`grasp/reach_from_pose_wb.py:490 --regrasp-wrap` does exactly this: take the
 verified pinch, lift, turn the palm up, let the handle settle into the curled
 fingers, close everything. It was written on 09-28 (`$S/regrasp_chain.sh`) and
-has never run -- no log, no pid. v47 runs it on the `_opus` scripts with the
+has never run -- no log, no pid. v47 runs it on the `_wb` scripts with the
 mix46 physics plus the source's 100/50, tests both turn directions, picks the
 candidate by object-followed rather than defaulting to c0, and renders whichever
 wins regardless of the verdict. Criteria are pre-registered in
@@ -2908,7 +2908,7 @@ a path written 09-28 and never run). Solver at the source's 100/50.
 | stand-up | **-0.262 of 0.35** LOST | **-0.298 of 0.35** LOST |
 
 Held airborne for 180 frames (6 s). Every earlier run reported `object
-followed +0.000`. The failure recorded in `reach_from_pose_opus.py:499-501`
+followed +0.000`. The failure recorded in `reach_from_pose_wb.py:499-501`
 ("fell the moment all fingers and the thumb opened -- hammer: at the cradle")
 did not reproduce: `REGRASP_KEEP=pinch` carried both candidates through it.
 
@@ -2916,7 +2916,7 @@ did not reproduce: `REGRASP_KEEP=pinch` carried both candidates through it.
 the one segment that works.** The lift moves the arm joints and the object
 follows 186 of 186 mm. The stand-up freezes the arm dofs and writes the root
 alone, with the root's linear and angular velocity written as zero
-(`test_grasps_in_isaac_opus.py:293`); the object follows -262 of +350 mm. The
+(`test_grasps_in_isaac_wb.py:293`); the object follows -262 of +350 mm. The
 rise speed is not the difference: 0.236 m/s equals the planner's own
 0.35 m / 1.5 s. I am not asserting the root write is the cause -- the measured
 fact is the asymmetry. `:629` already calls this vertical raise "a stand-in"
@@ -2989,7 +2989,7 @@ than the lift (0.19 m/s) and lost more. The pick is frame-for-frame identical to
 v47 (hold2 f375 `object [-0.28 -0.007 0.296] tilt 121.5 deg`), so the pipeline is
 deterministic and v48's difference really was the wrong hand.
 
-**What the rise probe measured** (`grasp/test_rise_probe_opus.py`, an instrumented
+**What the rise probe measured** (`grasp/test_rise_probe_wb.py`, an instrumented
 copy — the running file was not edited; 11 lines in
 `results/fable40/rise_probe_c0.txt`):
 
@@ -3067,9 +3067,9 @@ A 20× gain increase slowed the fingers by 4 points. The gains are not the cause
 
 ### The measurement that had never been taken
 
-`grep -n "ContactSensor\|net_forces_w\|CONTACT_FORCE" grasp/test_grasps_in_isaac_opus.py` → nothing.
+`grep -n "ContactSensor\|net_forces_w\|CONTACT_FORCE" grasp/test_grasps_in_isaac_wb.py` → nothing.
 The tester issues every HELD/LOST verdict and had **no contact sensing at all**; only the renderer
-had it. Ported `play_in_cell_opus.py`'s `ContactSensor` into `grasp/test_rise_probe_opus.py` and
+had it. Ported `play_in_cell_wb.py`'s `ContactSensor` into `grasp/test_rise_probe_wb.py` and
 re-ran the identical v50 environment. Control: the 0.2 kg object's own weight, 1.96 N.
 
 | phase | net | Σ over 12 right-hand links | largest link |
@@ -3104,7 +3104,7 @@ Same candidate, same scene. Over all 185 sampled frames of the 923-frame render
 (`results/fable40/rg50c0.log`) the twelve-link sum never left 0.00 N and net stayed within
 0.00–10.89 N. The tester reads kilonewtons over the same interval. These two must agree.
 
-One confirmed difference: `OBJ_MAX_DEPEN_VEL` is referenced at `grasp/play_in_cell_opus.py:705` and
+One confirmed difference: `OBJ_MAX_DEPEN_VEL` is referenced at `grasp/play_in_cell_wb.py:705` and
 **nowhere else** (`grep -rn OBJ_MAX_DEPEN_VEL grasp/*.py` returns that one line). The tester never
 applies it. So the second candidate recorded in `v50/note.txt` — *"the 5 m/s depenetration cap is the
 ejector"* — **cannot** explain the tester's kilonewtons, because the tester does not set it.
@@ -3127,7 +3127,7 @@ ejector"* — **cannot** explain the tester's kilonewtons, because the tester do
   `/World/G1/R_.*` to every direct child of `/World/G1`.
 - Why the renderer reads 0.00 N on the identical twelve link names.
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
 
 ---
 
@@ -3162,7 +3162,7 @@ No render spent.
 ### The defect: our own `MIMIC_URDF_RATIO=1` contradicts our own target vector
 
 `MIMIC_URDF_RATIO=1` (set in every chain v47–v52) rewrites the thumb PhysX gearings at
-`grasp/play_in_cell_opus.py:519-565`, from the IsaacLab USD's **−1.6 / −2.4** to the manufacturer
+`grasp/play_in_cell_wb.py:519-565`, from the IsaacLab USD's **−1.6 / −2.4** to the manufacturer
 URDF's **−1.334 / −0.667**:
 
 ```
@@ -3172,7 +3172,7 @@ inspire_hand/gripper.urdf
 ```
 
 The target vector was not rewritten with them. `_closed_one`'s followers `0.8 / 1.2` were derived from
-the old gearings — `0.8 = 1.6 × 0.5`, `1.2 = 2.4 × 0.5` — and Fable's own `stiffen_mimic()` docstring
+the old gearings — `0.8 = 1.6 × 0.5`, `1.2 = 2.4 × 0.5` — and the original own `stiffen_mimic()` docstring
 in `grasp/build_reach_reference.py` records those native gearings as −1 / −1.6 / −2.4. Under the
 gearing actually in force the correct targets are `1.334 × 0.5 = 0.667` and `0.667 × 0.5 = 0.334`.
 
@@ -3181,9 +3181,9 @@ own 0.4 limit. The position drive wins (measured `q` == `target` == 1.2), so the
 jammed for the whole grasp, on the link pair carrying 33.42 N at hold.
 
 v53 changes those two numbers and nothing else, on v51's candidate 138, so the comparison is clean.
-Patched in `grasp/build_reach_reference_opus.py` and the three `_closed` sites of
-`grasp/reach_from_pose_opus.py`, guarded by `MIMIC_URDF_RATIO == "1"`; the three opus testers and
-`play_in_cell_opus.py` were rewired to import the opus reference module, without which the patch
+Patched in `grasp/build_reach_reference_wb.py` and the three `_closed` sites of
+`grasp/reach_from_pose_wb.py`, guarded by `MIMIC_URDF_RATIO == "1"`; the three _wb testers and
+`play_in_cell_wb.py` were rewired to import the _wb reference module, without which the patch
 would have been a no-op.
 
 **Pre-registered falsifier.** If at hold the contact links and forces are unchanged (pinky ≈ 56 N,
@@ -3215,7 +3215,7 @@ So `0.8 / 1.2` were never driven "because `_closed_one` said so", and the patch 
 was a no-op in every path. The v53 chain was killed at its solve, before it spent a render.
 
 **What the same reading did establish, by measurement.** `MIMIC_URDF_RATIO` is implemented in
-`grasp/play_in_cell_opus.py:545-564` and `grasp/thumb_free_opus.py:83` and **nowhere else**
+`grasp/play_in_cell_wb.py:545-564` and `grasp/thumb_free_wb.py:83` and **nowhere else**
 (`grep -rn MIMIC_URDF_RATIO grasp/*.py`). The chain exports it to the tester too, and the tester
 ignores it. Measured at hold, same candidate, same scene:
 
@@ -3226,8 +3226,8 @@ ignores it. Measured at hold, same candidate, same scene:
 
 Since v47 every tester verdict has been measured on a thumb driven 1.8× further than the render's,
 past the URDF's own 0.4 limit. That is one concrete piece of the long-open "render and tester
-disagree" item. The render's block is now ported verbatim into `test_grasps_in_isaac_opus.py` and
-`test_rise_probe_opus.py`.
+disagree" item. The render's block is now ported verbatim into `test_grasps_in_isaac_wb.py` and
+`test_rise_probe_wb.py`.
 
 ### v53, actually: `thumb_proximal_pitch` 0.5 → 0.6
 
@@ -3235,7 +3235,7 @@ Two sources, both already in the tree:
 
 - `gripper_descriptions/assets/x_grippers/inspire_hand/config.json` `"close"` gives this hand's
   thumb pitch as **0.6**. We have driven 0.5.
-- `grasp/play_in_cell_opus.py:532`, Fable's transcription of the URDF:
+- `grasp/play_in_cell_wb.py:532`, the original transcription of the URDF:
   `thumb_proximal_pitch_joint (master) limit 0 .. 0.6` — 0.6 is the mechanical stop.
 
 Because `soft_mimic` derives both followers from the master, this one number moves the whole
@@ -3317,14 +3317,14 @@ f233 이후 x, y 성분이 `-0.82, 1.93` 으로 **고정**이고 z 만 프레임
 
 원심력은 아니다: turn 은 60 프레임에 150° = 1.31 rad/s, r ≈ 0.15 m → 0.26 m/s², g 의 3 %.
 그리고 turn 은 `Tl @ Rx` 로 손목 **위치는 고정**하고 자세만 돌린다
-(`reach_from_pose_opus.py:508-527`). 회전 내내 손가락 목표는 `_closed` 고정이다.
+(`reach_from_pose_wb.py:508-527`). 회전 내내 손가락 목표는 `_closed` 고정이다.
 
 한 프레임에 완성된 속도가 생기는 것은 접촉력이 아니라 솔버가 관통을 밀어낸 서명이다.
 **단 어느 링크와 관통했는지는 아직 측정하지 않았다 — 추정이다.**
 
 ### 4. 계측기 불일치가 또 있다: OBJ_MAX_DEPEN_VEL 은 렌더에만 있다
 
-`grep -rn OBJ_MAX_DEPEN_VEL grasp/*.py` → `play_in_cell_opus.py:708` 한 곳뿐.
+`grep -rn OBJ_MAX_DEPEN_VEL grasp/*.py` → `play_in_cell_wb.py:708` 한 곳뿐.
 체인은 테스터에도 `OBJ_MAX_DEPEN_VEL=5` 를 넘기지만 테스터는 읽지 않는다.
 `MIMIC_URDF_RATIO` 와 같은 패턴이다 (그건 v53 에서 이식했다).
 다만 측정된 발사 속도 2.76 m/s 는 5 미만이라, 값 5 를 그대로 이식해도 이 사건은
@@ -3332,7 +3332,7 @@ f233 이후 x, y 성분이 `-0.82, 1.93` 으로 **고정**이고 z 만 프레임
 
 ### 이전 관측과의 충돌
 
-`reach_from_pose_opus.py:500` 의 주석은 이렇게 적고 있다:
+`reach_from_pose_wb.py:500` 의 주석은 이렇게 적고 있다:
 
 > `-150 deg: the tool rode through the turn, then fell the moment all fingers and the thumb opened (hammer: at the cradle)`
 
@@ -3373,7 +3373,7 @@ otherwise the object slips out (premature lift)."
 1.47 rad 를 0.25 rad/s 로 닫으려면 176 프레임(실측 151)이 드는데 일정은 60 을
 준다. 모자란 91 프레임이 이 실패의 크기다.
 
-조치: `grasp/build_reach_reference_opus.py` 에 `HOLD_AFTER_CLOSE` 를 넣었다.
+조치: `grasp/build_reach_reference_wb.py` 에 `HOLD_AFTER_CLOSE` 를 넣었다.
 v55 는 120 프레임으로 돌고 있고, 로그가 간격 60 → 180 을 확인해 준다
 (`hands close at frame 519 ... lift from 699`).
 
@@ -3394,7 +3394,7 @@ v55 는 120 프레임으로 돌고 있고, 로그가 간격 60 → 180 을 확�
   보고한다. 둘 중 하나는 접촉을 보지 못하고 있다. 원인 미상.
 - v48 폴더가 없다 (v47 다음이 v49).
 
-### 후보 선택 규칙을 고쳤다 (`grasp/pick_best_opus.py`)
+### 후보 선택 규칙을 고쳤다 (`grasp/pick_best_wb.py`)
 
 체인은 HELD 가 없을 때 `max(object followed)` 로 후보를 골랐다. 그런데 기립에서
 물체가 "따라온 양"은 물체가 손에 있을 때만 뜻이 있다. 이미 바닥에 떨어진 물체는
@@ -3494,7 +3494,7 @@ f630/f660 에 물체를 놓쳤다. v55 는 f705~f925 를 실어 갔다 — 약 2
 
 **왜 변화가 없었나 (코드로 확인, 추측 아님)**
 - 렌더는 `FIX_ROOT=1` → `spawn(..., fix_root_link=True)`
-  (`play_in_cell_opus.py:461,469`). 펠비스가 월드에 고정 조인트로 붙는다.
+  (`play_in_cell_wb.py:461,469`). 펠비스가 월드에 고정 조인트로 붙는다.
 - `write_root_state_to_sim` 은 13개를 pose/velocity 로 쪼개고
   (IsaacLab `articulation.py:370-371`), 속도는 `set_root_velocities` 로 간다(`:551`).
 - 고정 베이스 articulation 에는 루트 속도 자유도가 없다. PhysX 가 그 값을 버린다.
@@ -3507,7 +3507,7 @@ f630/f660 에 물체를 놓쳤다. v55 는 f705~f925 를 실어 갔다 — 약 2
 통과한 거짓이다.
 
 **v57 — 숫자가 지목하는 다음 하나**
-- 물리 dt = 1/1000 s (`play_in_cell_opus.py:109`) → 30 fps 프레임당 **33 서브스텝**.
+- 물리 dt = 1/1000 s (`play_in_cell_wb.py:109`) → 30 fps 프레임당 **33 서브스텝**.
 - 루트는 프레임당 **한 번** 쓴다(`:1131`). 펠비스가 1 ms 에 14.53 mm 를 건너뛰고
   나머지 32 ms 는 정지. 순간 **14.5 m/s**.
 - 손가락 `contact_offset = 0.002`(`:261`). 한 스텝에 접촉 여유의 **7 배**를 밀어넣는다.
@@ -3550,13 +3550,13 @@ v57 은 물체가 손목 기준으로 100 mm 내려갔다. 손이 내려간 게 
 
 **아직 맞지 않는 숫자 하나 (v58 과 무관하게 따로 풀 것)**: 마찰은 이미 원본과
 같다 — object mu 10, finger mu 3, `friction_combine_mode="max"`
-(`play_in_cell_opus.py:608-613`; 로그 `[play] finger pads mu 3.0, object mu 10.0`).
+(`play_in_cell_wb.py:608-613`; 로그 `[play] finger pads mu 3.0, object mu 10.0`).
 유효 mu 10 × 수직력 550 N = 마찰 용량 5500 N 인데 0.2 kg 망치에 필요한 건 2 N 이다.
 그런데도 미끄러진다. ⇒ `[force]` 가 재는 550 N 이 물체에 걸린 수직력이 아닐
 가능성이 있다. 이건 노브가 아니라 계측으로 확인한다.
 
 **v58 — 숫자가 지목하는 하나**: GraspGenX 원본 `finger_effort_limit = 200`
-(`dynamic_playback.py:689`), 우리 코드 기본값도 200 (`play_in_cell_opus.py:176`),
+(`dynamic_playback.py:689`), 우리 코드 기본값도 200 (`play_in_cell_wb.py:176`),
 그런데 v55/v56/v57 env 는 `HAND_EFFORT=1000` — 원본의 5 배. 속도 모드에서 조임
 세기를 정하는 건 속도가 아니라 effort limit 이다(로그에 squeeze 1 줄, release 0 줄:
 f519 부터 끝까지 0.25 rad/s 로 계속 닫고, 멈추는 건 물체가 밀어낼 때뿐이다).
@@ -3569,7 +3569,7 @@ f519 부터 끝까지 0.25 rad/s 로 계속 닫고, 멈추는 건 물체가 밀�
 
 **정정 (같은 날 14:38)**: 위에서 "`[force]` 가 재는 550 N 이 수직력이 아닐
 가능성"이라고 적은 것은 제 오독이었고, 로그가 답을 이미 갖고 있었다.
-`[force]` 줄은 net / sum / max 를 따로 찍는다(`play_in_cell_opus.py:754-778`).
+`[force]` 줄은 net / sum / max 를 따로 찍는다(`play_in_cell_wb.py:754-778`).
 550 N 은 **sum**, 링크별 접촉력 크기의 합 = 조임 세기다. 물체에 걸린 알짜힘
 **net** 은 홀드 구간에서 f790 0.02 / f800 1.88 / f850 3.77 / f880 0.27 N —
 망치 무게 1.96 N 수준이다. 반대편 손가락이 300 N 씩 서로 상쇄한다.
@@ -3588,7 +3588,7 @@ v58 을 `[eval]` 까지 기다리지 않고 env 와 코드를 맞춰 본 결과,
 변경(`HAND_EFFORT` 1000→200)은 실행에 도달하지 않는다.** v56 의 `ROOT_VEL` 과
 같은 종류의 무효 변경이다.
 
-- `HAND_EFFORT` 의 유일한 사용처는 `play_in_cell_opus.py:176` 이고, 그 블록의
+- `HAND_EFFORT` 의 유일한 사용처는 `play_in_cell_wb.py:176` 이고, 그 블록의
   진입 조건은 `HAND=inspire and HAND_KD`(`:173`)다.
 - 살아 있는 렌더 프로세스(2017980)의 환경을 덤프했다: `CLOSE_KD=800` 은 있고
   **`HAND_KD` 는 없다**. 따라서 블록은 실행되지 않는다.
@@ -3597,7 +3597,7 @@ v58 을 `[eval]` 까지 기다리지 않고 env 와 코드를 맞춰 본 결과,
 - f520–f580 의 `[force]` net/sum/max 가 v57 과 v58 에서 **완전히 동일**하다.
 
 **그러면 실제 손가락 effort limit 은 얼마인가**: `robot_cfg()` 의 hands 액추에이터가
-`effort_limit=30.0`(`build_reach_reference_opus.py` robot_cfg)이다. v53–v58 전부 30 이다.
+`effort_limit=30.0`(`build_reach_reference_wb.py` robot_cfg)이다. v53–v58 전부 30 이다.
 `HAND_EFFORT=1000` 은 한 번도 적용된 적이 없다.
 
 **방향이 뒤집힌다.** v57 note 에 적은 "원본의 5 배라 과하게 조인다"는 전제가 무너진다.
@@ -3900,7 +3900,7 @@ f900  q      [1.09 1.7  1.7  1.7  1.30 0.00 0.46 1.7 1.7 1.7 -0.16 -0.14]
 `R_thumb_proximal_pitch` 는 닫힘(f519)부터 상실(f925)까지 **q 0.000 rad** 로
 목표 0.6 에 대해 한 번도 움직이지 않았다. 물체가 막은 것이지 구속이 막은 것이
 아니다 — v14 에서 같은 관절이 물체가 사라지자 30프레임 만에 0.5 rad 에 도달했다
-(play_in_cell_opus.py 의 기존 주석에 기록됨). 즉 엄지는 HAND_EFFORT 가 허락하는
+(play_in_cell_wb.py 의 기존 주석에 기록됨). 즉 엄지는 HAND_EFFORT 가 허락하는
 30 N·m 로만 눌렀다.
 
 배제한 것 (추측이 아니라 확인):
@@ -4027,7 +4027,7 @@ HOLD_AFTER_CLOSE 자체는 유효했다(슬립 4.7배 감소). 그런데 리프�
 
 ### 원인
 
-`reach_from_pose_opus.py:503` `REGRASP_KEEP=pinch`(기본)가 index 와 엄지의 핀치를 끝까지
+`reach_from_pose_wb.py:503` `REGRASP_KEEP=pinch`(기본)가 index 와 엄지의 핀치를 끝까지
 유지한다. 그래서 손잡이는 손끝 핀치에 잡힌 채 남고, 열렸다 닫히는 middle/ring/pinky 는
 빈 공간에 닫혀 한계까지 박힌다. **감싸기는 형성된 적이 없다.**
 같은 파일 478행이 세훈님 지적을 그대로 적어두고 있다 — "이건 잡는 게 아니라 집는 거잖아".
@@ -4085,7 +4085,7 @@ knob 변경 없이 동일 명령으로 렌더만 재실행($S/v65_render2.sh, ti
 두 로그의 유일한 차이는 f995 의 `target` 출력(1.47 vs 1.17)이다. 측정값은 하나도 다르지 않다.
 
 ### 원인 (소스 확인)
-`grasp/play_in_cell_opus.py:1111-1119`, `CLOSE_MODE=velocity`:
+`grasp/play_in_cell_wb.py:1111-1119`, `CLOSE_MODE=velocity`:
 
     _want = max|hands[frame] - hands[0]| > 1e-6
     _want True  -> write_joint_stiffness_to_sim(0.0); set_joint_velocity_target(CLOSE_VEL)
@@ -4180,7 +4180,7 @@ v65 와 환경변수 하나(`GRIP_EFFORT=1000 GRIP_EFFORT_FRAME=1020` 제거)만
 
 net: v65 f1025 1319 N → f1080 4081 N / v67 f1020–f1090 내내 46–250 N.
 물체-손바닥: v65 154 → 206 mm / v67 151–158 mm 고정. `dexsuite_good` v67 은 f1090 까지 True.
-같은 기전이 소스에 이미 있었다 — `play_in_cell_opus.py:1136` "v59 raised HAND_EFFORT to 200
+같은 기전이 소스에 이미 있었다 — `play_in_cell_wb.py:1136` "v59 raised HAND_EFFORT to 200
 globally AT CLOSE TIME and the close impulse ejected the object."
 
 ### 손실 지점은 기립 f1095 로 옮겨갔다
@@ -4199,7 +4199,7 @@ globally AT CLOSE TIME and the close impulse ejected the object."
 ### 확정된 것
 1. velocity 모드에서 재파지는 v66 전까지 실행된 적이 없다.
 2. 재파지를 실행하면 개방 5프레임 만에 떨어진다 — 파지 순간부터 물체가 손바닥에서 136 mm
-   떨어진 손끝에 있고, 이는 `play_in_cell_opus.py:481` 의 sweep volume 11.8–13.5 cm 와 일치한다.
+   떨어진 손끝에 있고, 이는 `play_in_cell_wb.py:481` 의 sweep volume 11.8–13.5 cm 와 일치한다.
    후보 선택으로 줄일 수 있는 값이 아니다.
 3. effort 한계를 30 → 1000 Nm 로 올리면 접촉력 9 kN, 물체 2.8 m 사출 (v65 vs v67).
 4. 30 Nm 만으로 파지는 f519–f1090, 570 프레임 유지된다 (v67).
@@ -4210,8 +4210,8 @@ globally AT CLOSE TIME and the close impulse ejected the object."
 세훈님 지시 "67버전까지만해" 로 렌더는 v67 에서 멈춰 있다. 돌고 있는 프로세스 없음, GPU 20 MiB.
 다음 세션이 이어서 하려면 없으면 안 되는 것이 세션 임시폴더에만 있었다.
 
-- `rise_reference.py` (46줄) → **`grasp/rise_reference_opus.py`** 로 커밋.
-  렌더 3단계 중 2단계(`build_reach_reference_opus` 다음, `play_in_cell_opus` 앞)가 이 파일을 쓴다.
+- `rise_reference.py` (46줄) → **`grasp/rise_reference_wb.py`** 로 커밋.
+  렌더 3단계 중 2단계(`build_reach_reference_wb` 다음, `play_in_cell_wb` 앞)가 이 파일을 쓴다.
   v65/v66/v67 의 `results/motion/rg6Nc0r.pkl` 은 전부 이 스크립트가 만든 것이다.
 - v65/v66/v67 의 실행 스크립트 → 각 `vN/evidence/` (`run.sh`, v65 는 `run_solve.sh` + `run_render2.sh`).
   `results/` 는 gitignore 이므로 이것이 실행 인자·환경변수의 유일한 내구 기록이다.
@@ -4219,7 +4219,7 @@ globally AT CLOSE TIME and the close impulse ejected the object."
   → `할일/26/09/260930/도구_260929/`.
 - 인계 메모 → `할일/26/09/260930/이어서_진행_g1-factory-tidy.md`.
 
-코드 동작 변경은 없다. `grasp/rise_reference_opus.py` 는 기존 파일의 사본이고 import 되는 곳이 아직 없다
+코드 동작 변경은 없다. `grasp/rise_reference_wb.py` 는 기존 파일의 사본이고 import 되는 곳이 아직 없다
 (스크립트에서 경로로 호출된다).
 
 ## 260930 11:15 — v68: 손가락 effort 30 → 10 Nm (GraspGenX Inspire URDF effort="10"). LOST, 같은 자리
@@ -4280,7 +4280,7 @@ f1095 발산 원인 미확인. 제외 목록에 추가: 손가락 effort 10 Nm(v
 - 결론: SONIC 부유 베이스로 걷기·무릎·기립은 물리로 된다. 파지를 막는 것은 걷는 동안 쌓인 루트 xy 오차. 원인 미확인.
 - 다음 한 가지: gear_sonic_deploy 원본의 참조 앵커링(전역 위치 오차 처리)을 읽고 sonic_control.py 포트와 비교.
 
-## 260930 15:20 — v74~v78 정리와 오픈소스 재독 (Fable)
+## 260930 15:20 — v74~v78 정리와 오픈소스 재독 
 
 | 버전 | 변경 하나 | 결과 |
 |---|---|---|
@@ -4298,7 +4298,7 @@ v72 의 손실 f1085→1090 = 기립 클립 fable40carry 가 일어나면서 동
 
 v79 = v72 env 그대로 + 기립 클립만 --rise-first 2 로 재생성(rg79c0r: 기립 중 xy 이동 3 mm, 수직 0.16 m/s).
 
-## 260930 15:50 — 공부 결과: 파지는 처음부터 "잡힌 상태"가 아니었다 (Fable, 새 시리즈 fable/v1 의 근거)
+## 260930 15:50 — 공부 결과: 파지는 처음부터 "잡힌 상태"가 아니었다 (새 시리즈 fable/v1 의 근거)
 
 ### v72 로그 재구성 (5프레임 샘플, evidence/render.log)
 | 항목 | 측정 |
@@ -4370,14 +4370,14 @@ v79 = v72 env 그대로 + 기립 클립만 --rise-first 2 로 재생성(rg79c0r:
   **파지·들어올리기·기립 성공**. 선 직후 f1420~1445 앞으로 넘어짐(x -0.7→-1.5 m, z 0.23), 손은 끝까지 접촉(187~260 N). 빈손 v3·v4 도 같은 자리에서 달려나감.
 - v6 (f1371 인계 때 SonicTracker.prime 으로 이력 재초기화): 동일하게 f1415~1425 붕괴([eval] HELD — 망치를 쥔 채 누움). 이력만의 문제가 아님.
 - v1·v2(다리 인계 없음)는 같은 기립 클립으로 서 있었다 → 인계 순간의 자세(직접 구동이 만든 기울고 낮은 골반)에서 정책이 곧바로 기립 참조를 받는 것이 원인 후보.
-- v7: 인계를 f1300(정지 무릎, 기립 71프레임 전)으로. v8(준비됨): 운반 걷기(walk_clip --from-clip --stand place_target.json) + 크레이트 위 도달(--place, GraspGenX 낙하 높이 0.30) + 정지 1 s + 열기(carry_place_reference_opus.py).
+- v7: 인계를 f1300(정지 무릎, 기립 71프레임 전)으로. v8(준비됨): 운반 걷기(walk_clip --from-clip --stand place_target.json) + 크레이트 위 도달(--place, GraspGenX 낙하 높이 0.30) + 정지 1 s + 열기(carry_place_reference_wb.py).
 - v7 (인계 f1300, 정지 무릎에서 70프레임 뒤 기립): 인계·유지 정상(접촉 234~250 N), 기립 중반 f1410~1425 에 또 앞으로 붕괴(이번엔 물리 폭주).
   v3~v7 공통: 기립 클립 중반(골반 z≈0.5)에서 앞으로 쏠림; v1·v2 는 같은 클립으로 섰다. 직접 구동 뒤의 자세(골반 10° 전경, 6 cm 낮음)가 K3 무릎에서
   만든 기립 클립과 맞지 않는다. v8: 기립 클립을 기립 직전 측정 자세(f1369, 영상 모드 덤프)에서 다시 만든다.
 
 ## 260930 19:30 — v8: 망치를 쥔 채 일어나 서 있다 ([eval] HELD, dz +0.75 m)
 - v8 = v7 + 기립 클립을 기립 직전 측정 자세(f1369, 영상 모드 덤프: 골반 (0.255,0.016,0.379), pitch -7°, 허리 0.50)에서 다시 만듦
-  (clip_tools from_state → walk_clip --from-clip --rise-first 2 → 64f → rise_reference_opus RISE_SLOW 2).
+  (clip_tools from_state → walk_clip --from-clip --rise-first 2 → 64f → rise_reference_wb RISE_SLOW 2).
 - 결과: 인계 f1300 정상, 기립 f1371~1425 접촉 유지, 이후 f1477 까지 골반 z 0.77~0.79 로 서 있음, 접촉 206~254 N, 물체 z 0.9. 기립 중 앞으로 약 1.1 m 발을 내디뎌 균형을 잡음.
 - 1차 렌더는 f75 에서 정지(CPU 회전, 프레임 불변 6분; v68 과 같은 증상) → 같은 입력으로 재실행해 정상.
 - 확정: v3~v7 붕괴 원인은 기립 클립의 시작 자세 불일치. SONIC 학습 종료 조건(anchor 자세 오차 ~26°, 리셋 잡음 ±0.1)과 배포 INIT(측정→기본 자세 3 s 램프)이 말하듯,
@@ -4387,7 +4387,7 @@ v79 = v72 env 그대로 + 기립 클립만 --rise-first 2 로 재생성(rg79c0r:
 - 다음 v9: 서 있는 측정 자세(f1476 덤프 중)에서 운반 걷기 → 크레이트 위 도달(--place, 낙하 높이 0.30) → 정지 1 s → 열기.
 
 ## 260930 20:10 — v9: 망치를 쥔 채 걷고, 크레이트 위 자세에서 놓기까지 됐지만 0.9 m 떨어진 곳
-- v9 = v8 + 운반(측정 서 있는 자세 f1476 에서 walk_clip --from-clip --stand place_target.json) + --place(테두리+0.30) + 정지 30f + 열기 10f(carry_place_reference_opus).
+- v9 = v8 + 운반(측정 서 있는 자세 f1476 에서 walk_clip --from-clip --stand place_target.json) + --place(테두리+0.30) + 정지 30f + 열기 10f(carry_place_reference_wb).
 - 걷는 동안 접촉 207~231 N 유지, 열기 뒤 물체가 곧게 낙하 → 놓기 절차 정상. 도착 (-1.058,0.146) vs 스탠드 (-1.224,-0.768): 0.93 m 짧음(SONIC 이 1.2 m·방향전환 걷기의 30~40% 실행).
 - v10: 도착 자세(f1620 덤프)에서 걷기 재계획 → 영상 모드 측정 → 측정 자세에서 place 재계획 → 렌더 (망치 도달과 같은 절차).
 
@@ -4417,7 +4417,7 @@ v79 = v72 env 그대로 + 기립 클립만 --rise-first 2 로 재생성(rg79c0r:
 - 걷기: 목표를 로봇→설 자리 방향으로 2.0배 늘리자 SONIC 이 설 자리 0.28 m 앞(-1.215,-0.49)에 서서 멈췄다(f1680~1740, 접촉 184~200 N 유지). 17~40% 실행이 목표 연장으로 흡수됐다.
 - place: 운반 자세(손목 z 0.89, 테두리 0.926 아래)에서 투하점(테두리+0.12)까지 직선으로 풀린 궤적이 테두리·책상 모서리를 가로질렀고, 정책 다리가 상체를 따라 2.6 m 걸어 나가며 망치를 놓쳤다([eval] LOST, 끝 위치 (0.42,1.06)).
 - 버그: `DUMP_STATE_AT` 의 중간 덤프를 실행 끝 덤프가 덮어써서 v9~v14 의 "걷기 끝 상태"는 실제로 실행 끝 상태였다. `*_end.json` 으로 분리(커밋 b8fc543).
-- v15: 걷기 끝을 영상 모드로 재측정하고, place 를 GraspGenX PickAndDropInBinTask 순서(수직 상승 → 정지 → 수평 이동, 투하 높이 테두리+0.30)로 푼다(`reach_from_pose_opus.py --place`, `PLACE_GRASPGEN=1`).
+- v15: 걷기 끝을 영상 모드로 재측정하고, place 를 GraspGenX PickAndDropInBinTask 순서(수직 상승 → 정지 → 수평 이동, 투하 높이 테두리+0.30)로 푼다(`reach_from_pose_wb.py --place`, `PLACE_GRASPGEN=1`).
 
 ## 2026-10-01 00:15 — v15: 바닥 망치 → 집기 → 기립 → 운반 → 크레이트에 넣기까지 한 렌더에서 (HELD, 크레이트 안)
 
@@ -4428,19 +4428,19 @@ v79 = v72 env 그대로 + 기립 클립만 --rise-first 2 로 재생성(rg79c0r:
 
 ## 2026-10-01 02:20 — 드릴 v1: 접근·무릎·도달은 성립, 파지 #37 이 손잡이를 밀어냄 (LOST)
 
-- 체인 `grasp/floor_to_crate_chain_opus.sh`(망치 v1~v15 절차) 첫 실행. 바로잡은 것: (1) 걷기 패스에 `--hands` 가 없으면 손 충돌이 켜져 몸이 10 m 날아감; (2) 짧은 접근 걷기(0.5 m)는 SONIC 이 전혀 실행하지 않고(모드 1·2 동일, 0.51→0.55→0.56 m) 가산 보정은 발산(0.31→0.55) → v14 규칙(목표 2배 연장)으로 한 구간에 0.56→0.137 m; (3) 0.13 m 만 걷고 꿇으면 스쿼트(z 0.483), 0.33 m 걷고 꿇으면 양무릎(z 0.376) — 정책은 걸은 뒤에만 무릎을 꿇는다; (4) 무릎 오차는 옮긴 목표가 아니라 원래 스탠드 기준으로.
+- 체인 `grasp/floor_to_crate_chain_wb.sh`(망치 v1~v15 절차) 첫 실행. 바로잡은 것: (1) 걷기 패스에 `--hands` 가 없으면 손 충돌이 켜져 몸이 10 m 날아감; (2) 짧은 접근 걷기(0.5 m)는 SONIC 이 전혀 실행하지 않고(모드 1·2 동일, 0.51→0.55→0.56 m) 가산 보정은 발산(0.31→0.55) → v14 규칙(목표 2배 연장)으로 한 구간에 0.56→0.137 m; (3) 0.13 m 만 걷고 꿇으면 스쿼트(z 0.483), 0.33 m 걷고 꿇으면 양무릎(z 0.376) — 정책은 걸은 뒤에만 무릎을 꿇는다; (4) 무릎 오차는 옮긴 목표가 아니라 원래 스탠드 기준으로.
 - 픽: 무릎 재현 1 mm, 손목 도달 2.5 cm, 그러나 손가락이 닫히며 드릴을 4~5 cm 밀어냈다(접촉 0). 파지 선택에 물리 시험이 없었던 것이 원인(망치는 체인 7단계 test_grasps_in_isaac 로 #48 HELD 를 골랐다). v2 는 10 mm 미만 18개를 순서대로 물리 시험해 첫 HELD 를 쓴다.
 
 ## 2026-10-01 03:40 — 드릴 v2: 파지 후보 0/77 (테스터), 원인은 손끝 바닥 여유 규칙과 먼 무릎
 
 - 테스터(test_grasps_in_isaac)는 FIX_ROOT=1 이 필요하다(articulation; 기억 isaac-runs-must-be-serial). 그 뒤 10 mm 미만 17개 + 15 mm 미만 77개 전부 LOST, 들림 +0.000 — 손이 물체에 닿지 않는다. 모든 후보에서 손바닥이 드릴 중심(z 0.029) 위 20~26 cm, 열린 손끝이 6~8 cm(드릴 윗면 6 cm).
-- 두 원인: (1) `reach_from_pose_opus` 의 열린 손끝 바닥 여유(FLOOR_CLEAR 0.005 + TIP_FLESH 0.04 = 4.5 cm, Dex3 엄지 살 기준)가 드릴 파지를 접근축으로 18~190 mm 물린다. 09-28 에 HELD 였던 #57 의 손목 자세 (-0.201,0.051,0.174) 는 여유 0 으로 풀 때만 재현된다((-0.197,0.053,0.169)). 망치는 손잡이가 떠 있어 같은 규칙으로도 #48 이 잡혔다. (2) 측정 무릎 골반 (0.195,-0.085) 이 09-28 (0.083,-0.02) 보다 물체에서 10 cm 멀어 여유 0 의 #57 도달 오차가 24.6 mm(09-28: 3.7).
+- 두 원인: (1) `reach_from_pose_wb` 의 열린 손끝 바닥 여유(FLOOR_CLEAR 0.005 + TIP_FLESH 0.04 = 4.5 cm, Dex3 엄지 살 기준)가 드릴 파지를 접근축으로 18~190 mm 물린다. 09-28 에 HELD 였던 #57 의 손목 자세 (-0.201,0.051,0.174) 는 여유 0 으로 풀 때만 재현된다((-0.197,0.053,0.169)). 망치는 손잡이가 떠 있어 같은 규칙으로도 #48 이 잡혔다. (2) 측정 무릎 골반 (0.195,-0.085) 이 09-28 (0.083,-0.02) 보다 물체에서 10 cm 멀어 여유 0 의 #57 도달 오차가 24.6 mm(09-28: 3.7).
 - v3: 여유 0 + 무릎 라운드 k2(원래 스탠드 기준 오차로 목표 보정) → 재풀이 → 테스터 → 픽.
 
 ## 2026-10-01 05:30 — 드릴 v3: 여유 0·무릎 보정에도 테스터 0/25; 결정적 비교 — 09-28 의 입력 그대로도 오늘 테스터는 0/5
 
 - k2 무릎(스탠드 0.099 m, z 0.376)에서 여유 0 으로 푼 도달: #37 손목 (-0.178,0.032,0.202) = 09-28 HELD 자세. 그런데 테스터 LOST, 들림 0.000. thumb_first·질량 0.5·USD gearing 으로도 0.
-- 09-28 의 플래너 무릎(fable42k) + 09-28 reach_all(cuRobo 3~4 mm)을 오늘의 테스터에 넣어도 0/5. 테스터 코드는 태그 fable-260928-preserved 와 동일(493줄, diff 없음).
+- 09-28 의 플래너 무릎(fable42k) + 09-28 reach_all(cuRobo 3~4 mm)을 오늘의 테스터에 넣어도 0/5. 테스터 코드는 태그 preserved-260928 와 동일(493줄, diff 없음).
 - 결론: 오늘의 테스터 판정은 09-28 저녁에 추가된 기립 시험(TEST_RISE 0.35 m)에서 나온다. 드릴의 손끝 핀치는 09-28 에도 이 시험을 통과한 적이 없다(09-28 drill v4: 픽 +11 cm, 기립에서 이탈). 09-28 v3 의 "13/40 HELD" 는 기립 시험 이전의 들기 판정이다.
 - 테스터 상세(#37): 손가락이 0.87~0.97 rad 에서 드릴에 막혀 멈춤, 손바닥은 중심에서 손잡이 쪽 10.6 cm·18 cm 위 — 손잡이 위를 누르는 핀치.
 - v4: 후보 선택을 들기 판정(TEST_RISE=0)으로 되돌리고, 기립은 v8 절차(측정 자세 기립·RISE_SLOW 2·hold 100)에 맡겨 렌더로 본다. 이탈하면 v5 는 09-28 의 --regrasp-wrap.
@@ -4448,9 +4448,9 @@ v79 = v72 env 그대로 + 기립 클립만 --rise-first 2 로 재생성(rg79c0r:
 ## 2026-10-01 05:45 — 드릴 v4: 들기 판정으로 고른 #72 도 렌더 LOST; 원인은 실행 손이 계획보다 2.7 cm 높은 것
 
 - 기립 시험을 끈 테스터(TEST_RISE=0): 4/25 들림(#76 +139, #72 +142, #8 +129, #10 +133 mm). #72 로 렌더: 손가락이 닫히며 드릴을 로봇 쪽으로 10 cm 끌고 손바닥 옆에 둔 채 들지 못함.
-- `grasp/hand_error_opus.py`(닫기 직전 손목-물체 상대 위치 vs 계획): 오차 [-0.006,-0.001,+0.027] — 거의 전부 위쪽 2.7 cm. 테스터(운동학 몸)는 오차 0 이라 같은 파지를 든다. 닫는 속도는 둘 다 ~0.5 rad/s 로 같다.
+- `grasp/hand_error_wb.py`(닫기 직전 손목-물체 상대 위치 vs 계획): 오차 [-0.006,-0.001,+0.027] — 거의 전부 위쪽 2.7 cm. 테스터(운동학 몸)는 오차 0 이라 같은 파지를 든다. 닫는 속도는 둘 다 ~0.5 rad/s 로 같다.
 - v5: 같은 파지, 물체 자세를 오차만큼 반대로 옮겨 도달 재풀이(`OBJECT_NOW_OVERRIDE`) — 걷기·무릎의 측정 오차 보정을 손에 적용. 마지막 시도.
-- 사고: v4 체인이 영상 복사 직전 bash 문법 오류로 죽음 — 실행 중인 `floor_to_crate_chain_opus.sh` 를 편집했기 때문(bash 는 스크립트를 읽어 가며 실행). 영상은 수동 복사. 이후 체인은 `evidence/run.sh` 사본으로 실행.
+- 사고: v4 체인이 영상 복사 직전 bash 문법 오류로 죽음 — 실행 중인 `floor_to_crate_chain_wb.sh` 를 편집했기 때문(bash 는 스크립트를 읽어 가며 실행). 영상은 수동 복사. 이후 체인은 `evidence/run.sh` 사본으로 실행.
 
 ## 2026-10-01 06:10 — 드릴 v5: 손 오차만큼 물체 자세를 낮춰 재풀이 → 픽 HELD (+9.2 cm), 드릴의 첫 들어올림
 

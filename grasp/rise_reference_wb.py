@@ -2,7 +2,7 @@
 
     python rise_reference.py PICK.pkl PICK_hands.npy CARRY.pkl OUT_NAME
 
-Same construction as Fable's build_place_reference.py:54-79 (read, not guessed):
+Same construction as the original build_place_reference.py:54-79 (read, not guessed):
 the carry clip's right arm is replaced by the pick's last arm pose so the hand
 keeps what it holds, the frames in which the pelvis rises are stretched
 RISE_SLOW times, and the segment is blended into the pick's last frame. The

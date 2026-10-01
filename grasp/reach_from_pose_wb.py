@@ -109,7 +109,7 @@ def build():
         for n in loose:
             crit[n] = ToolPoseCriteria.track_position_and_orientation(
                 xyz=[1e-4] * 3, rpy=[1e-5] * 3)
-        print(f"[opus] WRIST_ONLY: {work} at 1.0, feet {hold} at 1.0, "
+        print(f"[wb] WRIST_ONLY: {work} at 1.0, feet {hold} at 1.0, "
               f"{len(loose)} body links at 1e-4")
     cfg = MotionRetargeterCfg.create(robot=os.environ.get("RETARGET_CFG", "unitree_g1_29dof_retarget.yml"),
                                      tool_pose_criteria=crit, num_envs=1,
@@ -524,7 +524,7 @@ def main():
         # REGRASP_KEEP=open (v66): the cradle IS the schedule's open row, every right-hand joint.
         # Measured reason, from rg64c0.log / rg65c0.log: under CLOSE_MODE=velocity the render puts the
         # right fingers at stiffness 0 and a constant closing velocity and only restores position control
-        # when the schedule returns to open -- play_in_cell_opus.py:1111 tests
+        # when the schedule returns to open -- play_in_cell_wb.py:1111 tests
         #   max|hands[frame] - hands[0]| > 1e-6.
         # v65's deepest cradle is 1.20 rad away from open, so that test never flips: both logs contain one
         # transition, "[walk] frame 519: fingers squeeze (velocity)", and no release line. With stiffness 0

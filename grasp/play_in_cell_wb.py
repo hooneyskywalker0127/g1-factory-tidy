@@ -88,7 +88,7 @@ from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics  # noqa: E402
 
 import cell_layout as L  # noqa: E402
 from plan_scene import FINGER_MU, OBJECT_MU  # noqa: E402
-from build_reach_reference_opus import HAND_NAMES, PALM_LINK, HAND_KEEP, robot_cfg, stiffen_mimic, soft_mimic  # noqa: E402
+from build_reach_reference_wb import HAND_NAMES, PALM_LINK, HAND_KEEP, robot_cfg, stiffen_mimic, soft_mimic  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 from plan_scene import (  # noqa: E402
     build as build_plan_scene, torso_pose)
@@ -191,7 +191,7 @@ if os.environ.get("HAND") == "inspire" and os.environ.get("HAND_KD"):
           f"armature {_rep.get('armature', getattr(_hz, 'armature', None))}")
 
 # --- the hand's simulated velocity limit: the asset says 0.5 rad/s -------------
-# Measured in free air (grasp/thumb_free_opus.py): robot.data.joint_velocity_limits prints
+# Measured in free air (grasp/thumb_free_wb.py): robot.data.joint_velocity_limits prints
 # 0.500 rad/s on every Inspire joint and joint_vel saturates exactly there -- +0.50 on the
 # six masters, +0.67/+0.33 on thumb_intermediate/distal (= 0.5 x the URDF's 1.334/0.667
 # through the mimic gearing). SUB=1 saturates at the same 0.50, so it is a real limit, not
@@ -606,7 +606,7 @@ stiffen_mimic(stage)   # HAND=inspire: rigid four-bar fingertips (build_reach_re
 # - offset. The asset's negative gearings therefore drive the followers the same
 # direction soft_mimic's positive table does; only the magnitude is wrong.
 if os.environ.get("HAND") == "inspire" and os.environ.get("MIMIC_URDF_RATIO") == "1":
-    import build_reach_reference_opus as _brr
+    import build_reach_reference_wb as _brr
     _URDF_MULT = {"thumb_intermediate_joint": 1.334, "thumb_distal_joint": 0.667}
     _brr._MIMIC[:] = [(a, b, _URDF_MULT.get(a.split("_", 1)[1], r)) for a, b, r in _brr._MIMIC]
     print("[hand] MIMIC_URDF_RATIO: soft_mimic thumb ratios -> "
