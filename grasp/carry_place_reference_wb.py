@@ -57,6 +57,16 @@ hands = np.tile(wrap, (len(qpos), 1)).astype(np.float32)
 hands[:len(hands_base)] = hands_base
 t0 = len(base) + len(carry) + n_place + settle            # release starts after the settle
 right = np.array([n.startswith(("right", "R_")) for n in HAND_NAMES], bool)
+# RELEASE_THUMB_YAW: the thumb's yaw at the release. GraspGenX holds it at 1.308 open and closed (robot_profiles.py:473/483 --
+# its tasks drop from a pinch over a bin); Isaac Lab's own G1 + Inspire pick-place task opens it to 0
+# (pickplace_unitree_g1_inspire_hand_env_cfg.py:97, ".*_thumb_.*": 0.0). Drill v6: with the yaw left at 1.308 the
+# released drill fell onto the thumb and hung there (1233 N on the thumb, z 1.33 at the end).
+HAND_OPEN = list(HAND_OPEN)
+if os.environ.get("RELEASE_THUMB_YAW") is not None:
+    for _j, _n in enumerate(HAND_NAMES):
+        if _n.startswith(("right", "R_")) and ("thumb_proximal_yaw" in _n or "thumb_0" in _n):
+            HAND_OPEN[_j] = float(os.environ["RELEASE_THUMB_YAW"])
+    print(f"[carry] release thumb yaw -> {os.environ['RELEASE_THUMB_YAW']}")
 for k in range(ramp):
     a = (k + 1) / ramp
     h = wrap.copy(); h[right] = (1 - a) * wrap[right] + a * np.array(HAND_OPEN, np.float32)[right]
