@@ -216,8 +216,25 @@ PY
     WALK_MODE=2 OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_opus.py $M ${TAG}_hold 0 0 0 0 0 0 --from-clip $M/${TAG}_stateRise_clip.pkl --stand $F/${TAG}_hold_here.json --hold-mode 5 --squat-to 0.35 --hold-target --goal-at $F/${TAG}_hold_here.json --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|root height\|Traceback" | while read -r l; do say "  hold: $l"; done
     RISE_FROM=$M/${TAG}_hold.pkl
   fi
+  PRE=""
+  [ "${RISE_STRAIGHTEN:-0}" = "1" ] && PRE="$M/${TAG}_hold.pkl"
+  if [ "${RISE_VIA_ONE_KNEE:-0}" = "1" ]; then
+    # RISE_VIA_ONE_KNEE: the way a person gets up from both knees -- one foot forward first (planner mode 6, kneelOneLeg,
+    # planner_onnx.md:116-125) held 2 s, then the rise from that pose. Sehoon (10-01 10:12): 무릎 꿇은 상태에서 바로 일어나지
+    # 말고 닐링 하고 일어나면 될듯. The hold json from RISE_STRAIGHTEN is reused (same measured xy/yaw).
+    [ -f $F/${TAG}_hold_here.json ] || python3 - <<PY
+import json, math
+d = json.load(open("$F/${TAG}_stateRise.json")); w, x, y, z = d["root_quat_wxyz"]
+yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
+json.dump({"stand": {"x": d["root_pos"][0], "y": d["root_pos"][1], "yaw_deg": yaw}, "base_path": None, "grasp_index": -1, "confidence": 0.0,
+           "reachable": 0, "total": 0, "note": "hold at the measured pre-rise pose"}, open("$F/${TAG}_hold_here.json", "w"), indent=1)
+PY
+    WALK_MODE=2 OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip_mode_opus.py $M ${TAG}_knee1 0 0 0 0 0 0 --from-clip $RISE_FROM --stand $F/${TAG}_hold_here.json --hold-mode 6 --squat-to 0.35 --hold-target --goal-at $F/${TAG}_hold_here.json --hold-max 2 2>&1 | /usr/bin/grep -a "frames (\|root height\|Traceback" | while read -r l; do say "  one-knee: $l"; done
+    if [ -n "$PRE" ]; then $P grasp/clip_tools_opus.py concat $PRE $M/${TAG}_knee1.pkl ${TAG}_pre 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done; PRE=$M/${TAG}_pre.pkl; else PRE=$M/${TAG}_knee1.pkl; fi
+    RISE_FROM=$M/${TAG}_knee1.pkl
+  fi
   OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip.py $M ${TAG}_rise0 0 0 0 0 0 0 --from-clip $RISE_FROM --rise-first 2 --goal-at $GX 2>&1 | /usr/bin/grep -a "root height\|frames (\|Traceback" | while read -r l; do say "  $l"; done
-  if [ "${RISE_STRAIGHTEN:-0}" = "1" ]; then $P grasp/clip_tools_opus.py concat $M/${TAG}_hold.pkl $M/${TAG}_rise0.pkl ${TAG}_rise 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done; else cp $M/${TAG}_rise0.pkl $M/${TAG}_rise.pkl; fi
+  if [ -n "$PRE" ]; then $P grasp/clip_tools_opus.py concat $PRE $M/${TAG}_rise0.pkl ${TAG}_rise 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done; else cp $M/${TAG}_rise0.pkl $M/${TAG}_rise.pkl; fi
   RISE_SLOW=2 $P grasp/rise_reference_opus.py $M/${TAG}c0.pkl $M/${TAG}c0_hands.npy $M/${TAG}_rise.pkl ${TAG}c0r 2>&1 | /usr/bin/grep -a "\[rise\]\|Traceback" | while read -r l; do say "  $l"; done
   C0R=$(nframes $M/${TAG}c0r.pkl)
   say "stage 5: run the rise (c0r $C0R frames) and measure standing"
