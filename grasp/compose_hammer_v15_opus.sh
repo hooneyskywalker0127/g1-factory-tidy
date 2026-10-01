@@ -20,7 +20,7 @@ still() {  # image seconds out filter
 }
 # --- 0. the sentence
 ffmpeg -y -loglevel error -f lavfi -t 3.5 -i color=c=black:s=1920x1080:r=30 \
-  -vf "drawtext=fontfile=$F:text='Pick up the hammer on the floor and put it in the crate.':x=(w-text_w)/2:y=(h-text_h)/2-60:fontsize=64:fontcolor=white,\
+  -vf "drawtext=fontfile=$F:text='Pick up the hammer on the floor and put it in the crate.':x=(w-text_w)/2:y=(h-text_h)/2-60:fontsize=50:fontcolor=white,\
 drawtext=fontfile=$FR:text='One sentence. No object labels, no coordinates, no pelvis weld, no teleport.':x=(w-text_w)/2:y=(h-text_h)/2+50:fontsize=34:fontcolor=gray" \
   $V "$C/p0.mp4"
 # --- 1. what it saw: three looks from the head camera, the words found on the third
@@ -28,6 +28,14 @@ still "$R/look_1/rgb.png" 2.8 "$C/p1a.mp4" "$(sub '1  Head camera (RealSense D43
 still "$R/look_2/rgb.png" 2.2 "$C/p1b.mp4" "$(sub '1  Turned in place - second look' 0 2.2 60 30)"
 still "$R/look_3/obj_lang_overlay.png" 3.5 "$C/p1c.mp4" "$(sub '1  Third look - FOUND: the pixels C-RADIO scores for the word hammer' 0 3.5 60 30)"
 still "$R/near/obj_part_overlay.png" 3.5 "$C/p1d.mp4" "$(sub '2  Closer look from the kneel - the handle, found by language' 0 3.5 60 30)"
+# --- 2. what GraspGen-X and cuRobo made of the close look (cloud + grasps | planned wrist path), drawn by plan_views_hammer_opus.py
+ffmpeg -y -loglevel error -i "$R/hammer_views_cloud.mp4" -i "$R/hammer_views_traj.mp4" \
+  -filter_complex "\
+[0:v]scale=940:-2[a];[1:v]scale=940:-2[b];\
+[a][b]hstack=inputs=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[v];\
+[v]$(sub '2  GraspGen-X: 156 grasp candidates on the points the words picked (Inspire hand)' 0 5 60 32),\
+$(sub '2  cuRobo whole-body reach from the measured kneel - the handle grasp it committed to' 5 10 60 32)[out]" \
+  -map "[out]" $V "$C/p2.mp4"
 # --- 3. the run: room view over head + wrist cameras; times from the render log (frames / 30)
 ffmpeg -y -loglevel error -i "$D/hammer_v15_c0.mp4" -i "$D/hammer_v15_c0_head.mp4" -i "$D/hammer_v15_c0_wrist.mp4" \
   -filter_complex "\
@@ -53,7 +61,7 @@ ffmpeg -y -loglevel error -f lavfi -t 4 -i color=c=black:s=1920x1080:r=30 \
 drawtext=fontfile=$FR:text='GR00T-WholeBodyControl (SONIC)  -  GraspGenX  -  cuRobo  -  C-RADIO':x=(w-text_w)/2:y=(h-text_h)/2+10:fontsize=34:fontcolor=gray,\
 drawtext=fontfile=$FR:text='github.com/hooneyskywalker0127/g1-factory-tidy':x=(w-text_w)/2:y=(h-text_h)/2+70:fontsize=30:fontcolor=gray" \
   $V "$C/p4.mp4"
-printf "file '%s'\n" "$C/p0.mp4" "$C/p1a.mp4" "$C/p1b.mp4" "$C/p1c.mp4" "$C/p1d.mp4" "$C/p3.mp4" "$C/p4.mp4" > "$C/cc.txt"
+printf "file '%s'\n" "$C/p0.mp4" "$C/p1a.mp4" "$C/p1b.mp4" "$C/p1c.mp4" "$C/p1d.mp4" "$C/p2.mp4" "$C/p3.mp4" "$C/p4.mp4" > "$C/cc.txt"
 ffmpeg -y -loglevel error -f concat -safe 0 -i "$C/cc.txt" -c copy "$R/hammer_v15_youtube.mp4"
 cp "$R/hammer_v15_youtube.mp4" "$D/hammer_v15_youtube.mp4"
 ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames,width,height -of csv=p=0 "$D/hammer_v15_youtube.mp4"
