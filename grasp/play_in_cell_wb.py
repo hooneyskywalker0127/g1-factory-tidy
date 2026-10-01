@@ -901,7 +901,31 @@ if cam is not None:
         eyes=torch.tensor([eye], dtype=torch.float32, device=cam.device),
         targets=torch.tensor([tgt], dtype=torch.float32, device=cam.device))
 
-frames, head_frames, eye_frames = [], [], []
+class _FrameStream:
+    """Frames go straight to the mp4 instead of a list. Holding all three cameras in RAM until the end took
+    12 GB over a 2700-frame render (3 x 960x540x3 B x 2700) and was what the machine ran out of on 10-01."""
+
+    def __init__(self, path):
+        self.path, self.n, self._w = path, 0, None
+
+    def append(self, f):
+        if self._w is None:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            self._w = imageio.get_writer(self.path, fps=FPS, quality=8)
+        self._w.append_data(f); self.n += 1
+
+    def close(self):
+        if self._w is not None:
+            self._w.close(); self._w = None
+            print(f"[play] wrote {self.path}: {self.n} frames")
+
+    def __len__(self):
+        return self.n
+
+
+_vid = OUT if not NO_VIDEO else "/dev/null.mp4"
+frames, head_frames, eye_frames = (_FrameStream(_vid), _FrameStream(_vid.replace(".mp4", "_wrist.mp4")),
+                                   _FrameStream(_vid.replace(".mp4", "_head.mp4")))
 tgt_q = robot.data.default_joint_pos.clone()
 if "--legs-from" in sys.argv:
     # Start the pick standing the way the walk left the robot standing.
@@ -1583,17 +1607,8 @@ if walk is not None:
 
 if WALK_ONLY:
     if not NO_VIDEO:
-        import imageio.v2 as _iio
-        for _fr, _sfx in ((frames, ""), (head_frames, "_wrist"),
-                          (eye_frames, "_head")):
-            if not _fr:
-                continue
-            _out = OUT.replace(".mp4", f"{_sfx}.mp4")
-            _w = _iio.get_writer(_out, fps=FPS, quality=8)
-            for _f in _fr:
-                _w.append_data(_f)
-            _w.close()
-            print(f"[play] wrote {_out}: {len(_fr)} frames")
+        for _fr in (frames, head_frames, eye_frames):
+            _fr.close()
     _got = np.array([robot.data.joint_pos[0, j].item() for j in ids])
     _want = np.array([float(traj[0, k]) for k in range(len(ids))])
     _rp = robot.data.root_pos_w[0].cpu().numpy()
@@ -1938,16 +1953,8 @@ if HOLD_ONLY:
           f"p95 {np.percentile(_w, 95):.3f}, max {_w.max():.3f} rad/s "
           f"-- nothing is commanding them, so this is the floor")
     if not NO_VIDEO:
-        import imageio.v2 as _iio
-        for _fr, _sfx in ((frames, ""), (head_frames, "_wrist"), (eye_frames, "_head")):
-            if not _fr:
-                continue
-            _out = OUT.replace(".mp4", f"{_sfx}.mp4")
-            _w = _iio.get_writer(_out, fps=FPS, quality=8)
-            for _f in _fr:
-                _w.append_data(_f)
-            _w.close()
-            print(f"[play] wrote {_out}: {len(_fr)} frames")
+        for _fr in (frames, head_frames, eye_frames):
+            _fr.close()
     sys.stdout.flush()
     os._exit(0)
 
@@ -2063,13 +2070,7 @@ if NO_VIDEO:
     os._exit(0)
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
-imageio.mimsave(OUT, frames, fps=FPS, quality=8)
-HEAD_OUT = OUT.replace(".mp4", "_wrist.mp4")
-imageio.mimsave(HEAD_OUT, head_frames, fps=FPS, quality=8)
-print(f"[play] wrote {OUT}: {len(frames)} frames")
-print(f"[play] wrote {HEAD_OUT}: {len(head_frames)} frames")
-EYE_OUT = OUT.replace(".mp4", "_head.mp4")
-imageio.mimsave(EYE_OUT, eye_frames, fps=FPS, quality=8)
-print(f"[play] wrote {EYE_OUT}: {len(eye_frames)} frames")
+for _fr in (frames, head_frames, eye_frames):
+    _fr.close()
 sys.stdout.flush()
 os._exit(0)

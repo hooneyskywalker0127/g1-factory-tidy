@@ -290,7 +290,7 @@ print(f"{tx:.3f} {ty:.3f} {d['rim_z']+0.30:.3f}")
 PY
 )
   say "stage 7: place (GraspGenX order) from the measured arrival, wrist target $TARGET (object over the crate centre)"
-  ORI_W=0.005 PLACE_GRASPGEN=1 BODY_W=0.1 timeout 1200 $G grasp/reach_from_pose_wb.py $M/${TAG}_state.pkl none none --place $TARGET --out $F/${TAG}_place.npz > $F/${TAG}_solve_place.log 2>&1
+  ORI_W=${PLACE_ORI_W:-0.005} PLACE_GRASPGEN=1 BODY_W=0.1 timeout 1200 $G grasp/reach_from_pose_wb.py $M/${TAG}_state.pkl none none --place $TARGET --out $F/${TAG}_place.npz > $F/${TAG}_solve_place.log 2>&1
   /usr/bin/grep -a "\[reach\] place\|Traceback" $F/${TAG}_solve_place.log | cut -c1-200 | while read -r l; do say "  $l"; done
   $P grasp/clip_tools_wb.py cut $M/${TAG}c1.pkl 0 $((WEND+1)) 0 ${TAG}_base 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
   $P -c "import numpy as np; h=np.load('$M/${TAG}c1_hands.npy'); np.save('$M/${TAG}_base_hands.npy', h[:$((WEND+1))])"

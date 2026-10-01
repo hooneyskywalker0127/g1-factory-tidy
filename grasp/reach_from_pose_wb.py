@@ -984,6 +984,21 @@ def main():
             for i in range(n_go):
                 M = T0.copy(); M[:3, 3] = Tu[:3, 3] + (Tp[:3, 3] - Tu[:3, 3]) * (i + 1) / n_go
                 targets.append(M)
+            if os.environ.get("PLACE_PALM_DOWN") == "1":
+                # GraspGenX drops with "the gripper orientation at the drop pose ... (gripper pointing down)"
+                # (tasks.py:351-352). A side grasp carried palm-sideways never points down, and an open hand held
+                # sideways is a shelf: drill v7 (opus) left the drill lying across the open fingers (z 1.41 above the
+                # palm). So over the move the palm's approach axis (+y) is turned to -z, keeping +x horizontal.
+                from scipy.spatial.transform import Rotation as _Rot, Slerp as _Slerp
+                R0 = T0[:3, :3]; y_new = np.array([0.0, 0.0, -1.0])
+                x_new = R0[:, 0] - np.dot(R0[:, 0], y_new) * y_new; x_new /= np.linalg.norm(x_new)
+                Rpd = np.stack([x_new, y_new, np.cross(x_new, y_new)], axis=1)
+                sl = _Slerp([0.0, 1.0], _Rot.from_matrix(np.stack([R0, Rpd])))
+                start = n_up + n_lift_hold
+                for i in range(start, len(targets)):
+                    targets[i][:3, :3] = sl(min(1.0, (i - start + 1) / float(n_go - start))).as_matrix()
+                Tp[:3, :3] = Rpd
+                print(f"[reach] place: palm turned down over the move (PLACE_PALM_DOWN), approach axis z {R0[2, 1]:+.2f} -> -1.00")
             n_go = n_up + n_lift_hold + n_go
         else:
             for i in range(n_go):
