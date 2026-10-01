@@ -26,14 +26,14 @@ drawtext=fontfile=$FR:text='One sentence. No object labels, no coordinates, no p
 # --- 1. what it saw: three looks from the head camera, the words found on the third
 still "$R/look_1/rgb.png" 2.8 "$C/p1a.mp4" "$(sub '1  Head camera (RealSense D435i), first look - no hammer' 0 2.8 60 30)"
 still "$R/look_2/rgb.png" 2.2 "$C/p1b.mp4" "$(sub '1  Turned in place - second look' 0 2.2 60 30)"
-still "$R/look_3/obj_lang_overlay.png" 3.5 "$C/p1c.mp4" "$(sub '1  Third look - FOUND: the pixels C-RADIO scores for the word hammer' 0 3.5 60 30)"
+still "$R/look_3/obj_lang_overlay.png" 3.5 "$C/p1c.mp4" "$(sub '1  Third look - FOUND, the pixels C-RADIO scores for the word hammer' 0 3.5 60 30)"
 still "$R/near/obj_part_overlay.png" 3.5 "$C/p1d.mp4" "$(sub '2  Closer look from the kneel - the handle, found by language' 0 3.5 60 30)"
 # --- 2. what GraspGen-X and cuRobo made of the close look (cloud + grasps | planned wrist path), drawn by plan_views_hammer_opus.py
 ffmpeg -y -loglevel error -i "$R/hammer_views_cloud.mp4" -i "$R/hammer_views_traj.mp4" \
   -filter_complex "\
 [0:v]scale=940:-2[a];[1:v]scale=940:-2[b];\
 [a][b]hstack=inputs=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[v];\
-[v]$(sub '2  GraspGen-X: 156 grasp candidates on the points the words picked (Inspire hand)' 0 5 60 32),\
+[v]$(sub '2  GraspGen-X - 156 grasp candidates on the points the words picked (Inspire hand)' 0 5 60 32),\
 $(sub '2  cuRobo whole-body reach from the measured kneel - the handle grasp it committed to' 5 10 60 32)[out]" \
   -map "[out]" $V "$C/p2.mp4"
 # --- 3. the run: room view over head + wrist cameras; times from the render log (frames / 30)
