@@ -8,9 +8,9 @@
 [![IsaacLab](https://img.shields.io/badge/IsaacLab-2.3.2-silver.svg)](https://isaac-sim.github.io/IsaacLab/)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
 
-[**YouTube**](https://www.youtube.com/playlist?list=PLOijdB1dOk8Y) · [**시연 영상**](https://youtu.be/0Tu-V0MvPYc)
+[**YouTube**](https://www.youtube.com/playlist?list=PLOijdB1dOk8Y) · [**시연 영상**](https://www.youtube.com/watch?v=Xm1skXH7E90)
 
-[![시연 영상 재생](docs/youtube_thumb.jpg)](https://youtu.be/0Tu-V0MvPYc)
+[![시연 영상 재생](docs/youtube_thumb.jpg)](https://www.youtube.com/watch?v=Xm1skXH7E90)
 
 > **범위는 시뮬레이션까지입니다.** 하드웨어가 없어 실제 로봇 배포는 하지 않았고,
 > sim-to-real 성능을 주장하지 않습니다. 다만 실기에 없는 장치(골반 고정, 순간이동)는
@@ -65,7 +65,7 @@ RGB-D camera에서 나오고, 참값은 추정이 얼마나 틀렸는지 채점�
 | 무엇 | 결과 | 자세히 |
 |---|---|---|
 | 머리 camera 물체 위치 추정 (바닥 상자, 5 시점) | 중심 오차 1~8 mm, 높이 +2~3 mm | [notes](docs/notes.md#추정-정확도) |
-| 책상 위 상자: 문장 → 파지 → 걷기 → 집기 | 들어 올림 (+50.6 mm), 영상 | [시연 영상](https://youtu.be/0Tu-V0MvPYc) |
+| 책상 위 상자: 문장 → 파지 → 걷기 → 집기 | 들어 올림 (+50.6 mm), 영상 | [시연 영상](https://www.youtube.com/watch?v=Xm1skXH7E90) |
 | 머리+손목 camera 합성 | 윗면 관측 3.9% → 70.2%, 위에서 내려오는 파지 생성 | [notes](docs/notes.md#camera-두-대를-합치면-파지-방향이-달라집니다) |
 | 부유 베이스 보행 (SONIC) | 플래너 클립의 17~40%만 걷습니다. 측정→재계획 2회로 무릎 위치 오차 0.12~0.14 m; 운반 걷기는 목표를 2배로 늘려 설 자리 0.28 m 앞에 섭니다 | [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
 | 바닥 망치: 무릎 자세에서 cuRobo 도달 | 양무릎 자세에서 0.8~2.9 mm, 실행 뒤 골반 12 mm·관절 0.03 rad | [DIAGNOSIS_opus](docs/DIAGNOSIS_opus.md) |
@@ -90,7 +90,7 @@ camera가 그 자리를 맡아야 합니다.
   </tr>
 </table>
 
-전체 영상: [시연 영상](https://youtu.be/0Tu-V0MvPYc) · [재생목록](https://www.youtube.com/playlist?list=PLOijdB1dOk8Y)
+전체 영상: [시연 영상](https://www.youtube.com/watch?v=Xm1skXH7E90) · [재생목록](https://www.youtube.com/playlist?list=PLOijdB1dOk8Y)
 
 ## 설치
 
