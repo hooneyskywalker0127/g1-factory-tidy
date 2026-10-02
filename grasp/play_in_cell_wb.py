@@ -9,9 +9,14 @@
 # that falls over mid-reach says nothing about whether the plan was good.
 #
 #   python grasp/play_in_cell.py [traj.npy] [--video out.mp4]
+import faulthandler
 import json
 import os
+import signal
 import sys
+# kill -USR1 <pid> writes every thread's Python stack to the log: the renders stall with the CPU spinning and the
+# log silent (v8, v12, crate 261002 x4) and ptrace (py-spy) is not allowed here, so nothing has ever shown where
+faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 from isaaclab.app import AppLauncher
 

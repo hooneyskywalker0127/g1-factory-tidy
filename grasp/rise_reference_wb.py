@@ -20,6 +20,13 @@ FPS = 30
 pick_pkl, pick_hands, carry_pkl, name = sys.argv[1:5]
 names = mujoco_names()
 arm = [7 + names.index(n) for n in RIGHT_ARM]
+if os.environ.get("BOTH_ARMS") == "1":               # a two-hand grip (the crate): the left arm stays too (build_place_reference_wb:60)
+    arm += [7 + names.index(n.replace("right_", "left_")) for n in RIGHT_ARM]
+if os.environ.get("RISE_UPPER") == "1":
+    # RISE_UPPER=1: the waist stays too -- GR00T's deploy overwrites all 17 upper-body joints (waist + both arms) of the
+    # planner reference with the commanded upper body (g1_deploy_onnx_ref.cpp:780-792); with the arms alone frozen the
+    # planner's waist (0.5 -> 0) swung the 2 kg crate out in front (crate v2 of 261002, fall_grid.png)
+    arm += [7 + names.index(n) for n in ("waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint")]
 pick = clip_qpos(pick_pkl)
 hands_pick = np.load(pick_hands)
 rise = clip_qpos(carry_pkl)

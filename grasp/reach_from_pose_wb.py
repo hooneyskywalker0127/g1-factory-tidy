@@ -928,6 +928,54 @@ def main():
         print(f"[reach] wrote {sys.argv[sys.argv.index('--out') + 1]}")
         return
 
+    # --crate-bring: still kneeling with the crate lifted, bring it in to the carrying position before the stand-up.
+    # GR00T's planner drives only the legs; the upper body is whatever the operator commands (g1_deploy_onnx_ref.cpp:
+    # 780-792), and an operator brings a load in before getting up. Crate v2/v3 of 261002 stood up with the crate 0.7 m
+    # in front of the pelvis and the waist at its roll/pitch limits (0.51) and fell. The two wrists move as one rigid
+    # grip (the crate stays held): its midpoint to CARRY_FWD in front of the pelvis at its current height, its heading
+    # turned to the pelvis heading; CARRY_FWD 0.256 m is where the planner's own objectCarrying arm (mode 21,
+    # carry_pose_wb.py CARRY_ARM) puts the wrists (FK on GR00T's g1_29dof.urdf). The torso_link gets a target too
+    # (cuRobo per-link ToolPoseCriteria): upright over the pelvis, facing its heading (waist 0; pelvis->torso offset
+    # (-0.0039635, 0, 0.054) from the urdf's waist joints). For the crate (0.6 m long, gripped 0.10 m on the robot's
+    # side of its centre) 0.256 puts its near end into the kneeling thighs (FK: knees 0.24 m ahead, thigh top 0.33 ->
+    # 0.11 m): crate v4 uses CARRY_FWD 0.35 + CARRY_UP 0.08 (near end 0.15 m ahead, bottom 0.24 m over thigh top ~0.21 m).
+    if "--crate-bring" in sys.argv:
+        li = list(cfg.tool_frames).index("left_wrist_yaw_link"); ri = list(cfg.tool_frames).index("right_wrist_yaw_link")
+        ti = list(cfg.tool_frames).index("torso_link"); pi_ = list(cfg.tool_frames).index("pelvis")
+        T0 = {}
+        for k in (li, ri):
+            M = np.eye(4); M[:3, 3] = pos0[k]; M[:3, :3] = quat_to_mat(quat0[k]); T0[k] = M
+        Rp = quat_to_mat(quat0[pi_]); fwd = Rp[:, 0].copy(); fwd[2] = 0; fwd /= np.linalg.norm(fwd)
+        yaw = math.atan2(fwd[1], fwd[0])
+        Ryaw = np.array([[math.cos(yaw), -math.sin(yaw), 0], [math.sin(yaw), math.cos(yaw), 0], [0, 0, 1]])
+        mid = (T0[li][:3, 3] + T0[ri][:3, 3]) / 2.0
+        across = T0[li][:3, 3] - T0[ri][:3, 3]; gyaw = math.atan2(across[1], across[0]) - math.pi / 2   # the grip's forward
+        dyaw = (yaw - gyaw + math.pi) % (2 * math.pi) - math.pi
+        Rd = np.array([[math.cos(dyaw), -math.sin(dyaw), 0], [math.sin(dyaw), math.cos(dyaw), 0], [0, 0, 1]])
+        target = pos0[pi_] + Ryaw @ np.array([float(os.environ.get("CARRY_FWD", "0.256")), 0.0, 0.0]); target[2] = mid[2] + float(os.environ.get("CARRY_UP", "0"))
+        Tt = np.eye(4); Tt[:3, :3] = Ryaw; Tt[:3, 3] = pos0[pi_] + Ryaw @ np.array([-0.0039635, 0.0, 0.054])
+        Tt0 = np.eye(4); Tt0[:3, :3] = quat_to_mat(quat0[ti]); Tt0[:3, 3] = pos0[ti]
+        from scipy.spatial.transform import Rotation as _Rb, Slerp as _Sb
+        tslerp = _Sb([0, 1], _Rb.from_matrix([Tt0[:3, :3], Tt[:3, :3]]))
+        n_go, n_hold = 90, 30
+        steps = []
+        for i in range(n_go + n_hold):
+            a = min(1.0, (i + 1) / n_go)
+            Ra = np.array([[math.cos(a * dyaw), -math.sin(a * dyaw), 0], [math.sin(a * dyaw), math.cos(a * dyaw), 0], [0, 0, 1]])
+            st = {}
+            for k in (li, ri):
+                M = T0[k].copy(); M[:3, :3] = Ra @ T0[k][:3, :3]
+                M[:3, 3] = mid + a * (target - mid) + Ra @ (T0[k][:3, 3] - mid); st[k] = M
+            M = np.eye(4); M[:3, :3] = tslerp([a]).as_matrix()[0]; M[:3, 3] = Tt0[:3, 3] + a * (Tt[:3, 3] - Tt0[:3, 3]); st[ti] = M
+            steps.append(st)
+        sol, err = solve_multi(steps)
+        w = [jn.index(f"waist_{x}_joint") for x in ("yaw", "roll", "pitch")]
+        print(f"[reach] crate bring: grip midpoint {np.round(mid, 3)} -> {np.round(target, 3)}, turned {math.degrees(dyaw):+.1f} deg; "
+              f"wrist error mean {err.mean()*1000:.1f} mm, max {err.max()*1000:.1f} mm; waist {np.round(sol[0, w], 2)} -> {np.round(sol[-1, w], 2)}")
+        np.savez(out, q=sol, joint_names=np.array(jn), err=err, close_from=-1, lift_from=-1, grasp=np.eye(4), best=-1)
+        print(f"[reach] wrote {out}")
+        return
+
     # --crate-place X Y Z: a two-hand set-down. Both wrists keep the poses the carry leaves them in and move by
     # one common vector until their MIDPOINT is at (X, Y, Z) (Z = the wrist height that puts the crate's bottom
     # PLACE_CLEAR above the desk top: the wrists ride 0.35 m above the crate bottom in the rim pinch), then both

@@ -39,6 +39,12 @@ export FIX_ROOT=0 SONIC_ACTUATORS=1 SONIC_LEGS_ONLY=1 PD_BODY=1 OBJECT_NO_SLEEP=
 export SOLVER_IT=8 SOLVER_VIT=4 OBJ_SOLVER_IT=16 OBJ_SOLVER_VIT=1 OBJ_MAX_DEPEN_VEL=5.0 OBJECT_MU=1.0
 export MIMIC_URDF_RATIO=1 SONIC_LOWER_N=12 HOLD_AFTER_CLOSE=100
 export RETARGET_CFG=unitree_g1_29dof_retarget_floor.yml
+# CRATE_PICK=<crate json from crate_target.py>: the floor crate itself is the object, lifted with both hands by the outside
+# rim pinch of 260928/5지/crate/v4 (its best lift, 8.5 cm, lost in the stand-up before the v8/v15 rise fixes existed);
+# the desk is left empty, and the chain stops after the rise (stages 6/7 carry and place one hand)
+if [ -n "${CRATE_PICK:-}" ]; then
+  unset TIDY_CRATE_ON_DESK; export TIDY_FLOOR_CRATE="-0.30,0.05,0" TARGET_PRIM=/World/Props/FloorCrate/Asset BOTH_HANDS=1 BOTH_ARMS=1
+fi
 # fingertip floor clearance for the reach (reach_from_pose_wb: FLOOR_CLEAR + TIP_FLESH; defaults 0.005 + 0.04 were measured on the
 # Dex3): floor_object_chain.sh:14 runs the chain with FLOOR_CLEAR=0 TIP_FLESH=0.03. At 4.5 cm the drill's grasps (object top at 6 cm)
 # were backed off until the fingers closed on its top surface (drill v1/v2: 17/17 LOST, dz 0.000)
@@ -94,7 +100,9 @@ if [ $FROM -le 2 ] && [ ! -f $M/${TAG}_kneel_m.pkl ]; then
   for i in 1 2 3 4 5; do
     DIST=$(python3 -c "import json,math;s=json.load(open('$CUR'))['root_pos'];g=json.load(open('$F/stand_kneel.json'))['stand'];print('%.3f'%math.hypot(s[0]-g['x'],s[1]-g['y']))")
     say "stage 2a: measured stand $(state_xy $CUR) is $DIST m from the kneel stand"
-    awk "BEGIN{exit !($DIST <= 0.25)}" && break
+    # APPROACH_TOL (default 0.25): crate v1 stopped at 0.245 m, the walk2 leg was then too short to execute and the kneel
+    # stayed 0.19 m back, 9 cm beyond the two-hand reach; another x2 leg brings it closer
+    awk "BEGIN{exit !($DIST <= ${APPROACH_TOL:-0.25})}" && break
     if [ ! -f $F/${TAG}_stateS$i.json ]; then
       $P grasp/clip_tools_wb.py from_state $CUR 4 ${TAG}_stateS${i}_from 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
       python3 - <<PY | while read -r l; do say "  $l"; done
@@ -113,7 +121,7 @@ PY
   echo "$CUR $CHAIN" > $F/${TAG}_approach.txt
   # 2b. the short walk + two-knee kneel from the measured stand, the goal corrected by the measured kneel error (<= 2 rounds)
   $P grasp/clip_tools_wb.py from_state $CUR 4 ${TAG}_stateA_clip 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done
-  cp $F/stand_kneel.json $F/${TAG}_stand_k0.json
+  cp $F/stand_kneel.json $F/${TAG}_stand_k0.json; BEST=0; BE=99
   for round in 0 1 2; do
     S=$F/${TAG}_stand_k$round.json
     say "stage 2b round $round: walk2 + two-knee kneel toward $(python3 -c "import json;d=json.load(open('$S'))['stand'];print('%.3f %.3f %.1f'%(d['x'],d['y'],d['yaw_deg']))")"
@@ -135,14 +143,63 @@ PY
 )
     say "  round $round kneel error $ERR"
     E=$(echo "$ERR" | awk '{print $1}')
+    awk "BEGIN{exit !($E < $BE)}" && { BEST=$round; BE=$E; }
     if awk "BEGIN{exit !($E <= 0.15)}"; then break; fi
-    [ $round -eq 2 ] && say "  kneel error still $E m after 3 rounds; using the last"
+    # the best round, not the last: crate v1 round 2 overshot and came back sideways (0.19 -> 0.54 m, yaw -116)
+    [ $round -eq 2 ] && say "  kneel error still $E m after 3 rounds; using the best, round $BEST ($BE m)"
   done
+  round=$BEST
   ln -sf $M/${TAG}_walk12_k$round.pkl $M/${TAG}_walk12.pkl; cp $F/${TAG}_stateK_k$round.json $F/${TAG}_stateK.json; cp $F/${TAG}_passK_k$round.log $F/${TAG}_passK.log
   $P grasp/kneel_from_state_wb.py $M/${TAG}_walk12.pkl $F/${TAG}_stateK.json 160 ${TAG}_kneel_m 2>&1 | /usr/bin/grep "\[kneel\]\|Error" | while read -r l; do say "  $l"; done
 fi
 # ---------------------------------------------------------------- 3. grasps from the measured kneel -> c0
-if [ $FROM -le 3 ] && [ ! -f $M/${TAG}c0.pkl ]; then
+if [ -n "${CRATE_PICK:-}" ] && [ $FROM -le 3 ] && [ ! -f $M/${TAG}c0.pkl ]; then
+  # the crate json moved by the crate's measured displacement at the kneel (the reach plans from the measured state)
+  python3 - <<PY | while read -r l; do say "  $l"; done
+import json, re
+cj = json.load(open("$CRATE_PICK")); now = json.load(open("$F/${TAG}_stateK.json"))["object_pos"]
+p0 = [float(v) for v in "$(frame0_obj $F/${TAG}_passA.log)".split(",")[:2]]; dx, dy = now[0] - p0[0], now[1] - p0[1]
+cj["centre"][0] += dx; cj["centre"][1] += dy
+for s in ("left", "right"): cj["slots"][s][0] += dx; cj["slots"][s][1] += dy
+json.dump(cj, open("$F/${TAG}_crate_now.json", "w"), indent=1); print(f"crate moved {dx*100:+.1f} {dy*100:+.1f} cm by the kneel")
+PY
+  K=0
+  if [ "${CRATE_GRASPS:-0}" = "1" ]; then
+    # CRATE_GRASPS=1: GraspGenX's own candidates, one per hand (Sehoon 260928: the grasp points come from the model;
+    # 261002 v1: the hand-designed pinch closed on air). $F/grasps_all.json from the crate mesh scene
+    # (crate_mesh_scene_wb.py -> e2e_grasp_demo; plan frame = torso at z 0.98, identity plan_from_cell in $F/cell_cap).
+    # Top CRATE_PAIRS left x right pairs solved from the measured kneel, every pair replayed under physics (as stage 3
+    # does for one hand; GraspGenX validates by replay too), the first HELD pair taken
+    NOW=$(python3 -c "import json; d=json.load(open('$F/${TAG}_stateK.json')); print(','.join('%.5f'%v for v in d['object_pos']+d['object_quat_wxyz']))")
+    say "stage 3 (crate): GraspGenX pairs from the measured kneel; crate now $NOW"
+    OBJECT_POSE_NOW=$NOW OBJECT_POSE_PLAN=-0.30,0.05,0.0,1,0,0,0 BIMANUAL=1 BODY_W=${CRATE_BODY_W:-1.0} PELVIS_W=0.1 CRATE_LIFT=0.12 \
+      timeout 3600 $G grasp/reach_from_pose_wb.py $M/${TAG}_kneel_m.pkl $F/grasps_all.json $F/cell_cap --crate-grasps $F/${TAG}_crate_now.json --out $F/${TAG}_reach_all.npz > $F/${TAG}_solve_all.log 2>&1
+    /usr/bin/grep -a "crate grasps\|\[reach\] pair\|Traceback" $F/${TAG}_solve_all.log | cut -c1-160 | while read -r l; do say "  $l"; done
+    NP=$($P -c "import numpy as np; print(len(np.load('$F/${TAG}_reach_all.npz')['q']))")
+    FIX_ROOT=1 timeout 7200 $P grasp/test_grasps_in_isaac.py $F/scene.npy $M/${TAG}_kneel_m.pkl $F/${TAG}_reach_all.npz --top $NP --slow 2>&1 | /usr/bin/grep -a "\[test\] grasp\|grasps held\|Traceback" | cut -c1-150 > $F/${TAG}_test_grasps.txt
+    /usr/bin/grep -a "grasps held\|HELD" $F/${TAG}_test_grasps.txt | head -4 | while read -r l; do say "  $l"; done
+    K=$(/usr/bin/grep -a "HELD" $F/${TAG}_test_grasps.txt | head -1 | sed 's/.*grasp #\s*\([0-9]*\).*/\1/')
+    if [ -z "$K" ]; then
+      K=$($P -c "import numpy as np; d=np.load('$F/${TAG}_reach_all.npz'); n=int(d['n_go']); print(int(d['err'][:, n-5:n].mean(1).argmin()))")
+      say "  no pair HELD; taking the best-reached, #$K"
+    else say "  first HELD: pair #$K"; fi
+  else
+    say "stage 3 (crate): outside rim pinch (crate v4 of 260928) from the measured kneel"
+    BIMANUAL=1 BODY_W=${CRATE_BODY_W:-1.0} PELVIS_W=0.1 HOOK_MODE=pinch PINCH_OUTSIDE=1 PINCH_IN=0.04 PINCH_ABOVE=0.115 PINCH_ALONG=0.10 LEFT_Y_IN=1 CRATE_LIFT=0.12 \
+      timeout 1800 $G grasp/reach_from_pose_wb.py $M/${TAG}_kneel_m.pkl $F/${TAG}_crate_now.json $F/look --crate-hook $F/${TAG}_crate_now.json --out $F/${TAG}_reach_all.npz > $F/${TAG}_solve_all.log 2>&1
+    /usr/bin/grep -a "crate hook\|last-frame\|Traceback" $F/${TAG}_solve_all.log | cut -c1-160 | while read -r l; do say "  $l"; done
+  fi
+  $P - <<PY
+import numpy as np
+d = np.load("$F/${TAG}_reach_all.npz"); q = d["q"][$K]; n_go, n_lift, l0 = int(d["n_go"]), int(d["n_lift"]), int(d["lift_from"])
+# the crate solution holds 30 frames at the grasp before its lift: the lift starts at lift_from, not n_go (260927 17:25 crate lift bug)
+lift = [(1 - (f - int(f))) * q[int(f)] + (f - int(f)) * q[min(int(f) + 1, l0 + n_lift - 1)] for f in [l0 + i / 4 for i in range(n_lift * 4)]]
+seq = np.concatenate([q[:n_go], np.repeat(q[n_go-1:n_go], 150, axis=0), np.array(lift)])
+np.savez("$F/${TAG}_reach_pick.npz", q=seq, joint_names=d["joint_names"], err=np.zeros(len(seq)), close_from=n_go, lift_from=n_go + 150, grasp=np.eye(4), best=$K)
+PY
+  echo $K > $F/${TAG}_grasp.txt
+  $P grasp/build_reach_reference_wb.py $M/${TAG}_kneel_m.pkl $F/${TAG}_reach_pick.npz ${TAG}c0 2>&1 | /usr/bin/grep -aE 'frames at 30|hands close|HOLD_AFTER|Traceback|Error' | cut -c1-140 | while read -r l; do say "  $l"; done
+elif [ $FROM -le 3 ] && [ ! -f $M/${TAG}c0.pkl ]; then
   NOW=$(python3 -c "import json; d=json.load(open('$F/${TAG}_stateK.json')); print(','.join('%.5f'%v for v in d['object_pos']+d['object_quat_wxyz']))")
   # OBJECT_NOW_OVERRIDE="x,y,z,qw,qx,qy,qz": the object pose shifted by the hand error measured in a pick run
   # (grasp/hand_error_wb.py) -- the walk/kneel correction applied to the hand: the render's arm lands ~2.5 cm off
@@ -188,9 +245,15 @@ PY
 fi
 KN=$(nframes $M/${TAG}_kneel_m.pkl); C0=$(nframes $M/${TAG}c0.pkl)
 export SONIC_LEGS_DIRECT=$((KN-17)),$((C0-71))     # legs PD to the clip at cuRobo gains only while kneeling static (hammer 671,1300 of 688/1371)
+# LEGS_DIRECT=0: SONIC tracks the kneel too, as GR00T does (its policy never stops; g1_deploy_onnx_ref.cpp:2728-2758 is
+# the only PD, before start). Crate v2/v4 of 261002 lunged forward right after the hand-over (v2 at 1702, v4 at 1822)
+[ "${LEGS_DIRECT:-1}" = "0" ] && unset SONIC_LEGS_DIRECT
+# with RISE_LEGS_DIRECT the pick pass keeps the legs on the drives to its end too (no hand-over 71 frames before the end):
+# the pre-rise state is measured in the static kneel, and the rise clip continues on the same drives
+[ "${RISE_LEGS_DIRECT:-0}" = "1" ] && [ -n "${SONIC_LEGS_DIRECT:-}" ] && export SONIC_LEGS_DIRECT=$((KN-17)),$C0
 # ---------------------------------------------------------------- 4. run c0 -> pose before the rise
 if [ $FROM -le 4 ] && [ ! -f $F/${TAG}_stateRise.json ]; then
-  say "stage 4: run the pick (c0 $C0 frames, legs direct $SONIC_LEGS_DIRECT) and measure the pose before the rise"
+  say "stage 4: run the pick (c0 $C0 frames, legs direct ${SONIC_LEGS_DIRECT:-off}) and measure the pose before the rise"
   CONTACT_FORCE=1 DUMP_STATE=$F/${TAG}_stateRise.json DUMP_STATE_AT=$((C0-1)) WALK_MAX_FRAMES=$((C0+1)) OBJ_EVERY=30 run_isaac $F/${TAG}_passRise.log $F/${TAG}_passRise.mp4 $F/scene.npy --walk $M/${TAG}c0.pkl --hands $M/${TAG}c0_hands.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 4"; exit 1; }
   /usr/bin/grep -a '^\[eval\]' $F/${TAG}_passRise.log | while read -r l; do say "  pick: $l"; done
   LIFTED=$(python3 -c "import json;d=json.load(open('$F/${TAG}_stateRise.json'));print(d['object_pos'][2])")
@@ -235,14 +298,21 @@ PY
   fi
   OMP_NUM_THREADS=2 timeout 900 $P grasp/walk_clip.py $M ${TAG}_rise0 0 0 0 0 0 0 --from-clip $RISE_FROM --rise-first 2 --goal-at $GX 2>&1 | /usr/bin/grep -a "root height\|frames (\|Traceback" | while read -r l; do say "  $l"; done
   if [ -n "$PRE" ]; then $P grasp/clip_tools_wb.py concat $PRE $M/${TAG}_rise0.pkl ${TAG}_rise 2>&1 | /usr/bin/grep "\[clip\]" | while read -r l; do say "  $l"; done; else cp $M/${TAG}_rise0.pkl $M/${TAG}_rise.pkl; fi
-  RISE_SLOW=2 $P grasp/rise_reference_wb.py $M/${TAG}c0.pkl $M/${TAG}c0_hands.npy $M/${TAG}_rise.pkl ${TAG}c0r 2>&1 | /usr/bin/grep -a "\[rise\]\|Traceback" | while read -r l; do say "  $l"; done
+  RISE_SLOW=${RISE_SLOW:-2} $P grasp/rise_reference_wb.py $M/${TAG}c0.pkl $M/${TAG}c0_hands.npy $M/${TAG}_rise.pkl ${TAG}c0r 2>&1 | /usr/bin/grep -a "\[rise\]\|Traceback" | while read -r l; do say "  $l"; done
   C0R=$(nframes $M/${TAG}c0r.pkl)
-  say "stage 5: run the rise (c0r $C0R frames) and measure standing"
+  # RISE_LEGS_DIRECT=1: the legs follow the planner's rise clip on cuRobo's drives through the stand-up and the policy takes
+  # them only in the standing hold (last RISE_HOLD 30 frames) -- GR00T's deploy ramps to the standing pose on PD before the
+  # policy starts and the planner initialises from a standing context (g1_deploy_onnx_ref.cpp:2728-2758, planner_onnx.md:
+  # 341-350). Crate v2/v4 (261002) and drill v5 lunged within 1 s of handing the legs to the policy while kneeling with
+  # the load; v5 (no direct legs at all) could not reach the crate (the reach moves the pelvis 10 cm, policy legs hold it)
+  [ "${RISE_LEGS_DIRECT:-0}" = "1" ] && export SONIC_LEGS_DIRECT=${SONIC_LEGS_DIRECT%,*},$((C0R-30))
+  say "stage 5: run the rise (c0r $C0R frames, legs direct ${SONIC_LEGS_DIRECT:-off}) and measure standing"
   CONTACT_FORCE=1 DUMP_STATE=$F/${TAG}_stateStand.json DUMP_STATE_AT=$((C0R-1)) OBJ_EVERY=30 run_isaac $F/${TAG}_passStand.log $F/${TAG}_passStand.mp4 $F/scene.npy --walk $M/${TAG}c0r.pkl --hands $M/${TAG}c0r_hands.npy --walk-only --clip-arms --sonic --no-settle $CAM || { say "STOP stage 5"; exit 1; }
   /usr/bin/grep -a '^\[eval\]' $F/${TAG}_passStand.log | while read -r l; do say "  rise: $l"; done
   HZ=$(python3 -c "import json;d=json.load(open('$F/${TAG}_stateStand.json'));print('%.3f %.3f'%(d['object_pos'][2], d['root_pos'][2]))")
   if awk "BEGIN{exit !($(echo $HZ | cut -d' ' -f1) < 0.5 || $(echo $HZ | cut -d' ' -f2) < 0.6)}"; then say "FALSIFIED: not standing with the object (object z, pelvis z = $HZ)"; PROBE=$F/${TAG}_passStand; STOP=rise; fi
 fi
+[ -n "${CRATE_PICK:-}" ] && [ -z "${STOP:-}" ] && { PROBE=$F/${TAG}_passStand; STOP=crate_rise; }
 # ---------------------------------------------------------------- 6. carry pose + carry walk -> walk end
 if [ -z "${STOP:-}" ] && [ $FROM -le 6 ] && [ ! -f $F/${TAG}_stateCrate.json ]; then
   $P grasp/carry_pose_wb.py $M/${TAG}c0r.pkl $M/${TAG}c0r_hands.npy ${TAG}a 60 30 2>&1 | /usr/bin/grep "\[carry-pose\]\|Traceback" | cut -c1-200 | while read -r l; do say "  $l"; done

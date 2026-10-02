@@ -4471,3 +4471,30 @@ v79 = v72 env 그대로 + 기립 클립만 --rise-first 2 로 재생성(rg79c0r:
 - 렌더: 손가락 열기 뒤 드릴이 크레이트 바닥으로 떨어져 정지(xy 중심에서 6/8 cm, 중심 z≈0.81 < 테두리 0.926). 체인의 inside 판정은 물체 원점(중심+0.13)으로 비교해 "not inside" 로 잘못 찍힘 → 판정을 메시 중심으로 고칠 것.
 - 렌더 메모리: 프레임을 바로 mp4 로 쓰는 `play_in_cell_wb.py` 첫 사용, RSS 12 GB → 4.2 GB.
 - 드릴 전 과정 성립(접근·양무릎·파지·기립·운반·투하). 망치는 v15, 드릴은 v7.
+
+## 2026-10-02 — 크레이트 재개 (10/261002/5지/crate)
+
+- 09-28 크레이트 실패(v5/v6/v10)는 전부 기립에서 놓친 것 — 해머·드릴이 그 뒤 고친 것(부유 베이스 SONIC + 측정→재계획, Isaac Lab Inspire 게인 kp 10,
+  기립 클립을 측정 자세에서, RISE_STRAIGHTEN)을 크레이트는 받은 적이 없다. 체인 `floor_to_crate_chain_wb.sh` 에 CRATE_PICK(양손, 기립 뒤 정지),
+  `rise_reference_wb.py` BOTH_ARMS(build_place_reference_wb.py:60 패턴).
+- v1 LOST: 무릎이 스탠드 0.19 m 뒤 → 양손 도달 92 mm, 오른손은 벽 바깥 허공, 왼손은 크레이트 안(세훈님: "아예 허공을 잡음").
+  09-28 13:10 에 이미 "손으로 정한 집기는 보류, 모델 후보로만" 이라 적어 두었는데 v4 의 손 집기를 다시 꺼낸 것이 잘못.
+- 파지 후보(GraspGenX 원본 경로): 관측이 없으면 메시 표면을 샘플(e2e_grasp_demo.py:694-705) → `grasp/crate_mesh_scene_wb.py` 가 crate.obj 를
+  크레이트 자세에 20000 점(2000 점은 GraspMoE 이상점 제거가 전부 지움) + 바닥 점으로 JSON 장면(scene_loaders.py:128) 작성 → e2e_grasp_demo
+  (g1_inspire_arm, graspmoe/diffusion, outlier 0.03 = floor_object_chain 과 같음, 원본 충돌 필터) → 96 개(39+57), 양쪽 긴 벽에 고루,
+  끝점이 벽에서 0.6-10 cm (09-28 카메라 점군 후보는 벽 안쪽 7-10 cm 허공). 체인 CRATE_GRASPS=1: --crate-grasps 쌍 + 물리 시험.
+- 접근이 매번 빗나가는 원인(GR00T 원본 대조): GR00T 배포는 플래너를 10 Hz 스레드에서 걷는 중 1 s 마다 재계획하고(g1_deploy_onnx_ref.cpp:3621-3701,
+  planner_onnx.md:330-385) 방향은 조작자가 실시간으로 준다 — 위치 피드백은 사람이 닫는다. 목표 위치 입력(has_specific_target)은 배포에서 0 고정.
+  SONIC g1 인코더는 기준 루트 x/y 를 보지 않는다(sonic_control.py:280-306) → 우리처럼 오프라인 클립을 열린 루프로 따라가면 33-60% 만 가고
+  0.5 m 이하는 안 간다. walk_clip.py 의 도착 판정도 플랜 자신의 루트 기준(:194-197). 오늘 덧댄 APPROACH_TOL·APPROACH_K=3·최선 회차는 원본에 없는 땜질.
+  원본 구조대로라면: play_in_cell 루프 안에서 1 s 마다 측정 루트→스탠드 방향으로 movement/facing 을 갱신해 재계획(조작자 역할), 8 프레임 교차 혼합
+  (g1_deploy_onnx_ref.cpp:3192-3260), 도착하면 모드 5. 훅 위치: play_in_cell_wb.py:1439 (_wsonic_tick 직전), SonicTracker 기준 교체 필요.
+- v2 (14:00 세훈님 "v2 파지 잘했어", 기립이 문제): 가까운 무릎(0.112 m)에서 손 집기 도달 19 mm, 25 cm 들었으나 기립에서 넘어짐.
+- v3 (처음 v4 로 렌더; 영상 없는 GraspGenX 쌍 시도 폴더는 지움): v2 픽 상태에서 기립만 GR00T 식으로 — 허리+팔 17관절 고정(RISE_UPPER,
+  g1_deploy_onnx_ref.cpp:780-792), 늘이기 없음(RISE_SLOW=1), 양무릎 hold 없음. 기립 시작 1 s 안에 다리가 뒤로 차이고 앞으로 쏠려 크레이트 낙하.
+- 원인(측정): 기립 직전 크레이트 중심이 골반 앞 0.7 m. 픽 마지막 자세 허리 yaw 0.30 / roll 0.51 / pitch 0.51 — roll·pitch 는 한계값, 도달 풀이가
+  골반을 앞으로 11 cm 끌었음(PELVIS_W 1.0 / 0.3 으로 바꿔도 허리는 한계 그대로, 오차만 58 / 23 mm). 집기점(크레이트 중앙 +0.10)이 스탠드 0.50 에서
+  골반 앞 0.70 m — GR00T mode 21 운반 손목(FK, 골반 앞 0.256 m, 좌우 ±0.20)보다 멀다. 즉 기립 문제의 뿌리는 무릎 위치(접근 정확도).
+  공구는 0.2 kg(plan_scene.py:83), 크레이트 2 kg(map/props.py:28; SONIC 학습 하중은 손목 질량 x0.8-2.5 ≈ +0.38 kg, level0_4.yaml:9-17).
+- 다음: GR00T 의 조작자 역할을 시뮬 루프에 — 걷는 동안 1 s 마다 측정 루트→스탠드 방향으로 재계획, 측정 도착 시 정지 후 모드 5.
+  그 뒤 스탠드를 운반 손 위치 기준(집기점이 골반 앞 ~0.3 m)으로 당긴다.
